@@ -18,6 +18,14 @@ public partial class OverlayWindow : Window
         OverlayItems.ItemsSource = lines;
     }
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        int extendedStyle = Platform.NativeMethods.GetWindowLong(hwnd, Platform.NativeMethods.GWL_EXSTYLE);
+        Platform.NativeMethods.SetWindowLong(hwnd, Platform.NativeMethods.GWL_EXSTYLE, extendedStyle | Platform.NativeMethods.WS_EX_TRANSPARENT | Platform.NativeMethods.WS_EX_NOACTIVATE);
+    }
+
     public void PositionOver(CapturableWindow window, CaptureRegion region)
     {
         if (!NativeMethods.GetWindowRect(window.Handle, out var rect))

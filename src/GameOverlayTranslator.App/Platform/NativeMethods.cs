@@ -69,4 +69,14 @@ internal static class NativeMethods
 
     [DllImport("gdi32.dll")]
     internal static extern bool DeleteDC(nint dc);
+
+    internal const int GWL_EXSTYLE = -20;
+    internal const int WS_EX_TRANSPARENT = 0x00000020;
+    internal const int WS_EX_NOACTIVATE = 0x08000000;
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
+    internal static extern int GetWindowLong(nint hwnd, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
+    internal static extern int SetWindowLong(nint hwnd, int index, int newLong);
 }

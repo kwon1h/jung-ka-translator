@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:GameOverlayTranslator.App"
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
-        ShowInTaskbar="False" Topmost="True">
+        ShowInTaskbar="False" Topmost="True" ShowActivated="False">
     <Grid>
         <ItemsControl x:Name="OverlayItems" VerticalAlignment="Bottom" Margin="4">
             <ItemsControl.ItemTemplate>

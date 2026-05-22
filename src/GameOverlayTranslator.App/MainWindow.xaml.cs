@@ -173,6 +173,12 @@ public partial class MainWindow : Window
     {
         SetStatus(update.Status, update.IsError);
         resultWindow?.Apply(update);
+        if (overlayWindow is not null && WindowComboBox.SelectedItem is CapturableWindow window && selectedRegion is { } region)
+        {
+            overlayWindow.PositionOver(window, region);
+            overlayWindow.Topmost = false;
+            overlayWindow.Topmost = true;
+        }
         overlayWindow?.Apply(update);
     });
 

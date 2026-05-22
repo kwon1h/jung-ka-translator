@@ -156,29 +156,12 @@
                         <Grid Grid.Row="1" ClipToBounds="True">
                             <!-- Preview 1: Separate Result Window Mode -->
                             <Grid x:Name="ResultWindowPreviewGrid" Visibility="Collapsed">
-                                <Image Source="pack://application:,,,/Assets/game_screen_result.jpg" Stretch="UniformToFill" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                                <!-- Mock Result Window overlay -->
-                                <Border HorizontalAlignment="Center" VerticalAlignment="Center" Background="#F9F9FB" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="6" Width="280" Padding="12" Opacity="0.95">
-                                    <StackPanel>
-                                        <TextBlock Text="[번역 결과 창 예시]" FontSize="10" Foreground="#6B7280" Margin="0,0,0,6" FontWeight="SemiBold" />
-                                        <TextBlock Text="终于完赛了" FontSize="11" Foreground="#9CA3AF" />
-                                        <TextBlock Text="드디어 완주했다" FontSize="14" FontWeight="Bold" Foreground="#111827" Margin="0,2,0,0" />
-                                    </StackPanel>
-                                </Border>
+                                <Image Source="pack://application:,,,/Assets/game_screen_result.png" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center" />
                             </Grid>
                             
                             <!-- Preview 2: Transparent Overlay Mode -->
                             <Grid x:Name="OverlayPreviewGrid" Visibility="Collapsed">
-                                <Image Source="pack://application:,,,/Assets/game_screen_start.jpg" Stretch="UniformToFill" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                                <!-- Mock Overlay Text over game screen -->
-                                <Canvas>
-                                    <!-- Draw mock text on the gameplay screen -->
-                                    <Border Canvas.Left="15" Canvas.Top="45" Background="#B3000000" CornerRadius="4" Padding="6,4">
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <local:OutlinedTextBlock Text="아奕cc: 안 달려요" FontSize="13" FontFamily="Malgun Gothic" Height="20" Width="140" />
-                                        </StackPanel>
-                                    </Border>
-                                </Canvas>
+                                <Image Source="pack://application:,,,/Assets/game_screen_start.jpg" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center" />
                             </Grid>
                         </Grid>
                     </Grid>
