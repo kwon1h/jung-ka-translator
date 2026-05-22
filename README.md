@@ -45,11 +45,12 @@
 5. (설치 완료 후 프로그램을 켜두었다면 재시작해 주세요.)
 
 ### 2. DeepL API 키 발급 및 입력
-실시간 번역 API 호출을 위해 DeepL 개발자 키가 필요합니다.
+실시간 번역 API 호출을 위해 DeepL API 키가 필요합니다.
 
-1. [DeepL 개발자 포털](https://www.deepl.com/pro-api)에 접속하여 회원 가입합니다. (무료 플랜 등록 시 카드 등록이 필요하나 요금은 청구되지 않습니다.)
-2. 로그인 후 계정 관리 페이지의 **API 인증 키(Authentication Key)**를 복사합니다.
-3. 중카 번역기 프로그램 메인 화면에서 복사한 키를 붙여넣은 후 **저장** 버튼을 누릅니다.
+1. [DeepL API 등록 페이지](https://www.deepl.com/pro-api)에 접속하여 회원 가입을 진행합니다. (무료 플랜인 'DeepL API Free'를 선택하시면 매월 50만 자까지 무료 번역이 가능합니다. 가입 시 본인 인증을 위해 카드를 등록하지만 요금은 청구되지 않습니다.)
+2. 가입 완료 후, [DeepL API 키 관리 페이지 (https://www.deepl.com/ko/your-account/keys)](https://www.deepl.com/ko/your-account/keys)에 접속합니다.
+3. 페이지 하단의 **API 인증 키(Authentication Key)** 목록에서 키를 복사합니다.
+4. 중카 번역기 프로그램 메인 화면에서 복사한 키를 붙여넣은 후 **저장** 버튼을 누릅니다. (입력된 키는 Windows DPAPI로 안전하게 암호화되어 보관됩니다.)
 
 ---
 
