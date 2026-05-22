@@ -1,0 +1,61 @@
+using System.Windows;
+using System.Windows.Media.Imaging;
+
+namespace GameOverlayTranslator.App.Domain;
+
+public sealed record CapturableWindow(nint Handle, string Title, string ProcessName)
+{
+    public override string ToString() => $"{Title} ({ProcessName})";
+}
+
+public sealed record CaptureTarget(CapturableWindow Window);
+
+public readonly record struct CaptureRegion(double X, double Y, double Width, double Height)
+{
+    public static CaptureRegion FromPixels(Rect region, Size windowSize) =>
+        new(region.X / windowSize.Width, region.Y / windowSize.Height, region.Width / windowSize.Width, region.Height / windowSize.Height);
+
+    public Int32Rect ToPixels(int width, int height)
+    {
+        var left = Math.Clamp((int)Math.Round(X * width), 0, Math.Max(0, width - 1));
+        var top = Math.Clamp((int)Math.Round(Y * height), 0, Math.Max(0, height - 1));
+        var regionWidth = Math.Clamp((int)Math.Round(Width * width), 1, Math.Max(1, width - left));
+        var regionHeight = Math.Clamp((int)Math.Round(Height * height), 1, Math.Max(1, height - top));
+        return new Int32Rect(left, top, regionWidth, regionHeight);
+    }
+}
+
+public sealed record CapturedFrame(BitmapSource Bitmap);
+
+public sealed record OcrLanguage(string Tag, string DisplayName)
+{
+    public override string ToString() => DisplayName;
+}
+
+public sealed record TranslationLanguage(string Code, string DisplayName)
+{
+    public override string ToString() => DisplayName;
+}
+
+public sealed record OcrResult(string Text);
+
+public sealed record TranslationRequest(string Text, string TargetLanguage, string? SourceLanguage = null);
+
+public sealed record TranslationResult(string SourceText, string TranslatedText, string? DetectedSourceLanguage);
+
+public sealed record SessionOptions(
+    CaptureTarget Target,
+    CaptureRegion Region,
+    OcrLanguage OcrLanguage,
+    TranslationLanguage TargetLanguage,
+    TimeSpan Interval);
+
+public sealed record SessionUpdate(
+    string Status,
+    string? SourceText = null,
+    string? TranslatedText = null,
+    bool IsError = false,
+    string? Speaker = null,
+    bool IsChatLine = false,
+    string? ChatLineId = null,
+    bool ReplacesChatLine = false);

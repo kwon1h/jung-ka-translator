@@ -1,0 +1,51 @@
+<Window x:Class="GameOverlayTranslator.App.ResultWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="채팅 번역" Height="360" Width="620" MinHeight="220" MinWidth="420" Background="#131B1A">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,10">
+            <CheckBox x:Name="ShowSourceSpeakerToggle" DockPanel.Dock="Right" Content="원문 유저명 표시"
+                      IsChecked="True" Foreground="#F7F6F0" VerticalAlignment="Center" />
+            <StackPanel x:Name="OpacityPanel" DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,0,14,0"
+                        Visibility="Collapsed">
+                <TextBlock Text="불투명도" Foreground="#F7F6F0" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <Slider x:Name="OpacitySlider" Width="100" Minimum="0.35" Maximum="1" Value="0.86"
+                        ValueChanged="OpacityChanged" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock x:Name="ResultStatusText" Text="대기" Foreground="#B7C6C2" VerticalAlignment="Center" />
+        </DockPanel>
+        <Border x:Name="ChatPanel" Grid.Row="1" Background="#282B59" BorderBrush="#52645F" BorderThickness="1" Padding="12">
+            <ScrollViewer x:Name="ChatScrollViewer" VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="ChatItems">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,0,0,6" ToolTip="{Binding Source}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Prefix}" FontWeight="SemiBold" Foreground="#9CFF37" FontSize="16">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsChecked, ElementName=ShowSourceSpeakerToggle}" Value="False">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Grid.Column="1" Text="{Binding Translation}" Foreground="#F7F6F0" FontSize="16"
+                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</Window>

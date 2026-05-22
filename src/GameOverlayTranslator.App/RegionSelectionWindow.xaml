@@ -1,0 +1,15 @@
+<Window x:Class="GameOverlayTranslator.App.RegionSelectionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="#22000000"
+        ShowInTaskbar="False" Topmost="True" KeyDown="OnKeyDown">
+    <Canvas x:Name="SelectionCanvas" Background="Transparent" Cursor="Cross" Focusable="True"
+            PreviewMouseLeftButtonDown="BeginSelection"
+            PreviewMouseMove="ResizeSelection" PreviewMouseLeftButtonUp="CompleteSelection">
+        <Border Background="#CC172121" Padding="10" Canvas.Left="14" Canvas.Top="14" CornerRadius="4">
+            <TextBlock Text="번역 영역을 드래그하세요. Esc 취소" Foreground="#F7F6F0" />
+        </Border>
+        <Rectangle x:Name="SelectionRectangle" Visibility="Collapsed" Stroke="#35C3A7"
+                   StrokeThickness="2" Fill="#3324A58D" />
+    </Canvas>
+</Window>

@@ -1,0 +1,33 @@
+# Project-specific ignores
+.dotnet/
+.dotnet-home/
+.appdata/
+.nuget/
+
+# Build outputs
+[Db]in/
+[Oo]bj/
+[Pp]ublish/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.csproj.user
+*.pubxml.user
+
+# ReSharper / Rider
+_ReSharper*/
+*.dotnet-tools.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log

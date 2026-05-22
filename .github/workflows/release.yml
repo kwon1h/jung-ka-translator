@@ -1,0 +1,40 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger workflow when tag starts with v, e.g. v1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Restore Dependencies
+      run: dotnet restore GameOverlayTranslator.sln
+
+    - name: Publish Single-File Executable
+      run: dotnet publish src/GameOverlayTranslator.App/GameOverlayTranslator.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -o publish/
+
+    - name: Create ZIP Archive
+      shell: pwsh
+      run: |
+        Compress-Archive -Path publish/* -DestinationPath GameOverlayTranslator-win-x64.zip
+
+    - name: Create GitHub Release and Upload Assets
+      uses: softprops/action-gh-release@v2
+      with:
+        files: GameOverlayTranslator-win-x64.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
