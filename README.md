@@ -1,102 +1,92 @@
-# Game OCR Translator
+# 중카 번역기 (Game OCR Translator)
 
-Windows desktop application (WPF) for real-time OCR translation of a selected game screen region. It extracts text from game screens (such as chat windows) and translates it using the DeepL API, rendering it as a clean text overlay directly on top of your game or in a separate result window.
-
-지정한 게임 화면 영역을 실시간으로 OCR 인식하여 DeepL API로 번역하고, 인게임 화면에 자막처럼 오버레이하거나 별도의 결과 창에 표시해 주는 Windows 데스크톱(WPF) 프로그램입니다.
-
----
-
-## 🚀 How to Download & Run / 다운로드 및 실행 방법
-
-This application is distributed as a **portable single-file executable**. You do not need to install .NET runtime or any setup wizard.
-본 프로그램은 **포터블 단일 실행 파일**로 빌드되어 제공됩니다. 별도의 설치 프로그램이나 .NET 런타임 수동 설치가 필요 없습니다.
-
-1. Go to the [Releases](https://github.com/) page (link will be active once hosted on GitHub).
-2. Download the latest `GameOverlayTranslator-win-x64.zip` file.
-3. Extract the ZIP archive anywhere on your computer.
-4. Run `GameOverlayTranslator.App.exe`.
-
-1. [Releases](https://github.com/) 페이지에서 최신 버전의 `GameOverlayTranslator-win-x64.zip`을 다운로드합니다.
-2. 압축을 원하는 폴더에 풉니다.
-3. `GameOverlayTranslator.App.exe` 파일을 실행합니다.
+> **중국 카트라이더(중카) 전용 실시간 화면 OCR 번역기**
+> 
+> 게임 화면의 채팅 영역을 실시간으로 캡처/분석하여 번역한 뒤, 게임 화면 위에 자막처럼 깔끔한 오버레이로 띄워주거나 별도의 결과 창에 표시해 주는 Windows 데스크톱 프로그램입니다.
 
 ---
 
-## 🛠️ Prerequisites & Setup / 사전 준비 사항 및 설정
+## ✨ 주요 특징 (Key Features)
 
-### 1. Windows OCR Language Packs (Mandatory / 필수)
-The native Windows OCR engine relies on the language packs installed on your system. If you want to recognize Chinese or Japanese, you must install the respective Windows language packs first.
-프로그램 내장 OCR은 Windows 기본 OCR 엔진을 사용하므로, 번역하려는 원본 언어(예: 중국어, 일본어 등)의 Windows 언어 팩이 시스템에 반드시 설치되어 있어야 합니다.
-
-* **How to Install / 설치 방법**:
-  1. Open Windows **Settings** (`Win + I`) -> Go to **Time & Language** (시간 및 언어).
-  2. Select **Language & Region** (언어 및 지역).
-  3. Click **Add a language** (언어 추가) and select the source language (e.g. Chinese Simplified `中文(简体)`, Japanese `日本語`).
-  4. Ensure you check **Language pack** or **Text-to-speech / Basic typing** when installing.
-  5. Restart this application if it was open.
-
-### 2. DeepL API Key (Mandatory / 필수)
-To perform translations, you need a free or pro DeepL API Key.
-실시간 번역을 수행하려면 DeepL API 키(Free 또는 Pro)가 필요합니다.
-
-1. Register at [DeepL Developer Portal](https://www.deepl.com/pro-api).
-2. Get your authentication key (API Key) from your Account page.
-3. Enter it in the main window of the app and click **Save**. (The key is safely encrypted on your PC using Windows DPAPI).
-
-1. [DeepL 개발자 포털](https://www.deepl.com/pro-api)에서 회원가입(무료 플랜 제공)합니다.
-2. 계정 페이지에서 API 인증 키(Authentication Key)를 확인합니다.
-3. 프로그램 메인 화면의 DeepL 키 입력창에 복사한 키를 붙여넣고 저장합니다. (입력된 키는 Windows DPAPI로 암호화되어 안전하게 보관됩니다).
+* **실시간 자막 오버레이**: 게임 화면 위에 투명창을 얹어, 검은 외곽선이 포함된 흰색 글씨(시인성 극대화)로 실시간 번역본을 보여줍니다.
+* **Windows 내장 OCR 사용**: 별도의 무거운 외부 엔진 없이 Windows 10/11 기본 OCR 엔진(`Windows.Media.Ocr`)을 활용하여 가볍고 빠르게 문자를 추출합니다.
+* **DeepL 번역 연동**: 최고 품질의 DeepL API(무료/유료 플랜 지원)를 연동하여 번역을 수행합니다. API 키는 Windows DPAPI로 안전하게 암호화되어 개인 PC 내에 저장됩니다.
+* **채팅 최적화 필터 및 중복 제거**:
+  * **중복/유사 채팅 필터링**: 화면이 갱신될 때마다 동일한 대화가 중복 번역되어 API 할당량을 낭비하지 않도록 Jaccard 유사도 기반으로 걸러냅니다.
+  * **OCR 오타 보정 및 교체**: 이전 프레임에서 글자가 일부 깨져서 번역되었다가, 이후 프레임에서 온전하게 인식되면 기존 번역본을 더 높은 품질의 결과로 교체(Replace)합니다.
+  * **다중 라인 분할**: Windows OCR이 여러 줄의 채팅을 하나의 라인으로 뭉쳐서 인식할 때, 이를 유저별(`유저명: 메시지`)로 파싱하여 쪼개어 번역합니다.
+  * **노이즈 필터**: 의미 없는 특수문자나 OCR 인식 오류로 생긴 노이즈 덩어리는 번역 요청에서 제외합니다.
 
 ---
 
-## 📖 How to Use / 사용 방법
+## 🚀 다운로드 및 실행 방법
 
-1. **Select Game Window / 게임 창 선택**: Run your game in windowed or borderless-windowed mode. Select the game process/window title from the application dropdown.
-2. **Select Region / 영역 지정**: Click **Select Region** (or press `F9`) and drag a rectangle over the chat or text area in your game.
-3. **Choose OCR Language / 언어 선택**: Choose the OCR source language (e.g., Chinese, Japanese).
-4. **Start Polling / 번역 시작**: Click **Start** (or press `F8`) to begin real-time translation. Press `F8` again to pause.
-5. **Display Mode / 출력 모드**:
-   - **Result Window (결과 창)**: Displays translations in a clean chat list style. Hovering over a line shows the raw OCR text.
-   - **Overlay Mode (오버레이 모드)**: Overlays transparent, outlined text directly on the selected game screen area.
+본 프로그램은 설치 과정이 전혀 필요 없는 **단일 실행 파일(Portable)**로 제공됩니다.
 
-1. **대상 게임 선택**: 게임을 창 모드나 테두리 없는 창 모드로 실행합니다. 앱의 창 선택 목록에서 대상 게임을 선택합니다.
-2. **영역 선택**: **영역 지정** 버튼을 클릭(또는 `F9` 단축키 입력)하고, 게임 화면 내의 채팅 영역을 마우스로 드래그하여 지정합니다.
-3. **언어 지정**: 캡처 대상 텍스트의 언어(OCR 언어)를 선택합니다.
-4. **번역 시작**: **시작** 버튼을 누르거나 `F8` 단축키를 눌러 번역을 시작합니다. 정지하려면 다시 `F8`을 누릅니다.
-5. **출력 방식 변경**:
-   - **일반 결과 창**: 메신저 대화처럼 실시간 번역본이 아래로 쌓입니다. 마우스를 올리면 원문을 볼 수 있습니다.
-   - **오버레이 모드**: 게임 채팅창 위치에 투명 자막 오버레이를 얹어, 인게임 자막처럼 번역 텍스트를 검정 외곽선이 포함된 흰 글씨로 보여줍니다.
+1. [GitHub Releases](https://github.com/kwon1h/jung-ka-translator/releases) 페이지로 이동합니다.
+2. 가장 최신 버전의 **`GameOverlayTranslator-win-x64.zip`** 파일을 다운로드합니다.
+3. 압축을 원하는 안전한 경로에 해제합니다.
+4. 폴더 내의 **`GameOverlayTranslator.App.exe`**를 실행하면 즉시 시작됩니다.
 
 ---
 
-## ⚙️ Advanced Settings & Filters / 필터 및 동작 상세
+## 🛠️ 실행 전 필수 설정 (Prerequisites)
 
-The app is tuned for game chats (typically in `speaker: message` structure) to minimize API costs and screen clutter:
-* **Duplicate/Fuzzy Suppression**: Filters out duplicate text from consecutive frames. If OCR quality improves in a subsequent frame, it replaces the existing translation instead of adding duplicates.
-* **Format Splitter**: If multiple lines of chat are scanned together, the app splits them based on username formats before translating.
-* **Quality Filter**: Rejects fragmented OCR noise, overly short fragments, or garbage characters.
+> [!IMPORTANT]
+> 프로그램이 정상 작동하려면 다음 두 가지 사전 설정이 반드시 완료되어야 합니다.
+
+### 1. Windows OCR 언어 팩 설치
+중국어 또는 일본어 화면을 인식하려면 Windows OS 자체에 해당 언어 팩이 깔려 있어야 합니다.
+
+1. Windows **설정** (`Win + I`) -> **시간 및 언어** 메뉴로 이동합니다.
+2. **언어 및 지역**을 선택합니다.
+3. **언어 추가** 버튼을 눌러 번역할 언어(예: 중국어 간체 `中文(简体, 중국)`, 일본어 `日本語`)를 추가합니다.
+4. 설치 시 **언어 팩(Language Pack)** 또는 **기본 입력/텍스트 음성 변환(Basic typing)** 항목이 체크되었는지 확인하고 설치를 완료합니다.
+5. (설치 완료 후 프로그램을 켜두었다면 재시작해 주세요.)
+
+### 2. DeepL API 키 발급 및 입력
+실시간 번역 API 호출을 위해 DeepL 개발자 키가 필요합니다.
+
+1. [DeepL 개발자 포털](https://www.deepl.com/pro-api)에 접속하여 회원 가입합니다. (무료 플랜 등록 시 카드 등록이 필요하나 요금은 청구되지 않습니다.)
+2. 로그인 후 계정 관리 페이지의 **API 인증 키(Authentication Key)**를 복사합니다.
+3. 중카 번역기 프로그램 메인 화면에서 복사한 키를 붙여넣은 후 **저장** 버튼을 누릅니다.
 
 ---
 
-## 🛠️ Build & Run (For Developers)
+## 📖 사용 방법
 
-The app targets `net8.0-windows10.0.19041.0`. With a .NET 8 SDK on `PATH`:
+```
+1. 대상 게임 실행 (테두리 없는 창 모드 혹은 창 모드 권장)
+2. 번역기에서 대상 '게임 창' 선택 (드롭다운 목록)
+3. '영역 지정' 버튼 클릭 (혹은 F9 단축키) ➡️ 게임의 채팅창 영역을 드래그하여 지정
+4. 원본 OCR 언어 선택 (기본값: 중국어 간체)
+5. '시작' 버튼 클릭 (혹은 F8 단축키) ➡️ 실시간 오버레이 번역 작동!
+```
+
+### 💡 유용한 팁
+* **화면 모드 전환**: 번역 결과창 하단에서 '결과창 모드'와 '오버레이 모드'를 토글할 수 있습니다.
+* **단축키 활용**: 게임 플레이 중 `F8` 키로 실시간 번역을 시작/정지할 수 있고, 채팅창 위치가 바뀌었을 때는 `F9` 키를 눌러 바로 다시 영역을 그릴 수 있습니다.
+* **모듈 테스터**: 메인 창의 `모듈 테스터` 버튼을 누르면 창 캡처, OCR 단독 인식, DeepL 번역 기능이 개별적으로 정상 작동하는지 디버깅해볼 수 있습니다.
+
+---
+
+## 💻 빌드 및 개발 (For Developers)
+
+이 앱은 `.NET 8.0` 및 `Windows 10 SDK (10.0.19041)` 환경을 타겟팅합니다. 로컬 빌드 및 실행은 다음과 같이 진행합니다.
 
 ```powershell
-# Restore NuGet dependencies
+# NuGet 의존성 복구
 dotnet restore GameOverlayTranslator.sln --configfile NuGet.Config
 
-# Build the solution
+# 솔루션 빌드
 dotnet build GameOverlayTranslator.sln --configfile NuGet.Config
 
-# Run the project
+# 프로젝트 로컬 실행
 dotnet run --project src\GameOverlayTranslator.App\GameOverlayTranslator.App.csproj --configfile NuGet.Config
 ```
 
 ---
 
-## 📜 License / 라이선스
+## 📜 라이선스 (License)
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
-
-본 프로젝트는 **MIT 라이선스**에 따라 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
+이 프로젝트는 **MIT 라이선스**하에 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
