@@ -18,14 +18,14 @@
 
 ### 1. 메인 설정 및 스타일 커스터마이징 화면
 설정 창 내에서 글자 크기, 외곽선(테두리) 두께, 자막 색상, 테두리 색상을 미려한 슬라이더와 원형 색상 팔레트로 자유롭게 설정할 수 있으며 예시 텍스트("즐카~")로 즉시 미리볼 수 있습니다.
-![메인 설정 화면](src/GameOverlayTranslator.App/Assets/settings_window.png)
+![메인 설정 화면](src/GameOverlayTranslator.App/Assets/settings_window_v2.png)
 
 ### 2. 선택 영역 오버레이 번역 모드 (인게임 채팅창 투명 자막)
 게임 화면 위에 투명창을 덧씌우는 방식으로, 5초 동안만 자막이 표시되고 오래된 메시지는 위로 밀려나며 자동으로 소멸합니다. 게임 화면 바깥 테두리선이나 간섭 없이 깔끔하게 표시됩니다.
-![오버레이 모드](src/GameOverlayTranslator.App/Assets/overlay_mode_preview.png)
+![오버레이 모드](src/GameOverlayTranslator.App/Assets/overlay_mode_preview_v2.png)
 
 ### 3. 별도 결과 창 모드 (투명도 조절형 자막 창)
-![결과창 모드](src/GameOverlayTranslator.App/Assets/result_window_preview.png)
+![결과창 모드](src/GameOverlayTranslator.App/Assets/result_window_preview_v2.png)
 
 ---
 
