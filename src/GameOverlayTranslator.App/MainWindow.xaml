@@ -1,70 +1,192 @@
 <Window x:Class="GameOverlayTranslator.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Game OCR Translator" Height="620" Width="760" MinHeight="560" MinWidth="660"
-        Background="#F4F3EE" PreviewKeyDown="OnPreviewKeyDown">
+        xmlns:local="clr-namespace:GameOverlayTranslator.App"
+        Title="중카 번역기 (Game OCR Translator)" Height="650" Width="820" MinHeight="620" MinWidth="800"
+        Background="#F5F6F8" PreviewKeyDown="OnPreviewKeyDown">
+    <Window.Resources>
+        <!-- Modern Rounded Button Style -->
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#E5E8EB" />
+            <Setter Property="Foreground" Value="#1C1C1E" />
+            <Setter Property="BorderBrush" Value="#D1D5DB" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#D8DCE0" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.5" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <!-- Styled ComboBox and PasswordBox -->
+        <Style TargetType="ComboBox">
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+    </Window.Resources>
+    
     <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
+        
+        <!-- Header -->
         <StackPanel>
-            <TextBlock Text="Game OCR Translator" FontSize="28" FontWeight="SemiBold" Foreground="#172121" />
-            <TextBlock Text="창모드 또는 전체창모드 게임 창과 OCR 영역을 선택해 번역을 시작합니다." Margin="0,6,0,0" Foreground="#40514E" />
+            <TextBlock Text="중카 번역기" FontSize="26" FontWeight="Bold" Foreground="#1F2937" />
+            <TextBlock Text="중국 카트라이더 화면에서 지정된 번역 영역을 실시간으로 감지하여 번역합니다." Margin="0,6,0,0" Foreground="#4B5563" />
         </StackPanel>
-        <Grid Grid.Row="1" Margin="0,22,0,18">
+        
+        <!-- Main Content Area -->
+        <Grid Grid.Row="1" Margin="0,20,0,16">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="20" />
+                <ColumnDefinition Width="24" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <StackPanel>
-                <TextBlock Text="게임 창" FontWeight="SemiBold" />
-                <DockPanel Margin="0,8,0,18">
-                    <Button DockPanel.Dock="Right" Width="88" Margin="8,0,0,0" Content="새로고침" Click="RefreshWindows" />
-                    <ComboBox x:Name="WindowComboBox" MinHeight="32" SelectionChanged="WindowSelectionChanged" />
-                </DockPanel>
-                <TextBlock Text="번역 영역" FontWeight="SemiBold" />
-                <DockPanel Margin="0,8,0,18">
-                    <Button Width="120" Content="영역 선택" Click="SelectRegion" />
-                    <TextBlock x:Name="RegionText" Margin="12,5,0,0" Text="선택되지 않음" TextWrapping="Wrap" />
-                </DockPanel>
+            
+            <!-- Left Panel: Settings -->
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="게임 창 선택" FontWeight="SemiBold" Foreground="#374151" FontSize="13" />
+                <Grid Margin="0,8,0,18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ComboBox x:Name="WindowComboBox" MinHeight="34" SelectionChanged="WindowSelectionChanged" />
+                    <Button Grid.Column="1" Width="88" Margin="8,0,0,0" Content="새로고침" Click="RefreshWindows" />
+                </Grid>
+                
+                <TextBlock Text="번역 대상 영역" FontWeight="SemiBold" Foreground="#374151" FontSize="13" />
+                <Grid Margin="0,8,0,18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="SelectRegionButton" Width="120" Height="34" Content="영역 선택 (F9)" Click="SelectRegion" />
+                    <TextBlock x:Name="RegionText" Grid.Column="1" Margin="12,8,0,0" Text="선택되지 않음" TextWrapping="Wrap" Foreground="#4B5563" FontWeight="Medium" />
+                </Grid>
+                
                 <UniformGrid Columns="2" Margin="0,0,0,18">
                     <StackPanel Margin="0,0,8,0">
-                        <TextBlock Text="OCR 언어" FontWeight="SemiBold" />
-                        <ComboBox x:Name="OcrLanguageComboBox" Margin="0,8,0,0" MinHeight="32" />
+                        <TextBlock Text="OCR 언어" FontWeight="SemiBold" Foreground="#374151" FontSize="13" />
+                        <ComboBox x:Name="OcrLanguageComboBox" Margin="0,8,0,0" MinHeight="34" />
                     </StackPanel>
                     <StackPanel Margin="8,0,0,0">
-                        <TextBlock Text="번역 언어" FontWeight="SemiBold" />
-                        <ComboBox x:Name="TargetLanguageComboBox" Margin="0,8,0,0" MinHeight="32" />
+                        <TextBlock Text="번역 언어" FontWeight="SemiBold" Foreground="#374151" FontSize="13" />
+                        <ComboBox x:Name="TargetLanguageComboBox" Margin="0,8,0,0" MinHeight="34" />
                     </StackPanel>
                 </UniformGrid>
-                <TextBlock Text="번역 표시" FontWeight="SemiBold" />
-                <ComboBox x:Name="DisplayModeComboBox" Margin="0,8,0,18" MinHeight="32"
+                
+                <TextBlock Text="번역 표시 방법" FontWeight="SemiBold" Foreground="#374151" FontSize="13" />
+                <ComboBox x:Name="DisplayModeComboBox" Margin="0,8,0,18" MinHeight="34"
                           SelectionChanged="DisplayModeSelectionChanged" />
-                <TextBlock Text="DeepL API Free 인증 키" FontWeight="SemiBold" />
-                <DockPanel Margin="0,8,0,10">
-                    <Button DockPanel.Dock="Right" Width="64" Margin="8,0,0,0" Content="삭제" Click="DeleteApiKey" />
-                    <Button DockPanel.Dock="Right" Width="64" Margin="8,0,0,0" Content="저장" Click="SaveApiKey" />
-                    <PasswordBox x:Name="ApiKeyPasswordBox" MinHeight="32" />
-                </DockPanel>
-                <TextBlock Text="키는 현재 Windows 사용자 범위로 보호해 저장합니다." Foreground="#40514E" FontSize="12" />
+                
+                <TextBlock Text="DeepL API Free 인증 키" FontWeight="SemiBold" Foreground="#374151" FontSize="13" />
+                <Grid Margin="0,8,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <PasswordBox x:Name="ApiKeyPasswordBox" MinHeight="34" />
+                    <Button Grid.Column="1" Width="64" Margin="8,0,0,0" Content="저장" Click="SaveApiKey" />
+                    <Button Grid.Column="2" Width="64" Margin="8,0,0,0" Content="삭제" Click="DeleteApiKey" />
+                </Grid>
+                <TextBlock Text="인증 키는 로컬 PC에 안전하게 암호화되어 저장됩니다." Foreground="#6B7280" FontSize="12" />
             </StackPanel>
-            <Border Grid.Column="2" Background="#FCFBF7" BorderBrush="#C7C4B8" BorderThickness="1" CornerRadius="6" Padding="18">
-                <StackPanel>
-                    <TextBlock Text="세션" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock x:Name="StatusText" Text="대기" Margin="0,14,0,18" Padding="12" Background="#E2E8DD" TextWrapping="Wrap" />
-                    <Button x:Name="StartStopButton" Height="42" Content="번역 시작 (F8)" Click="ToggleSession" />
-                    <Button Margin="0,10,0,0" Height="36" Content="영역 다시 선택 (F9)" Click="SelectRegion" />
-                    <Button Margin="0,10,0,0" Height="36" Content="모듈 테스터" Click="OpenModuleTesters" />
-                    <Separator Margin="0,20,0,16" />
-                    <TextBlock Text="결과 창" FontWeight="SemiBold" />
-                    <TextBlock Text="번역을 시작하면 별도 창에 원문과 번역문을 위아래로 표시합니다." Margin="0,8,0,0" Foreground="#40514E" TextWrapping="Wrap" />
-                    <TextBlock Text="독점 전체 화면 게임은 v1 지원 범위 밖입니다." Margin="0,18,0,0" Foreground="#7A3E2B" TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
+            
+            <!-- Right Panel: Session & Preview -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                
+                <!-- Session Control Group -->
+                <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="번역 컨트롤" FontSize="15" FontWeight="Bold" Foreground="#111827" />
+                        <Grid Margin="0,10,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="번역 상태:" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#4B5563" />
+                            <Border Grid.Column="1" Margin="8,0,0,0" CornerRadius="4" Padding="8,6" Background="#F3F4F6">
+                                <TextBlock x:Name="StatusText" Text="대기" TextWrapping="Wrap" Foreground="#1F2937" FontWeight="Medium" />
+                            </Border>
+                        </Grid>
+                        <Button x:Name="StartStopButton" Height="40" Content="번역 시작 (F8)" Click="ToggleSession" FontSize="14" FontWeight="Bold" Background="#2563EB" Foreground="White" BorderThickness="0" />
+                    </StackPanel>
+                </Border>
+                
+                <!-- Interactive Preview Panel -->
+                <Border Grid.Row="1" Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="14" ClipToBounds="True">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="선택한 번역 방식 예시 미리보기" FontSize="13" FontWeight="Bold" Foreground="#374151" Margin="0,0,0,10" />
+                        
+                        <Grid Grid.Row="1" ClipToBounds="True">
+                            <!-- Preview 1: Separate Result Window Mode -->
+                            <Grid x:Name="ResultWindowPreviewGrid" Visibility="Collapsed">
+                                <Image Source="pack://application:,,,/Assets/game_screen_result.jpg" Stretch="UniformToFill" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                                <!-- Mock Result Window overlay -->
+                                <Border HorizontalAlignment="Center" VerticalAlignment="Center" Background="#F9F9FB" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="6" Width="280" Padding="12" Opacity="0.95">
+                                    <StackPanel>
+                                        <TextBlock Text="[번역 결과 창 예시]" FontSize="10" Foreground="#6B7280" Margin="0,0,0,6" FontWeight="SemiBold" />
+                                        <TextBlock Text="终于完赛了" FontSize="11" Foreground="#9CA3AF" />
+                                        <TextBlock Text="드디어 완주했다" FontSize="14" FontWeight="Bold" Foreground="#111827" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            
+                            <!-- Preview 2: Transparent Overlay Mode -->
+                            <Grid x:Name="OverlayPreviewGrid" Visibility="Collapsed">
+                                <Image Source="pack://application:,,,/Assets/game_screen_start.jpg" Stretch="UniformToFill" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                                <!-- Mock Overlay Text over game screen -->
+                                <Canvas>
+                                    <!-- Draw mock text on the gameplay screen -->
+                                    <Border Canvas.Left="15" Canvas.Top="45" Background="#B3000000" CornerRadius="4" Padding="6,4">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <local:OutlinedTextBlock Text="아奕cc: 안 달려요" FontSize="13" FontFamily="Malgun Gothic" Height="20" Width="140" />
+                                        </StackPanel>
+                                    </Border>
+                                </Canvas>
+                            </Grid>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
         </Grid>
-        <TextBlock Grid.Row="2" Foreground="#40514E" Text="단축키: F8 시작/정지, F9 영역 선택. 시작 전 게임 화면이 보이는 상태여야 합니다." />
+        
+        <!-- Footer / Shortcuts -->
+        <TextBlock Grid.Row="2" Foreground="#6B7280" FontSize="12" Text="단축키: F8 시작/정지, F9 영역 선택 | 독점 전체화면 게임(Exclusive Fullscreen)은 창모드(Windowed) 전환이 필요합니다." HorizontalAlignment="Center" />
     </Grid>
 </Window>

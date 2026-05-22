@@ -46,7 +46,9 @@ public partial class MainWindow : Window
         DisplayModeComboBox.ItemsSource = DisplayModes;
         ApiKeyPasswordBox.Password = apiKeyStore.Load() ?? string.Empty;
         RestoreRegion(settings.LastRegion);
+        UpdateRegionButtonVisual();
         DisplayModeComboBox.SelectedItem = DisplayModes.First(mode => mode.Mode == settings.DisplayMode);
+        UpdateDisplayModePreview();
         RefreshWindows(this, new RoutedEventArgs());
         Closed += OnClosed;
     }
@@ -60,6 +62,7 @@ public partial class MainWindow : Window
         WindowComboBox.SelectedItem =
             windows.FirstOrDefault(window => window.Handle == selectedHandle)
             ?? FindSavedWindow(windows)
+            ?? FindKartWindow(windows)
             ?? windows.FirstOrDefault();
         SetStatus(windows.Count == 0 ? "선택 가능한 창이 없습니다." : "게임 창을 선택하세요.");
     }
@@ -94,6 +97,7 @@ public partial class MainWindow : Window
         {
             selectedRegion = null;
             RegionText.Text = "선택되지 않음";
+            UpdateRegionButtonVisual();
         }
     }
 
@@ -111,6 +115,7 @@ public partial class MainWindow : Window
         {
             resultWindow.ApplyMode(displayMode);
         }
+        UpdateDisplayModePreview();
     }
 
     private void SelectRegion(object sender, RoutedEventArgs e)
@@ -127,13 +132,8 @@ public partial class MainWindow : Window
             ShowRegion(region);
             SaveSelection(window, region);
             SetStatus("번역 영역을 선택했습니다.");
+            UpdateRegionButtonVisual();
         }
-    }
-
-    private void OpenModuleTesters(object sender, RoutedEventArgs e)
-    {
-        var testers = new ModuleTestersWindow(() => ApiKeyPasswordBox.Password) { Owner = this };
-        testers.Show();
     }
 
     private async void ToggleSession(object sender, RoutedEventArgs e)
@@ -282,5 +282,47 @@ public partial class MainWindow : Window
     {
         settings = new AppSettings(window.Title, window.ProcessName, region, settings.DisplayMode);
         settingsStore.Save(settings);
+    }
+
+    private CapturableWindow? FindKartWindow(IReadOnlyList<CapturableWindow> windows)
+    {
+        return windows.FirstOrDefault(window =>
+            (window.Title != null && window.Title.Contains("kart", StringComparison.OrdinalIgnoreCase)) ||
+            (window.ProcessName != null && window.ProcessName.Contains("kart", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private void UpdateRegionButtonVisual()
+    {
+        if (selectedRegion == null)
+        {
+            SelectRegionButton.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E65F2B"));
+            SelectRegionButton.Foreground = Brushes.White;
+            SelectRegionButton.FontWeight = FontWeights.Bold;
+        }
+        else
+        {
+            SelectRegionButton.ClearValue(BackgroundProperty);
+            SelectRegionButton.ClearValue(ForegroundProperty);
+            SelectRegionButton.ClearValue(FontWeightProperty);
+        }
+    }
+
+    private void UpdateDisplayModePreview()
+    {
+        if (DisplayModeComboBox.SelectedItem is not DisplayModeChoice choice)
+        {
+            return;
+        }
+
+        if (choice.Mode == TranslationDisplayMode.Window)
+        {
+            ResultWindowPreviewGrid.Visibility = Visibility.Visible;
+            OverlayPreviewGrid.Visibility = Visibility.Collapsed;
+        }
+        else if (choice.Mode == TranslationDisplayMode.TransparentOverlay)
+        {
+            ResultWindowPreviewGrid.Visibility = Visibility.Collapsed;
+            OverlayPreviewGrid.Visibility = Visibility.Visible;
+        }
     }
 }
