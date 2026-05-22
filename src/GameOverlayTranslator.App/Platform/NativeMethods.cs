@@ -79,4 +79,9 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
     internal static extern int SetWindowLong(nint hwnd, int index, int newLong);
+
+    internal const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
 }

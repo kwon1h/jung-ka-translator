@@ -8,7 +8,12 @@ public sealed record AppSettings(
     string? LastWindowTitle = null,
     string? LastWindowProcessName = null,
     CaptureRegion? LastRegion = null,
-    TranslationDisplayMode DisplayMode = TranslationDisplayMode.Window);
+    TranslationDisplayMode DisplayMode = TranslationDisplayMode.Window,
+    string FontFamily = "Malgun Gothic",
+    double FontSize = 20,
+    string TextColor = "#FFFFFF",
+    string OutlineColor = "#000000",
+    double StrokeThickness = 0.3);
 
 public enum TranslationDisplayMode
 {
@@ -28,9 +33,23 @@ public sealed class AppSettingsStore
     {
         try
         {
-            return File.Exists(settingsPath)
-                ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(settingsPath), JsonOptions) ?? new AppSettings()
-                : new AppSettings();
+            if (File.Exists(settingsPath))
+            {
+                var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(settingsPath), JsonOptions);
+                if (settings != null)
+                {
+                    // Normalize settings to ensure default values are used for missing/invalid properties
+                    return settings with
+                    {
+                        FontFamily = string.IsNullOrWhiteSpace(settings.FontFamily) ? "Malgun Gothic" : settings.FontFamily,
+                        FontSize = settings.FontSize < 12 || settings.FontSize > 48 ? 20 : settings.FontSize,
+                        TextColor = string.IsNullOrWhiteSpace(settings.TextColor) ? "#FFFFFF" : settings.TextColor,
+                        OutlineColor = string.IsNullOrWhiteSpace(settings.OutlineColor) ? "#000000" : settings.OutlineColor,
+                        StrokeThickness = settings.StrokeThickness < 0 || settings.StrokeThickness > 8 ? 0.3 : settings.StrokeThickness
+                    };
+                }
+            }
+            return new AppSettings();
         }
         catch (Exception ex)
         {

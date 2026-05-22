@@ -16,6 +16,20 @@ public partial class MainWindow : Window
         public override string ToString() => Name;
     }
 
+    private sealed record ColorChoice(string Hex, string Name)
+    {
+        public Brush HexBrush { get; } = CreateFrozenBrush(Hex);
+
+        private static Brush CreateFrozenBrush(string hex)
+        {
+            var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+            brush.Freeze();
+            return brush;
+        }
+
+        public override string ToString() => Name;
+    }
+
     private static readonly IReadOnlyList<OcrLanguage> OcrLanguages = [new("zh-Hans", "중국어(간체)"), new("ja", "일본어")];
     private static readonly IReadOnlyList<TranslationLanguage> TargetLanguages = [new("ko", "한국어")];
     private static readonly IReadOnlyList<DisplayModeChoice> DisplayModes =
@@ -23,6 +37,28 @@ public partial class MainWindow : Window
         new(TranslationDisplayMode.Window, "별도 결과 창"),
         new(TranslationDisplayMode.TransparentOverlay, "선택 영역 오버레이")
     ];
+
+    private static readonly IReadOnlyList<ColorChoice> TextColors =
+    [
+        new("#FFFFFF", "흰색"),
+        new("#FFFF00", "노란색"),
+        new("#00FF00", "연두색"),
+        new("#00FFFF", "하늘색"),
+        new("#FF8888", "연분홍색"),
+        new("#FFA500", "주황색"),
+        new("#000000", "검은색")
+    ];
+
+    private static readonly IReadOnlyList<ColorChoice> OutlineColors =
+    [
+        new("#000000", "검은색"),
+        new("#FFFFFF", "흰색"),
+        new("#444444", "회색"),
+        new("#2563EB", "파란색"),
+        new("#990000", "빨간색")
+    ];
+
+    private static readonly IReadOnlyList<double> StrokeThicknesses = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
     private readonly IWindowSource windowSource = new Win32WindowSource();
     private readonly ApiKeyStore apiKeyStore = new();
     private readonly AppSettingsStore settingsStore = new();
@@ -35,9 +71,9 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        settings = settingsStore.Load();
         InitializeComponent();
         session = new TranslationSession(new WindowCaptureService(), new WindowsOcrEngine(), new DeepLTranslationService(new HttpClient(), () => ApiKeyPasswordBox.Password));
-        settings = settingsStore.Load();
         session.Updated += SessionUpdated;
         OcrLanguageComboBox.ItemsSource = OcrLanguages;
         OcrLanguageComboBox.SelectedIndex = 0;
@@ -49,6 +85,33 @@ public partial class MainWindow : Window
         UpdateRegionButtonVisual();
         DisplayModeComboBox.SelectedItem = DisplayModes.First(mode => mode.Mode == settings.DisplayMode);
         UpdateDisplayModePreview();
+
+        // Populate and select font family
+        var systemFonts = Fonts.SystemFontFamilies.Select(f => f.Source).OrderBy(s => s).ToList();
+        FontFamilyComboBox.ItemsSource = systemFonts;
+        var selectedFont = systemFonts.FirstOrDefault(f => string.Equals(f, settings.FontFamily, StringComparison.OrdinalIgnoreCase)) ?? "Malgun Gothic";
+        FontFamilyComboBox.SelectedItem = selectedFont;
+
+        // Initialize font size slider and label
+        FontSizeSlider.Value = settings.FontSize;
+        FontSizeLabel.Text = $"{settings.FontSize}pt";
+
+        // Populate and select text color swatches
+        TextColorListBox.ItemsSource = TextColors;
+        var selectedTextColor = TextColors.FirstOrDefault(c => string.Equals(c.Hex, settings.TextColor, StringComparison.OrdinalIgnoreCase)) ?? TextColors[0];
+        TextColorListBox.SelectedItem = selectedTextColor;
+
+        // Populate and select outline color swatches
+        OutlineColorListBox.ItemsSource = OutlineColors;
+        var selectedOutlineColor = OutlineColors.FirstOrDefault(c => string.Equals(c.Hex, settings.OutlineColor, StringComparison.OrdinalIgnoreCase)) ?? OutlineColors[0];
+        OutlineColorListBox.SelectedItem = selectedOutlineColor;
+
+        // Initialize stroke thickness slider and label
+        StrokeThicknessSlider.Value = settings.StrokeThickness;
+        StrokeThicknessLabel.Text = $"{settings.StrokeThickness:F1}px";
+
+        UpdateFontPreview();
+
         RefreshWindows(this, new RoutedEventArgs());
         Closed += OnClosed;
     }
@@ -83,6 +146,23 @@ public partial class MainWindow : Window
         apiKeyStore.Delete();
         ApiKeyPasswordBox.Clear();
         SetStatus("저장된 API 키를 삭제했습니다.");
+    }
+
+    private void OpenDeepLApiKeysPage(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "https://www.deepl.com/ko/your-account/keys",
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Failed to open DeepL API Keys page", ex);
+            SetStatus("링크를 열 수 없습니다.", true);
+        }
     }
 
     private void WindowSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -167,6 +247,7 @@ public partial class MainWindow : Window
         sessionCancellation?.Dispose();
         sessionCancellation = null;
         StartStopButton.Content = "번역 시작 (F8)";
+        overlayWindow?.ClearAll();
     }
 
     private void SessionUpdated(object? sender, SessionUpdate update) => Dispatcher.Invoke(() =>
@@ -237,7 +318,13 @@ public partial class MainWindow : Window
             resultWindow?.Close();
             resultWindow = null;
             overlayWindow ??= new OverlayWindow();
+            overlayWindow.ClearAll();
             overlayWindow.PositionOver(window, region);
+            overlayWindow.FontFamily = new FontFamily(settings.FontFamily);
+            overlayWindow.FontSize = settings.FontSize;
+            overlayWindow.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(settings.TextColor));
+            overlayWindow.StrokeBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(settings.OutlineColor));
+            overlayWindow.StrokeThicknessValue = settings.StrokeThickness;
             overlayWindow.Show();
             return;
         }
@@ -286,7 +373,7 @@ public partial class MainWindow : Window
 
     private void SaveSelection(CapturableWindow window, CaptureRegion region)
     {
-        settings = new AppSettings(window.Title, window.ProcessName, region, settings.DisplayMode);
+        settings = new AppSettings(window.Title, window.ProcessName, region, settings.DisplayMode, settings.FontFamily, settings.FontSize, settings.TextColor, settings.OutlineColor, settings.StrokeThickness);
         settingsStore.Save(settings);
     }
 
@@ -329,6 +416,105 @@ public partial class MainWindow : Window
         {
             ResultWindowPreviewGrid.Visibility = Visibility.Collapsed;
             OverlayPreviewGrid.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void UpdateFontPreview()
+    {
+        if (FontPreviewTextBlock == null) return;
+
+        if (FontFamilyComboBox?.SelectedItem is string fontFamilyName)
+        {
+            FontPreviewTextBlock.FontFamily = new FontFamily(fontFamilyName);
+        }
+        if (FontSizeSlider != null)
+        {
+            FontPreviewTextBlock.FontSize = Math.Round(FontSizeSlider.Value);
+        }
+        if (TextColorListBox?.SelectedItem is ColorChoice textColor)
+        {
+            FontPreviewTextBlock.Fill = textColor.HexBrush;
+        }
+        if (OutlineColorListBox?.SelectedItem is ColorChoice outlineColor)
+        {
+            FontPreviewTextBlock.Stroke = outlineColor.HexBrush;
+        }
+        if (StrokeThicknessSlider != null)
+        {
+            FontPreviewTextBlock.StrokeThickness = Math.Round(StrokeThicknessSlider.Value, 1);
+        }
+    }
+
+    private void FontFamilySelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (settings == null) return;
+        if (FontFamilyComboBox.SelectedItem is string fontFamilyName)
+        {
+            settings = settings with { FontFamily = fontFamilyName };
+            settingsStore.Save(settings);
+            UpdateFontPreview();
+            if (overlayWindow is not null)
+            {
+                overlayWindow.FontFamily = new FontFamily(fontFamilyName);
+            }
+        }
+    }
+
+    private void FontSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (settings == null || FontSizeLabel == null) return;
+        double fontSize = Math.Round(e.NewValue);
+        FontSizeLabel.Text = $"{fontSize}pt";
+        settings = settings with { FontSize = fontSize };
+        settingsStore.Save(settings);
+        UpdateFontPreview();
+        if (overlayWindow is not null)
+        {
+            overlayWindow.FontSize = fontSize;
+        }
+    }
+
+    private void TextColorSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (settings == null) return;
+        if (TextColorListBox.SelectedItem is ColorChoice color)
+        {
+            settings = settings with { TextColor = color.Hex };
+            settingsStore.Save(settings);
+            UpdateFontPreview();
+            if (overlayWindow is not null)
+            {
+                overlayWindow.Foreground = color.HexBrush;
+            }
+        }
+    }
+
+    private void OutlineColorSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (settings == null) return;
+        if (OutlineColorListBox.SelectedItem is ColorChoice color)
+        {
+            settings = settings with { OutlineColor = color.Hex };
+            settingsStore.Save(settings);
+            UpdateFontPreview();
+            if (overlayWindow is not null)
+            {
+                overlayWindow.StrokeBrush = color.HexBrush;
+            }
+        }
+    }
+
+    private void StrokeThicknessSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (settings == null || StrokeThicknessLabel == null) return;
+        double thickness = Math.Round(e.NewValue, 1);
+        StrokeThicknessLabel.Text = $"{thickness:F1}px";
+        settings = settings with { StrokeThickness = thickness };
+        settingsStore.Save(settings);
+        UpdateFontPreview();
+        if (overlayWindow is not null)
+        {
+            overlayWindow.StrokeThicknessValue = thickness;
         }
     }
 }

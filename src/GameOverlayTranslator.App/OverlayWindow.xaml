@@ -3,13 +3,19 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:GameOverlayTranslator.App"
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
-        ShowInTaskbar="False" Topmost="True" ShowActivated="False">
+        BorderThickness="0" ShowInTaskbar="False" Topmost="True" ShowActivated="False">
     <Grid>
         <ItemsControl x:Name="OverlayItems" VerticalAlignment="Bottom" Margin="4">
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                    <Grid Height="28" Margin="0,0,0,2">
-                        <local:OutlinedTextBlock Text="{Binding DisplayText}" FontSize="20" FontWeight="Bold" />
+                    <Grid Margin="0,0,0,2">
+                        <local:OutlinedTextBlock Text="{Binding DisplayText}" 
+                                                 FontFamily="{Binding Path=FontFamily, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                 FontSize="{Binding Path=FontSize, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                 Fill="{Binding Path=Foreground, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                 Stroke="{Binding Path=StrokeBrush, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                 StrokeThickness="{Binding Path=StrokeThicknessValue, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                 FontWeight="Bold" />
                     </Grid>
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
