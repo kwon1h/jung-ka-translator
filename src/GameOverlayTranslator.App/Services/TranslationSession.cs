@@ -8,6 +8,7 @@ namespace GameOverlayTranslator.App.Services;
 
 public sealed class TranslationSession(ICaptureService captureService, IOcrEngine ocrEngine, ITranslationService translationService) : ITranslationSession
 {
+    private readonly ScreenTranslationCacheStore cacheStore = new();
     private CancellationTokenSource? runCancellation;
     private Task? runTask;
 
@@ -58,7 +59,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
     private async Task RunAsync(SessionOptions options, CancellationToken ct)
     {
         var exactLines = new HashSet<string>(StringComparer.Ordinal);
-        var screenTranslationCache = new Dictionary<string, string>(StringComparer.Ordinal);
+        var screenTranslationCache = cacheStore.Load();
         var recentChat = new RecentChatFilter();
         var totalTranslationRequests = 0;
         var totalTranslationCharacters = 0;
@@ -112,26 +113,28 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         continue;
                     }
 
-                    // 1. Pre-process all lines (apply dictionary, identify which ones need DeepL translation)
+                    // 1. Pre-process all lines (apply dictionary, identify which ones need translation)
                     var processedLines = new List<(OcrLineResult OcrLine, string ProcessedText, string CacheKey, string? DirectTranslation)>();
                     var textsToTranslate = new List<string>();
                     var cacheKeysToTranslate = new List<string>();
+                    var uniqueTextsInBatch = new HashSet<string>(StringComparer.Ordinal);
 
                     foreach (var line in linesToTranslate)
                     {
-                        var trimmed = line.Text.Trim();
+                        var normalizedForTrans = NormalizeTextForTranslation(line.Text, options.OcrLanguage);
+                        var trimmed = normalizedForTrans.Trim();
                         
                         // Exact match in dictionary
                         var normalizedTrimmed = NormalizeForMatching(trimmed);
                         var exactEntry = dictExactEntries.FirstOrDefault(e => string.Equals(e.NormalizedSource, normalizedTrimmed, StringComparison.OrdinalIgnoreCase)).Entry;
                         if (exactEntry != null)
                         {
-                            processedLines.Add((line, exactEntry.Target, CreateScreenTranslationCacheKey(line.Text, exactEntry.Target, options.TargetLanguage.Code), exactEntry.Target));
+                            processedLines.Add((line, exactEntry.Target, CreateScreenTranslationCacheKey(normalizedForTrans, exactEntry.Target, options.TargetLanguage.Code), exactEntry.Target));
                             continue;
                         }
 
                         // Substring replacements in dictionary
-                        var processed = line.Text;
+                        var processed = normalizedForTrans;
                         foreach (var (entry, regex) in dictRegexes)
                         {
                             processed = regex.Replace(processed, entry.Target);
@@ -139,7 +142,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
                         if (HasExpectedSourceScript(processed, options.OcrLanguage))
                         {
-                            var cacheKey = CreateScreenTranslationCacheKey(line.Text, processed, options.TargetLanguage.Code);
+                            var cacheKey = CreateScreenTranslationCacheKey(normalizedForTrans, processed, options.TargetLanguage.Code);
                             if (screenTranslationCache.TryGetValue(cacheKey, out var cachedTranslation))
                             {
                                 processedLines.Add((line, processed, cacheKey, cachedTranslation));
@@ -147,13 +150,16 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                             else
                             {
                                 processedLines.Add((line, processed, cacheKey, null));
-                                textsToTranslate.Add(processed);
-                                cacheKeysToTranslate.Add(cacheKey);
+                                if (uniqueTextsInBatch.Add(processed))
+                                {
+                                    textsToTranslate.Add(processed);
+                                    cacheKeysToTranslate.Add(cacheKey);
+                                }
                             }
                         }
                         else
                         {
-                            processedLines.Add((line, processed, CreateScreenTranslationCacheKey(line.Text, processed, options.TargetLanguage.Code), processed));
+                            processedLines.Add((line, processed, CreateScreenTranslationCacheKey(normalizedForTrans, processed, options.TargetLanguage.Code), processed));
                         }
                     }
 
@@ -183,6 +189,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                             {
                                 screenTranslationCache[cacheKeysToTranslate[index]] = translatedTexts[index];
                             }
+                            cacheStore.Save(screenTranslationCache);
                         }
                         catch (Exception ex)
                         {
@@ -220,7 +227,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     continue;
                 }
 
-                var chatLines = ChatLineParser.Parse(recognized.Text);
+                var normalizedOcrText = NormalizeOcrTextForChat(recognized.Text, options.OcrLanguage);
+                var chatLines = ChatLineParser.Parse(normalizedOcrText);
                 AppLog.Write($"OCR chat poll raw={Quote(recognized.Text)} parsedLines={chatLines.Count}");
                 if (chatLines.Count == 0)
                 {
@@ -240,17 +248,20 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         continue;
                     }
 
+                    var normalizedMessage = NormalizeTextForTranslation(line.Message, options.OcrLanguage);
+                    var activeLine = new ChatLine(line.Speaker, normalizedMessage);
+
                     // 1. Try Exact Dictionary Match first (ignores spaces/punctuation, bypasses quality filter check)
-                    var trimmedMsg = line.Message.Trim();
+                    var trimmedMsg = activeLine.Message.Trim();
                     var normalizedMsg = NormalizeForMatching(trimmedMsg);
                     var exactEntry = dictExactEntries.FirstOrDefault(e => string.Equals(e.NormalizedSource, normalizedMsg, StringComparison.OrdinalIgnoreCase)).Entry;
 
                     if (exactEntry != null)
                     {
                         var dictionaryExactTranslation = exactEntry.Target;
-                        AppLog.Write($"UserDictionary exact match source={Quote(line.Message)} target={Quote(dictionaryExactTranslation)}");
+                        AppLog.Write($"UserDictionary exact match source={Quote(activeLine.Message)} target={Quote(dictionaryExactTranslation)}");
 
-                        var decision = recentChat.Evaluate(new ChatLine(line.Speaker, dictionaryExactTranslation), options.Filter);
+                        var decision = recentChat.Evaluate(new ChatLine(activeLine.Speaker, dictionaryExactTranslation), options.Filter);
                         if (decision.Action == ChatFilterAction.Skip)
                         {
                             Publish("유사 채팅 건너뜀", line.SourceLine, filterReason: $"유사도 초과 (유사도: {decision.SimilarityScore:F2})", filterRule: "RecentChatFilter");
@@ -261,7 +272,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                             decision.Action == ChatFilterAction.Replace ? "유사 채팅 교체" : "채팅 번역 완료",
                             line.SourceLine,
                             dictionaryExactTranslation,
-                            speaker: line.Speaker,
+                            speaker: activeLine.Speaker,
                             isChatLine: true,
                             chatLineId: decision.Id,
                             replacesChatLine: decision.Action == ChatFilterAction.Replace,
@@ -273,7 +284,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     }
 
                     // 2. If not exact dictionary match, run Quality Filter Check
-                    var initialQuality = ChatQualityFilter.Check(line, options.OcrLanguage, options.Filter);
+                    var initialQuality = ChatQualityFilter.Check(activeLine, options.OcrLanguage, options.Filter);
                     if (!initialQuality.Accepted)
                     {
                         AppLog.Write($"ChatQualityFilter reject reason={initialQuality.Reason} line={Quote(line.SourceLine)}");
@@ -282,8 +293,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     }
 
                     // 3. Substring user dictionary replacements (space and punctuation flexible)
-                    var activeLine = line;
-                    var processedMessage = line.Message;
+                    var processedMessage = activeLine.Message;
                     bool replaced = false;
                     foreach (var (entry, regex) in dictRegexes)
                     {
@@ -297,8 +307,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
                     if (replaced)
                     {
-                        AppLog.Write($"UserDictionary substring replace. Before={Quote(line.Message)} After={Quote(processedMessage)}");
-                        activeLine = new ChatLine(line.Speaker, processedMessage);
+                        AppLog.Write($"UserDictionary substring replace. Before={Quote(activeLine.Message)} After={Quote(processedMessage)}");
+                        activeLine = new ChatLine(activeLine.Speaker, processedMessage);
                     }
 
                     // Quality check after replacements (only if replaced, otherwise reuse initialQuality)
@@ -495,5 +505,31 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         }
 
         return new Regex(patternBuilder.ToString(), RegexOptions.IgnoreCase);
+    }
+
+    private static readonly Regex MultipleSpacesRegex = new(@"\s+", RegexOptions.Compiled);
+
+    private static string NormalizeTextForTranslation(string text, OcrLanguage language)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+        // Chinese language space normalization to save tokens and avoid OCR space errors
+        if (language.Tag.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
+        {
+            var result = text;
+            result = Regex.Replace(result, @"(?<=[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])\s+", "");
+            result = Regex.Replace(result, @"\s+(?=[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])", "");
+            return MultipleSpacesRegex.Replace(result, " ").Trim();
+        }
+
+        return MultipleSpacesRegex.Replace(text, " ").Trim();
+    }
+
+    private static string NormalizeOcrTextForChat(string text, OcrLanguage language)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+        var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.None);
+        var normalizedLines = lines.Select(line => NormalizeTextForTranslation(line, language));
+        return string.Join("\n", normalizedLines);
     }
 }

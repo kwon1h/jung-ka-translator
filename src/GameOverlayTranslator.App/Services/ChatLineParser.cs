@@ -83,7 +83,7 @@ public static partial class ChatLineParser
     }
 
     private static bool IsSpeakerCharacter(char value) =>
-        char.IsLetterOrDigit(value) || IsHan(value) || value is '_' or '-' or '.';
+        char.IsLetterOrDigit(value) || IsHan(value) || value is '_' or '-' or '.' || char.IsWhiteSpace(value);
 
     private static bool IsHan(char value) => value is >= '\u3400' and <= '\u9FFF';
 

@@ -4,6 +4,19 @@ using GameOverlayTranslator.App.Domain;
 
 namespace GameOverlayTranslator.App.Services;
 
+public enum TranslationServiceType
+{
+    DeepL,
+    GoogleUnofficial,
+    GoogleWebApp
+}
+
+public enum TranslationDisplayMode
+{
+    Window,
+    TransparentOverlay
+}
+
 public sealed record AppSettings(
     string? LastWindowTitle = null,
     string? LastWindowProcessName = null,
@@ -30,13 +43,10 @@ public sealed record AppSettings(
     int SimilarityCacheSeconds = 12,
     string OcrLanguageTag = "zh-Hans",
     string TargetLanguageCode = "ko",
-    TranslationMode TranslationMode = TranslationMode.Chat);
-
-public enum TranslationDisplayMode
-{
-    Window,
-    TransparentOverlay
-}
+    TranslationMode TranslationMode = TranslationMode.Chat,
+    TranslationServiceType TranslatorType = TranslationServiceType.DeepL,
+    string GoogleWebAppUrl = "",
+    bool ShowOverlayInScreenShare = false);
 
 public sealed class AppSettingsStore
 {
@@ -74,7 +84,9 @@ public sealed class AppSettingsStore
                         ReplacementSimilarityThreshold = settings.ReplacementSimilarityThreshold < 0 || settings.ReplacementSimilarityThreshold > 1 ? 0.82 : settings.ReplacementSimilarityThreshold,
                         SimilarityCacheSeconds = settings.SimilarityCacheSeconds < 1 ? 12 : settings.SimilarityCacheSeconds,
                         OcrLanguageTag = string.IsNullOrWhiteSpace(settings.OcrLanguageTag) ? "zh-Hans" : settings.OcrLanguageTag,
-                        TargetLanguageCode = string.IsNullOrWhiteSpace(settings.TargetLanguageCode) ? "ko" : settings.TargetLanguageCode
+                        TargetLanguageCode = string.IsNullOrWhiteSpace(settings.TargetLanguageCode) ? "ko" : settings.TargetLanguageCode,
+                        GoogleWebAppUrl = settings.GoogleWebAppUrl ?? string.Empty,
+                        ShowOverlayInScreenShare = settings.ShowOverlayInScreenShare
                     };
                 }
             }

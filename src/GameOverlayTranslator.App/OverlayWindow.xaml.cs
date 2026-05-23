@@ -60,15 +60,26 @@ public partial class OverlayWindow : Window
         inactiveCanvas = ScreenOverlayCanvas2;
     }
 
+    public bool ExcludeFromCapture { get; set; } = true;
+
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         int extendedStyle = Platform.NativeMethods.GetWindowLong(hwnd, Platform.NativeMethods.GWL_EXSTYLE);
         Platform.NativeMethods.SetWindowLong(hwnd, Platform.NativeMethods.GWL_EXSTYLE, extendedStyle | Platform.NativeMethods.WS_EX_TRANSPARENT | Platform.NativeMethods.WS_EX_NOACTIVATE);
-        if (!Platform.NativeMethods.SetWindowDisplayAffinity(hwnd, Platform.NativeMethods.WDA_EXCLUDEFROMCAPTURE))
+        UpdateDisplayAffinity();
+    }
+
+    public void UpdateDisplayAffinity()
+    {
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+
+        uint affinity = ExcludeFromCapture ? Platform.NativeMethods.WDA_EXCLUDEFROMCAPTURE : 0;
+        if (!Platform.NativeMethods.SetWindowDisplayAffinity(hwnd, affinity))
         {
-            AppLog.Write("Failed to exclude overlay from capture.");
+            AppLog.Write($"Failed to set window display affinity to {affinity}.");
         }
     }
 

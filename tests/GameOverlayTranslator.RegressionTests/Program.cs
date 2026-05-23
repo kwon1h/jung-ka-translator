@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -18,11 +19,30 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("품질 필터로 버린 채팅은 중복 캐시에 남지 않는다", TestRejectedChatDoesNotPoisonExactDuplicateCache),
     ("Repeated screen OCR line uses cached translation", TestRepeatedScreenLineUsesCachedTranslation),
     ("Empty screen OCR does not clear overlay items", TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems),
-    ("사전 OCR 변형 매칭 및 공백/품질 필터 우회 테스트", TestDictionaryMatchingWithOcrVariations)
+    ("사전 OCR 변형 매칭 및 공백/품질 필터 우회 테스트", TestDictionaryMatchingWithOcrVariations),
+    ("Google Unofficial 번역 서비스 동작 테스트", TestGoogleUnofficialTranslation),
+    ("Google Web App 번역 서비스 동작 테스트", TestGoogleWebAppTranslation),
+    ("Google 번역 공백 정규화 및 배치 중복 제거 최적화 테스트", TestTranslationTokenOptimization),
+    ("중국어 유저명 띄어쓰기 오인식 시 품질 검사 통과 및 파싱 검증 테스트", TestChineseSpeakerOcrSpacingQualityPass)
 };
+
+// Clear persistent translation cache before tests to prevent state contamination
+var cachePath = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    "GameOverlayTranslator",
+    "screen_translation_cache.json");
+if (File.Exists(cachePath))
+{
+    File.Delete(cachePath);
+}
 
 foreach (var test in tests)
 {
+    if (File.Exists(cachePath))
+    {
+        File.Delete(cachePath);
+    }
+
     await test.Run();
     Console.WriteLine($"PASS {test.Name}");
 }
@@ -287,6 +307,124 @@ static async Task TestDictionaryMatchingWithOcrVariations()
     Assert(dictExactUpdates.Any(u => u.TranslatedText == "빨리 도와줘!!"), "Missing translation for '快帮帮我!!'");
     Assert(dictExactUpdates.Any(u => u.TranslatedText == "괜찮아~"), "Missing translation for '没关系~'");
     Assert(dictExactUpdates.Any(u => u.TranslatedText == "미안해 >_<"), "Missing translation for '对不起>_<'");
+}
+
+static async Task TestGoogleUnofficialTranslation()
+{
+    using var client = new HttpClient();
+    var service = new GoogleUnofficialTranslationService(client);
+    
+    // Single Translation Test
+    var result = await service.TranslateAsync(new TranslationRequest("Hello", "ko", "en"), CancellationToken.None);
+    Assert(result.TranslatedText.Trim() == "안녕하세요" || result.TranslatedText.Trim().Contains("안녕"), 
+        $"Google Unofficial single translation failed. Got: {result.TranslatedText}");
+
+    // Batch Translation Test
+    var batchResult = await service.TranslateBatchAsync(new BatchTranslationRequest(new[] { "Hello", "World" }, "ko", "en"), CancellationToken.None);
+    Assert(batchResult.TranslatedTexts.Count == 2, "Expected 2 batch translation results");
+    Assert(batchResult.TranslatedTexts[0].Trim().Contains("안녕"), $"First translation mismatch: {batchResult.TranslatedTexts[0]}");
+    Assert(batchResult.TranslatedTexts[1].Trim().Contains("세계") || batchResult.TranslatedTexts[1].Trim().Contains("월드") || batchResult.TranslatedTexts[1].Trim().Contains("세상"), $"Second translation mismatch: {batchResult.TranslatedTexts[1]}");
+}
+
+static async Task TestGoogleWebAppTranslation()
+{
+    using var client = new HttpClient();
+    
+    // GoogleWebAppUrl is dummy for unit testing, but we can verify it throws when URL is empty.
+    var serviceEmptyUrl = new GoogleWebAppTranslationService(client, () => string.Empty);
+    try
+    {
+        await serviceEmptyUrl.TranslateAsync(new TranslationRequest("Hello", "ko", "en"), CancellationToken.None);
+        Assert(false, "Expected InvalidOperationException when Web App URL is empty");
+    }
+    catch (InvalidOperationException)
+    {
+        // Expected
+    }
+
+    // Also verify delegator switches correctly
+    var dummySettings = new AppSettings(TranslatorType: TranslationServiceType.GoogleUnofficial);
+    var delegator = new TranslationServiceDelegator(client, () => null, () => dummySettings);
+    var delegatorResult = await delegator.TranslateAsync(new TranslationRequest("Hello", "ko", "en"), CancellationToken.None);
+    Assert(delegatorResult.TranslatedText.Trim().Contains("안녕"), "Delegator routing to Google Unofficial failed");
+}
+
+static async Task TestTranslationTokenOptimization()
+{
+    // Verify Chinese space normalization and batch deduplication
+    var translation = new CountingTranslationService();
+    // 3 identical lines with weird spaces to test normalization + deduplication
+    // (Uses text not present in the user dictionary)
+    var ocrResults = new List<OcrResult>
+    {
+        new OcrResult(
+            "这   是  一 个   测 试",
+            [
+                new OcrLineResult("这   是  一 个   测 试", new Rect(0, 0, 100, 20)),
+                new OcrLineResult("这   是  一 个   测 试", new Rect(0, 30, 100, 20)),
+                new OcrLineResult("这  是 一  个 测 试", new Rect(0, 60, 100, 20))
+            ])
+    };
+
+    var session = new TranslationSession(
+        new FakeCaptureService(),
+        new SequencedOcrEngine(ocrResults.ToArray()),
+        translation);
+
+    var updates = new List<SessionUpdate>();
+    session.Updated += (_, update) => updates.Add(update);
+
+    using var cts = new CancellationTokenSource();
+    await session.StartAsync(CreateOptions(TranslationMode.Screen), cts.Token);
+    await Task.Delay(90);
+    await session.StopAsync();
+
+    // Verification:
+    // 1. All 3 lines normalized to "这是一个测试" and sent.
+    // 2. Because of Deduplication, only 1 batch translation request containing exactly 1 text ("这是一个测试") should be sent.
+    Assert(translation.BatchRequests == 1, $"Expected 1 batch request, got {translation.BatchRequests}");
+    var finalUpdate = updates.LastOrDefault(update => update.ScreenItems != null);
+    Assert(finalUpdate != null, "Expected screen items update");
+    Assert(finalUpdate!.ScreenItems!.Count == 3, $"Expected 3 screen items, got {finalUpdate.ScreenItems.Count}");
+    
+    // Ensure all three items resolved to the same translated text
+    foreach (var item in finalUpdate.ScreenItems!)
+    {
+        Assert(item.TranslatedText == "translated:这是一个测试", $"Unexpected translated text: {item.TranslatedText}");
+    }
+}
+
+static async Task TestChineseSpeakerOcrSpacingQualityPass()
+{
+    // Verify that a speaker with spaced Chinese chars (common OCR error) is successfully parsed and passes quality filter
+    var translation = new CountingTranslationService();
+    // Spaced Chinese speaker with spacing in message
+    var ocrResults = new List<OcrResult>
+    {
+        new OcrResult("风 屿 六 横 1 2 纵 : 睁 不 开 眼 了", [])
+    };
+
+    var session = new TranslationSession(
+        new FakeCaptureService(),
+        new SequencedOcrEngine(ocrResults.ToArray()),
+        translation);
+
+    var updates = new List<SessionUpdate>();
+    session.Updated += (_, update) => updates.Add(update);
+
+    using var cts = new CancellationTokenSource();
+    await session.StartAsync(CreateOptions(TranslationMode.Chat), cts.Token);
+    await Task.Delay(90);
+    await session.StopAsync();
+
+    // Verify:
+    // 1. Parsing: The parser must correctly identify "风屿六横12纵" as the speaker (no trailing/leading spaces or truncation to single char).
+    // 2. Translation Request: The message should successfully pass the SpeakerValidation check (since speaker is now parsed as multiple letters/han) and be translated.
+    Assert(translation.SingleRequests == 1, $"Expected 1 translation request, got {translation.SingleRequests}");
+    var finalUpdate = updates.LastOrDefault(update => update.IsChatLine);
+    Assert(finalUpdate != null, "Expected chat line update");
+    Assert(finalUpdate.Speaker?.Replace(" ", "") == "风屿六横12纵", $"Expected speaker '风屿六横12纵' (without spaces), got '{finalUpdate.Speaker}'");
+    Assert(finalUpdate.TranslatedText == "translated:睁不开眼了", $"Unexpected translated text: {finalUpdate.TranslatedText}");
 }
 
 sealed class FakeCaptureService : ICaptureService

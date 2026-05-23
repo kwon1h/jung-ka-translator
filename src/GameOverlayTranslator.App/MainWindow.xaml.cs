@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -89,6 +90,7 @@ public partial class MainWindow : Window
     private static readonly CaptureRegion FullWindowRegion = new(0, 0, 1, 1);
     private readonly ApiKeyStore apiKeyStore = new();
     private readonly AppSettingsStore settingsStore = new();
+    private static readonly HttpClient httpClient = new();
     private readonly TranslationSession session;
     private AppSettings settings;
     private ResultWindow? resultWindow;
@@ -107,7 +109,12 @@ public partial class MainWindow : Window
     {
         settings = settingsStore.Load();
         InitializeComponent();
-        session = new TranslationSession(new WindowCaptureService(), new WindowsOcrEngine(), new DeepLTranslationService(new HttpClient(), () => ApiKeyPasswordBox.Password));
+        var delegator = new TranslationServiceDelegator(
+            httpClient,
+            () => ApiKeyPasswordBox.Password,
+            () => settings
+        );
+        session = new TranslationSession(new WindowCaptureService(), new WindowsOcrEngine(), delegator);
         session.BeforeCaptureAsync = SetOverlayCaptureVisibilityAsync(false);
         session.AfterCaptureAsync = SetOverlayCaptureVisibilityAsync(true);
         session.Updated += SessionUpdated;
@@ -125,6 +132,7 @@ public partial class MainWindow : Window
         RestoreRegion(settings.LastRegion);
         UpdateRegionButtonVisual();
         DisplayModeComboBox.SelectedItem = DisplayModes.First(mode => mode.Mode == settings.DisplayMode);
+        ShowOverlayInScreenShareCheckBox.IsChecked = settings.ShowOverlayInScreenShare;
         UpdateDisplayModePreview();
 
         // Populate and select font family
@@ -196,6 +204,19 @@ public partial class MainWindow : Window
 
         RefreshWindows(this, new RoutedEventArgs());
         Closed += OnClosed;
+
+        // Restore Translator selector and URL textbox states
+        var selectedTranslatorTag = settings.TranslatorType.ToString();
+        foreach (ComboBoxItem item in TranslatorTypeComboBox.Items)
+        {
+            if (item.Tag is string tag && tag == selectedTranslatorTag)
+            {
+                TranslatorTypeComboBox.SelectedItem = item;
+                break;
+            }
+        }
+        GoogleWebAppUrlTextBox.Text = settings.GoogleWebAppUrl;
+        UpdateTranslatorPanelsVisibility(settings.TranslatorType);
     }
 
     private void RefreshWindows(object sender, RoutedEventArgs e)
@@ -228,6 +249,38 @@ public partial class MainWindow : Window
         apiKeyStore.Delete();
         ApiKeyPasswordBox.Clear();
         SetStatus("저장된 API 키를 삭제했습니다.");
+    }
+
+    private void UpdateTranslatorPanelsVisibility(TranslationServiceType translatorType)
+    {
+        if (DeepLSettingsPanel == null || GoogleUnofficialSettingsPanel == null || GoogleWebAppSettingsPanel == null)
+            return;
+
+        DeepLSettingsPanel.Visibility = translatorType == TranslationServiceType.DeepL ? Visibility.Visible : Visibility.Collapsed;
+        GoogleUnofficialSettingsPanel.Visibility = translatorType == TranslationServiceType.GoogleUnofficial ? Visibility.Visible : Visibility.Collapsed;
+        GoogleWebAppSettingsPanel.Visibility = translatorType == TranslationServiceType.GoogleWebApp ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void TranslatorTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (TranslatorTypeComboBox.SelectedItem is ComboBoxItem selectedItem && selectedItem.Tag is string tag)
+        {
+            if (Enum.TryParse<TranslationServiceType>(tag, out var translatorType))
+            {
+                settings = settings with { TranslatorType = translatorType };
+                settingsStore.Save(settings);
+                UpdateTranslatorPanelsVisibility(translatorType);
+                SetStatus($"번역 서비스가 {selectedItem.Content}로 변경되었습니다.");
+            }
+        }
+    }
+
+    private void SaveGoogleWebAppUrl(object sender, RoutedEventArgs e)
+    {
+        var url = GoogleWebAppUrlTextBox.Text;
+        settings = settings with { GoogleWebAppUrl = url ?? string.Empty };
+        settingsStore.Save(settings);
+        SetStatus("Google Web App URL을 저장했습니다.");
     }
 
     private void OpenDeepLApiKeysPage(object sender, RoutedEventArgs e)
@@ -312,6 +365,19 @@ public partial class MainWindow : Window
             resultWindow.ApplyMode(displayMode);
         }
         UpdateDisplayModePreview();
+    }
+
+    private void ShowOverlayInScreenShareChanged(object sender, RoutedEventArgs e)
+    {
+        if (settings == null) return;
+        settings = settings with { ShowOverlayInScreenShare = ShowOverlayInScreenShareCheckBox.IsChecked == true };
+        settingsStore.Save(settings);
+
+        if (overlayWindow is not null)
+        {
+            overlayWindow.ExcludeFromCapture = !settings.ShowOverlayInScreenShare;
+            overlayWindow.UpdateDisplayAffinity();
+        }
     }
 
     private void OcrLanguageSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -504,7 +570,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (!force)
+            if (!force && !settings.ShowOverlayInScreenShare)
             {
                 return;
             }
@@ -581,7 +647,9 @@ public partial class MainWindow : Window
             overlayWindow.StrokeThicknessValue = settings.StrokeThickness;
             overlayWindow.OverlayBackgroundBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(settings.OverlayBackgroundColor));
             overlayWindow.Opacity = settings.OverlayOpacity;
+            overlayWindow.ExcludeFromCapture = !settings.ShowOverlayInScreenShare;
             overlayWindow.Show();
+            overlayWindow.UpdateDisplayAffinity();
             return;
         }
 
