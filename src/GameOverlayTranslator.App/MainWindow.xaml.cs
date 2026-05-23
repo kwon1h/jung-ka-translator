@@ -69,6 +69,10 @@ public partial class MainWindow : Window
     private CaptureRegion? selectedRegion;
     private CancellationTokenSource? sessionCancellation;
 
+    private readonly UserDictionaryStore userDictStore = new();
+    private readonly System.Collections.ObjectModel.ObservableCollection<DiagnosticLogItem> diagnosticLogs = new();
+    private readonly List<UserDictEntry> userDictionaryEntries = new();
+
     public MainWindow()
     {
         settings = settingsStore.Load();
@@ -109,6 +113,39 @@ public partial class MainWindow : Window
         // Initialize stroke thickness slider and label
         StrokeThicknessSlider.Value = settings.StrokeThickness;
         StrokeThicknessLabel.Text = $"{settings.StrokeThickness:F1}px";
+
+        // Load User Dictionary
+        userDictionaryEntries = userDictStore.Load();
+        UserDictionaryDataGrid.ItemsSource = userDictionaryEntries;
+
+        // Load Advanced Filter Settings to UI
+        EnableLengthFilterCheckBox.IsChecked = settings.EnableLengthFilter;
+        MinMessageLengthSlider.Value = settings.MinMessageLength;
+        MinMessageLengthLabel.Text = $"{settings.MinMessageLength}자";
+        MaxMessageLengthSlider.Value = settings.MaxMessageLength;
+        MaxMessageLengthLabel.Text = $"{settings.MaxMessageLength}자";
+
+        EnableNoiseFilterCheckBox.IsChecked = settings.EnableNoiseFilter;
+        MaxNoiseTokenCountSlider.Value = settings.MaxNoiseTokenCount;
+        MaxNoiseTokenCountLabel.Text = $"{settings.MaxNoiseTokenCount}개";
+
+        EnableSeparatorFilterCheckBox.IsChecked = settings.EnableSeparatorFilter;
+        MaxSeparatorsCountSlider.Value = settings.MaxSeparatorsCount;
+        MaxSeparatorsCountLabel.Text = $"{settings.MaxSeparatorsCount}개";
+
+        EnableSimilarityFilterCheckBox.IsChecked = settings.EnableSimilarityFilter;
+        SimilarityThresholdSlider.Value = settings.SimilarityThreshold;
+        SimilarityThresholdLabel.Text = $"{settings.SimilarityThreshold:F2}";
+        ReplacementSimilarityThresholdSlider.Value = settings.ReplacementSimilarityThreshold;
+        ReplacementSimilarityThresholdLabel.Text = $"{settings.ReplacementSimilarityThreshold:F2}";
+        SimilarityCacheSecondsSlider.Value = settings.SimilarityCacheSeconds;
+        SimilarityCacheSecondsLabel.Text = $"{settings.SimilarityCacheSeconds}초";
+
+        // Bind Diagnostic Log List
+        DiagnosticLogsListView.ItemsSource = diagnosticLogs;
+
+        // Initialize filter panel enablement
+        UpdateFilterPanelEnablement();
 
         UpdateFontPreview();
 
@@ -235,7 +272,33 @@ public partial class MainWindow : Window
         }
         sessionCancellation = new CancellationTokenSource();
         ShowTranslationOutput(window, region);
-        await session.StartAsync(new SessionOptions(new CaptureTarget(window), region, ocrLanguage, targetLanguage, TimeSpan.FromMilliseconds(900)), sessionCancellation.Token);
+
+        var filterSettings = new FilterSettings(
+            EnableLengthFilterCheckBox.IsChecked == true,
+            (int)MinMessageLengthSlider.Value,
+            (int)MaxMessageLengthSlider.Value,
+            EnableNoiseFilterCheckBox.IsChecked == true,
+            (int)MaxNoiseTokenCountSlider.Value,
+            EnableSeparatorFilterCheckBox.IsChecked == true,
+            (int)MaxSeparatorsCountSlider.Value,
+            EnableSimilarityFilterCheckBox.IsChecked == true,
+            SimilarityThresholdSlider.Value,
+            ReplacementSimilarityThresholdSlider.Value,
+            (int)SimilarityCacheSecondsSlider.Value
+        );
+
+        var userDict = userDictStore.Load();
+
+        await session.StartAsync(new SessionOptions(
+            new CaptureTarget(window), 
+            region, 
+            ocrLanguage, 
+            targetLanguage, 
+            TimeSpan.FromMilliseconds(900), 
+            filterSettings, 
+            userDict), 
+            sessionCancellation.Token);
+
         SaveSelection(window, region);
         StartStopButton.Content = "번역 정지 (F8)";
     }
@@ -261,6 +324,26 @@ public partial class MainWindow : Window
             overlayWindow.Topmost = true;
         }
         overlayWindow?.Apply(update);
+
+        // Handle diagnostic log recording
+        if (!string.IsNullOrWhiteSpace(update.OcrRawText) || 
+            !string.IsNullOrWhiteSpace(update.SourceText) || 
+            !string.IsNullOrWhiteSpace(update.FilterRule))
+        {
+            var logItem = new DiagnosticLogItem
+            {
+                Time = DateTime.Now.ToString("HH:mm:ss"),
+                Status = update.Status,
+                Source = update.OcrRawText ?? update.SourceText ?? string.Empty,
+                Rule = update.FilterRule ?? string.Empty,
+                Reason = update.FilterReason ?? string.Empty
+            };
+            diagnosticLogs.Insert(0, logItem);
+            while (diagnosticLogs.Count > 100)
+            {
+                diagnosticLogs.RemoveAt(diagnosticLogs.Count - 1);
+            }
+        }
     });
 
     private async void OnPreviewKeyDown(object sender, KeyEventArgs e)
@@ -517,4 +600,127 @@ public partial class MainWindow : Window
             overlayWindow.StrokeThicknessValue = thickness;
         }
     }
+
+    private void FilterSettingChanged(object sender, RoutedEventArgs e)
+    {
+        if (settings == null || MinMessageLengthSlider == null || MaxMessageLengthSlider == null || 
+            MaxNoiseTokenCountSlider == null || MaxSeparatorsCountSlider == null || 
+            SimilarityThresholdSlider == null || ReplacementSimilarityThresholdSlider == null || 
+            SimilarityCacheSecondsSlider == null)
+        {
+            return;
+        }
+
+        // Update Labels
+        MinMessageLengthLabel.Text = $"{(int)MinMessageLengthSlider.Value}자";
+        MaxMessageLengthLabel.Text = $"{(int)MaxMessageLengthSlider.Value}자";
+        MaxNoiseTokenCountLabel.Text = $"{(int)MaxNoiseTokenCountSlider.Value}개";
+        MaxSeparatorsCountLabel.Text = $"{(int)MaxSeparatorsCountSlider.Value}개";
+        SimilarityThresholdLabel.Text = $"{SimilarityThresholdSlider.Value:F2}";
+        ReplacementSimilarityThresholdLabel.Text = $"{ReplacementSimilarityThresholdSlider.Value:F2}";
+        SimilarityCacheSecondsLabel.Text = $"{(int)SimilarityCacheSecondsSlider.Value}초";
+
+        // Enablement
+        UpdateFilterPanelEnablement();
+
+        // Update Settings object and Save
+        settings = settings with
+        {
+            EnableLengthFilter = EnableLengthFilterCheckBox.IsChecked == true,
+            MinMessageLength = (int)MinMessageLengthSlider.Value,
+            MaxMessageLength = (int)MaxMessageLengthSlider.Value,
+            EnableNoiseFilter = EnableNoiseFilterCheckBox.IsChecked == true,
+            MaxNoiseTokenCount = (int)MaxNoiseTokenCountSlider.Value,
+            EnableSeparatorFilter = EnableSeparatorFilterCheckBox.IsChecked == true,
+            MaxSeparatorsCount = (int)MaxSeparatorsCountSlider.Value,
+            EnableSimilarityFilter = EnableSimilarityFilterCheckBox.IsChecked == true,
+            SimilarityThreshold = Math.Round(SimilarityThresholdSlider.Value, 2),
+            ReplacementSimilarityThreshold = Math.Round(ReplacementSimilarityThresholdSlider.Value, 2),
+            SimilarityCacheSeconds = (int)SimilarityCacheSecondsSlider.Value
+        };
+        settingsStore.Save(settings);
+    }
+
+    private void UpdateFilterPanelEnablement()
+    {
+        if (LengthFilterSettingsPanel != null && EnableLengthFilterCheckBox != null)
+        {
+            LengthFilterSettingsPanel.IsEnabled = EnableLengthFilterCheckBox.IsChecked == true;
+        }
+        if (NoiseFilterSettingsPanel != null && EnableNoiseFilterCheckBox != null)
+        {
+            NoiseFilterSettingsPanel.IsEnabled = EnableNoiseFilterCheckBox.IsChecked == true;
+        }
+        if (SeparatorFilterSettingsPanel != null && EnableSeparatorFilterCheckBox != null)
+        {
+            SeparatorFilterSettingsPanel.IsEnabled = EnableSeparatorFilterCheckBox.IsChecked == true;
+        }
+        if (SimilarityFilterSettingsPanel != null && EnableSimilarityFilterCheckBox != null)
+        {
+            SimilarityFilterSettingsPanel.IsEnabled = EnableSimilarityFilterCheckBox.IsChecked == true;
+        }
+    }
+
+    private void AddDictionaryEntry(object sender, RoutedEventArgs e)
+    {
+        var source = DictSourceTextBox.Text?.Trim();
+        var target = DictTargetTextBox.Text?.Trim();
+
+        if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target))
+        {
+            SetStatus("사전에 추가할 단어와 대체 번역어를 입력해 주세요.", true);
+            return;
+        }
+
+        if (userDictionaryEntries.Any(entry => string.Equals(entry.Source, source, StringComparison.OrdinalIgnoreCase)))
+        {
+            SetStatus("이미 사전에 존재하는 원문 단어입니다.", true);
+            return;
+        }
+
+        var entry = new UserDictEntry(source, target);
+        userDictionaryEntries.Add(entry);
+        userDictStore.Save(userDictionaryEntries);
+
+        // Refresh DataGrid
+        UserDictionaryDataGrid.ItemsSource = null;
+        UserDictionaryDataGrid.ItemsSource = userDictionaryEntries;
+
+        DictSourceTextBox.Clear();
+        DictTargetTextBox.Clear();
+        SetStatus($"사전에 단어 '{source}'를 추가했습니다.");
+    }
+
+    private void DeleteDictionaryEntry(object sender, RoutedEventArgs e)
+    {
+        if (UserDictionaryDataGrid.SelectedItem is not UserDictEntry selectedEntry)
+        {
+            SetStatus("삭제할 사전 항목을 선택해 주세요.", true);
+            return;
+        }
+
+        userDictionaryEntries.Remove(selectedEntry);
+        userDictStore.Save(userDictionaryEntries);
+
+        // Refresh DataGrid
+        UserDictionaryDataGrid.ItemsSource = null;
+        UserDictionaryDataGrid.ItemsSource = userDictionaryEntries;
+
+        SetStatus($"사전에서 단어 '{selectedEntry.Source}'를 삭제했습니다.");
+    }
+
+    private void ClearDiagnosticLogs(object sender, RoutedEventArgs e)
+    {
+        diagnosticLogs.Clear();
+        SetStatus("진단 로그를 비웠습니다.");
+    }
+}
+
+public sealed class DiagnosticLogItem
+{
+    public string Time { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string Source { get; set; } = string.Empty;
+    public string Rule { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
 }

@@ -66,6 +66,86 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Modern TabControl Style -->
+        <Style TargetType="TabControl">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style TargetType="TabItem">
+            <Setter Property="Padding" Value="14,10" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#4B5563" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Border" BorderThickness="0,0,0,2" BorderBrush="Transparent" Padding="{TemplateBinding Padding}" Margin="0,0,8,0" Cursor="Hand">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="BorderBrush" Value="#2563EB" />
+                                <Setter Property="Foreground" Value="#2563EB" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#1F2937" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Modern DataGrid Style -->
+        <Style TargetType="DataGrid">
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#E5E7EB" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="RowBackground" Value="White" />
+            <Setter Property="AlternatingRowBackground" Value="#F9FAFB" />
+            <Setter Property="GridLinesVisibility" Value="Horizontal" />
+            <Setter Property="HorizontalGridLinesBrush" Value="#F3F4F6" />
+            <Setter Property="VerticalGridLinesBrush" Value="Transparent" />
+            <Setter Property="HeadersVisibility" Value="Column" />
+            <Setter Property="AutoGenerateColumns" Value="False" />
+            <Setter Property="CanUserAddRows" Value="False" />
+            <Setter Property="RowHeaderWidth" Value="0" />
+        </Style>
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#F3F4F6" />
+            <Setter Property="Foreground" Value="#374151" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Height" Value="28" />
+        </Style>
+        <Style TargetType="DataGridCell">
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Padding="{TemplateBinding Padding}" Background="{TemplateBinding Background}">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Modern ListView/GridView Styles -->
+        <Style TargetType="ListView">
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#E5E7EB" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style TargetType="GridViewColumnHeader">
+            <Setter Property="Background" Value="#F3F4F6" />
+            <Setter Property="Foreground" Value="#374151" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Height" Value="28" />
+        </Style>
     </Window.Resources>
     
     <Grid Margin="24">
@@ -89,174 +169,350 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             
-            <!-- Left Panel: Settings -->
-            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Margin="0,0,12,0">
-                    <!-- Card 1: Basic Target Settings -->
-                    <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="기본 설정" FontSize="15" FontWeight="Bold" Foreground="#111827" Margin="0,0,0,12" />
-                            
-                            <TextBlock Text="게임 창 선택" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
-                            <Grid Margin="0,6,0,12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <ComboBox x:Name="WindowComboBox" MinHeight="34" SelectionChanged="WindowSelectionChanged" />
-                                <Button Grid.Column="1" Width="88" Margin="8,0,0,0" Content="새로고침" Click="RefreshWindows" />
-                            </Grid>
-                            
-                            <TextBlock Text="번역 대상 영역" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
-                            <Grid Margin="0,6,0,12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Button x:Name="SelectRegionButton" Width="120" Height="34" Content="영역 선택 (F9)" Click="SelectRegion" />
-                                <TextBlock x:Name="RegionText" Grid.Column="1" Margin="12,8,0,0" Text="선택되지 않음" TextWrapping="Wrap" Foreground="#4B5563" FontWeight="Medium" />
-                            </Grid>
-                            
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="12" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="OCR 언어" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
-                                    <ComboBox x:Name="OcrLanguageComboBox" Margin="0,6,0,0" MinHeight="34" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="번역 언어" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
-                                    <ComboBox x:Name="TargetLanguageComboBox" Margin="0,6,0,0" MinHeight="34" />
-                                </StackPanel>
-                            </Grid>
-                            
-                            <TextBlock Text="번역 표시 방법" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
-                            <ComboBox x:Name="DisplayModeComboBox" Margin="0,6,0,0" MinHeight="34" SelectionChanged="DisplayModeSelectionChanged" />
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Card 2: Overlay Font and Style Customization -->
-                    <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="오버레이 폰트 설정" FontSize="15" FontWeight="Bold" Foreground="#111827" Margin="0,0,0,12" />
-                            
-                            <TextBlock Text="글꼴" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
-                            <ComboBox x:Name="FontFamilyComboBox" MinHeight="34" Margin="0,0,0,12" SelectionChanged="FontFamilySelectionChanged" />
-                            
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="12" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <!-- Font Size Slider -->
-                                <StackPanel Grid.Column="0">
-                                    <Grid>
-                                        <TextBlock Text="글꼴 크기" FontWeight="SemiBold" Foreground="#374151" FontSize="12" HorizontalAlignment="Left" />
-                                        <TextBlock x:Name="FontSizeLabel" Text="20pt" FontWeight="SemiBold" Foreground="#2563EB" FontSize="12" HorizontalAlignment="Right" />
+            <!-- Left Panel: TabControl for Settings, Advanced, Dict, Logs -->
+            <TabControl Grid.Column="0">
+                <!-- Tab 1: General & Style Settings -->
+                <TabItem Header="기본 및 스타일">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="0,10,12,0">
+                            <!-- Card 1: Basic Target Settings -->
+                            <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="기본 설정" FontSize="15" FontWeight="Bold" Foreground="#111827" Margin="0,0,0,12" />
+                                    
+                                    <TextBlock Text="게임 창 선택" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
+                                    <Grid Margin="0,6,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="WindowComboBox" MinHeight="34" SelectionChanged="WindowSelectionChanged" />
+                                        <Button Grid.Column="1" Width="88" Margin="8,0,0,0" Content="새로고침" Click="RefreshWindows" />
                                     </Grid>
-                                    <Slider x:Name="FontSizeSlider" Minimum="12" Maximum="48" IsSnapToTickEnabled="True" TickFrequency="1" Margin="0,6,0,0" ValueChanged="FontSizeSlider_ValueChanged" />
-                                </StackPanel>
-                                
-                                <!-- Stroke Thickness Slider -->
-                                <StackPanel Grid.Column="2">
-                                    <Grid>
-                                        <TextBlock Text="테두리 두께" FontWeight="SemiBold" Foreground="#374151" FontSize="12" HorizontalAlignment="Left" />
-                                        <TextBlock x:Name="StrokeThicknessLabel" Text="3.0px" FontWeight="SemiBold" Foreground="#2563EB" FontSize="12" HorizontalAlignment="Right" />
+                                    
+                                    <TextBlock Text="번역 대상 영역" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
+                                    <Grid Margin="0,6,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Button x:Name="SelectRegionButton" Width="120" Height="34" Content="영역 선택 (F9)" Click="SelectRegion" />
+                                        <TextBlock x:Name="RegionText" Grid.Column="1" Margin="12,8,0,0" Text="선택되지 않음" TextWrapping="Wrap" Foreground="#4B5563" FontWeight="Medium" />
                                     </Grid>
-                                    <Slider x:Name="StrokeThicknessSlider" Minimum="0" Maximum="8" IsSnapToTickEnabled="False" Margin="0,6,0,0" ValueChanged="StrokeThicknessSlider_ValueChanged" />
+                                    
+                                    <Grid Margin="0,0,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="12" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="OCR 언어" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
+                                            <ComboBox x:Name="OcrLanguageComboBox" Margin="0,6,0,0" MinHeight="34" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="번역 언어" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
+                                            <ComboBox x:Name="TargetLanguageComboBox" Margin="0,6,0,0" MinHeight="34" />
+                                        </StackPanel>
+                                    </Grid>
+                                    
+                                    <TextBlock Text="번역 표시 방법" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
+                                    <ComboBox x:Name="DisplayModeComboBox" Margin="0,6,0,0" MinHeight="34" SelectionChanged="DisplayModeSelectionChanged" />
                                 </StackPanel>
-                            </Grid>
+                            </Border>
 
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="12" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <!-- Text Color Swatches -->
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="글자 색" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
-                                    <ListBox x:Name="TextColorListBox" ItemContainerStyle="{StaticResource ColorSwatchItemStyle}" BorderThickness="0" Background="Transparent" SelectionChanged="TextColorSelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                                        <ListBox.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <WrapPanel Orientation="Horizontal" />
-                                            </ItemsPanelTemplate>
-                                        </ListBox.ItemsPanel>
-                                        <ListBox.ItemTemplate>
-                                            <DataTemplate>
-                                                <Ellipse Width="20" Height="20" Fill="{Binding HexBrush}" ToolTip="{Binding Name}" Cursor="Hand" Margin="2" />
-                                            </DataTemplate>
-                                        </ListBox.ItemTemplate>
-                                    </ListBox>
-                                </StackPanel>
-                                
-                                <!-- Outline Color Swatches -->
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="테두리 색" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
-                                    <ListBox x:Name="OutlineColorListBox" ItemContainerStyle="{StaticResource ColorSwatchItemStyle}" BorderThickness="0" Background="Transparent" SelectionChanged="OutlineColorSelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled">
-                                        <ListBox.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <WrapPanel Orientation="Horizontal" />
-                                            </ItemsPanelTemplate>
-                                        </ListBox.ItemsPanel>
-                                        <ListBox.ItemTemplate>
-                                            <DataTemplate>
-                                                <Ellipse Width="20" Height="20" Fill="{Binding HexBrush}" ToolTip="{Binding Name}" Cursor="Hand" Margin="2" />
-                                            </DataTemplate>
-                                        </ListBox.ItemTemplate>
-                                    </ListBox>
-                                </StackPanel>
-                            </Grid>
+                            <!-- Card 2: Overlay Font and Style Customization -->
+                            <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="오버레이 폰트 설정" FontSize="15" FontWeight="Bold" Foreground="#111827" Margin="0,0,0,12" />
+                                    
+                                    <TextBlock Text="글꼴" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
+                                    <ComboBox x:Name="FontFamilyComboBox" MinHeight="34" Margin="0,0,0,12" SelectionChanged="FontFamilySelectionChanged" />
+                                    
+                                    <Grid Margin="0,0,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="12" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- Font Size Slider -->
+                                        <StackPanel Grid.Column="0">
+                                            <Grid>
+                                                <TextBlock Text="글꼴 크기" FontWeight="SemiBold" Foreground="#374151" FontSize="12" HorizontalAlignment="Left" />
+                                                <TextBlock x:Name="FontSizeLabel" Text="20pt" FontWeight="SemiBold" Foreground="#2563EB" FontSize="12" HorizontalAlignment="Right" />
+                                            </Grid>
+                                            <Slider x:Name="FontSizeSlider" Minimum="12" Maximum="48" IsSnapToTickEnabled="True" TickFrequency="1" Margin="0,6,0,0" ValueChanged="FontSizeSlider_ValueChanged" />
+                                        </StackPanel>
+                                        
+                                        <!-- Stroke Thickness Slider -->
+                                        <StackPanel Grid.Column="2">
+                                            <Grid>
+                                                <TextBlock Text="테두리 두께" FontWeight="SemiBold" Foreground="#374151" FontSize="12" HorizontalAlignment="Left" />
+                                                <TextBlock x:Name="StrokeThicknessLabel" Text="3.0px" FontWeight="SemiBold" Foreground="#2563EB" FontSize="12" HorizontalAlignment="Right" />
+                                            </Grid>
+                                            <Slider x:Name="StrokeThicknessSlider" Minimum="0" Maximum="8" IsSnapToTickEnabled="False" Margin="0,6,0,0" ValueChanged="StrokeThicknessSlider_ValueChanged" />
+                                        </StackPanel>
+                                    </Grid>
 
-                            <TextBlock Text="폰트 예시 미리보기" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
-                            <Border Background="#1A1A1A" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="5" Height="60" SnapsToDevicePixels="True">
-                                <Grid VerticalAlignment="Center" HorizontalAlignment="Center">
-                                    <local:OutlinedTextBlock x:Name="FontPreviewTextBlock" Text="즐카~" FontWeight="Bold" />
-                                </Grid>
+                                    <Grid Margin="0,0,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="12" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- Text Color Swatches -->
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="글자 색" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
+                                            <ListBox x:Name="TextColorListBox" ItemContainerStyle="{StaticResource ColorSwatchItemStyle}" BorderThickness="0" Background="Transparent" SelectionChanged="TextColorSelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                                <ListBox.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel Orientation="Horizontal" />
+                                                    </ItemsPanelTemplate>
+                                                </ListBox.ItemsPanel>
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Ellipse Width="20" Height="20" Fill="{Binding HexBrush}" ToolTip="{Binding Name}" Cursor="Hand" Margin="2" />
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                        </StackPanel>
+                                        
+                                        <!-- Outline Color Swatches -->
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="테두리 색" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
+                                            <ListBox x:Name="OutlineColorListBox" ItemContainerStyle="{StaticResource ColorSwatchItemStyle}" BorderThickness="0" Background="Transparent" SelectionChanged="OutlineColorSelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                                <ListBox.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel Orientation="Horizontal" />
+                                                    </ItemsPanelTemplate>
+                                                </ListBox.ItemsPanel>
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Ellipse Width="20" Height="20" Fill="{Binding HexBrush}" ToolTip="{Binding Name}" Cursor="Hand" Margin="2" />
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <TextBlock Text="폰트 예시 미리보기" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
+                                    <Border Background="#1A1A1A" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="5" Height="60" SnapsToDevicePixels="True">
+                                        <Grid VerticalAlignment="Center" HorizontalAlignment="Center">
+                                            <local:OutlinedTextBlock x:Name="FontPreviewTextBlock" Text="즐카~" FontWeight="Bold" />
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Card 3: DeepL Key Settings -->
+                            <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="번역 API 설정" FontSize="15" FontWeight="Bold" Foreground="#111827" Margin="0,0,0,12" />
+                                    
+                                    <!-- API Key Title and Link -->
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="DeepL API Free 인증 키" FontWeight="SemiBold" Foreground="#374151" FontSize="12" VerticalAlignment="Center" />
+                                        <Button Grid.Column="1" Content="API 키 발급받기 ↗" Click="OpenDeepLApiKeysPage" Background="Transparent" Foreground="#2563EB" BorderThickness="0" Cursor="Hand" Padding="0" FontWeight="SemiBold" FontSize="11" Focusable="False">
+                                            <Button.Template>
+                                                <ControlTemplate TargetType="Button">
+                                                    <ContentPresenter />
+                                                </ControlTemplate>
+                                            </Button.Template>
+                                        </Button>
+                                    </Grid>
+
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <PasswordBox x:Name="ApiKeyPasswordBox" MinHeight="34" />
+                                        <Button Grid.Column="1" Width="64" Margin="8,0,0,0" Content="저장" Click="SaveApiKey" />
+                                        <Button Grid.Column="2" Width="64" Margin="8,0,0,0" Content="삭제" Click="DeleteApiKey" />
+                                    </Grid>
+                                    <TextBlock Text="인증 키는 로컬 PC에 안전하게 암호화되어 저장됩니다." Foreground="#6B7280" FontSize="11" TextWrapping="Wrap" />
+                                </StackPanel>
                             </Border>
                         </StackPanel>
-                    </Border>
+                    </ScrollViewer>
+                </TabItem>
 
-                    <!-- Card 3: DeepL Key Settings -->
-                    <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="번역 API 설정" FontSize="15" FontWeight="Bold" Foreground="#111827" Margin="0,0,0,12" />
-                            
-                            <!-- API Key Title and Link -->
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="DeepL API Free 인증 키" FontWeight="SemiBold" Foreground="#374151" FontSize="12" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="API 키 발급받기 ↗" Click="OpenDeepLApiKeysPage" Background="Transparent" Foreground="#2563EB" BorderThickness="0" Cursor="Hand" Padding="0" FontWeight="SemiBold" FontSize="11" Focusable="False">
-                                    <Button.Template>
-                                        <ControlTemplate TargetType="Button">
-                                            <ContentPresenter />
-                                        </ControlTemplate>
-                                    </Button.Template>
-                                </Button>
-                            </Grid>
+                <!-- Tab 2: Advanced Filter Settings -->
+                <TabItem Header="고급 필터">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="0,10,12,0">
+                            <!-- Length Filter Card -->
+                            <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="글자 수 필터" FontSize="14" FontWeight="Bold" Foreground="#111827" />
+                                        <CheckBox x:Name="EnableLengthFilterCheckBox" Content="활성화" HorizontalAlignment="Right" VerticalAlignment="Center" IsChecked="True" Checked="FilterSettingChanged" Unchecked="FilterSettingChanged" />
+                                    </Grid>
+                                    <StackPanel Margin="0,12,0,0" x:Name="LengthFilterSettingsPanel">
+                                        <Grid Margin="0,0,0,8">
+                                            <TextBlock Text="최소 글자 수" FontWeight="SemiBold" Foreground="#374151" FontSize="11" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="MinMessageLengthLabel" Text="2자" FontWeight="SemiBold" Foreground="#2563EB" FontSize="11" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <Slider x:Name="MinMessageLengthSlider" Minimum="1" Maximum="20" IsSnapToTickEnabled="True" TickFrequency="1" Value="2" ValueChanged="FilterSettingChanged" />
+                                        
+                                        <Grid Margin="0,12,0,8">
+                                            <TextBlock Text="최대 글자 수" FontWeight="SemiBold" Foreground="#374151" FontSize="11" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="MaxMessageLengthLabel" Text="72자" FontWeight="SemiBold" Foreground="#2563EB" FontSize="11" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <Slider x:Name="MaxMessageLengthSlider" Minimum="10" Maximum="200" IsSnapToTickEnabled="True" TickFrequency="1" Value="72" ValueChanged="FilterSettingChanged" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
 
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <PasswordBox x:Name="ApiKeyPasswordBox" MinHeight="34" />
-                                <Button Grid.Column="1" Width="64" Margin="8,0,0,0" Content="저장" Click="SaveApiKey" />
-                                <Button Grid.Column="2" Width="64" Margin="8,0,0,0" Content="삭제" Click="DeleteApiKey" />
-                            </Grid>
-                            <TextBlock Text="인증 키는 로컬 PC에 안전하게 암호화되어 저장됩니다." Foreground="#6B7280" FontSize="11" TextWrapping="Wrap" />
+                            <!-- Noise Filter Card -->
+                            <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="노이즈 필터 (영어 조각 제거)" FontSize="14" FontWeight="Bold" Foreground="#111827" />
+                                        <CheckBox x:Name="EnableNoiseFilterCheckBox" Content="활성화" HorizontalAlignment="Right" VerticalAlignment="Center" IsChecked="True" Checked="FilterSettingChanged" Unchecked="FilterSettingChanged" />
+                                    </Grid>
+                                    <StackPanel Margin="0,12,0,0" x:Name="NoiseFilterSettingsPanel">
+                                        <Grid Margin="0,0,0,8">
+                                            <TextBlock Text="최대 한 글자 알파벳/숫자 토큰 허용량" FontWeight="SemiBold" Foreground="#374151" FontSize="11" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="MaxNoiseTokenCountLabel" Text="4개" FontWeight="SemiBold" Foreground="#2563EB" FontSize="11" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <Slider x:Name="MaxNoiseTokenCountSlider" Minimum="1" Maximum="10" IsSnapToTickEnabled="True" TickFrequency="1" Value="4" ValueChanged="FilterSettingChanged" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Separator Filter Card -->
+                            <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="구분자 필터 (여러 채팅 혼합 방지)" FontSize="14" FontWeight="Bold" Foreground="#111827" />
+                                        <CheckBox x:Name="EnableSeparatorFilterCheckBox" Content="활성화" HorizontalAlignment="Right" VerticalAlignment="Center" IsChecked="True" Checked="FilterSettingChanged" Unchecked="FilterSettingChanged" />
+                                    </Grid>
+                                    <StackPanel Margin="0,12,0,0" x:Name="SeparatorFilterSettingsPanel">
+                                        <Grid Margin="0,0,0,8">
+                                            <TextBlock Text="허용할 최대 콜론(:) 구분자 수 (초과 시 제거)" FontWeight="SemiBold" Foreground="#374151" FontSize="11" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="MaxSeparatorsCountLabel" Text="0개" FontWeight="SemiBold" Foreground="#2563EB" FontSize="11" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <Slider x:Name="MaxSeparatorsCountSlider" Minimum="0" Maximum="5" IsSnapToTickEnabled="True" TickFrequency="1" Value="0" ValueChanged="FilterSettingChanged" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Similarity Filter Card -->
+                            <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="유사도(중복) 필터" FontSize="14" FontWeight="Bold" Foreground="#111827" />
+                                        <CheckBox x:Name="EnableSimilarityFilterCheckBox" Content="활성화" HorizontalAlignment="Right" VerticalAlignment="Center" IsChecked="True" Checked="FilterSettingChanged" Unchecked="FilterSettingChanged" />
+                                    </Grid>
+                                    <StackPanel Margin="0,12,0,0" x:Name="SimilarityFilterSettingsPanel">
+                                        <Grid Margin="0,0,0,8">
+                                            <TextBlock Text="건너뛰기 유사도 임계값 (Jaccard)" FontWeight="SemiBold" Foreground="#374151" FontSize="11" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="SimilarityThresholdLabel" Text="0.72" FontWeight="SemiBold" Foreground="#2563EB" FontSize="11" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <Slider x:Name="SimilarityThresholdSlider" Minimum="0.1" Maximum="1.0" Margin="0,0,0,12" Value="0.72" ValueChanged="FilterSettingChanged" />
+                                        
+                                        <Grid Margin="0,0,0,8">
+                                            <TextBlock Text="교체 임계값" FontWeight="SemiBold" Foreground="#374151" FontSize="11" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="ReplacementSimilarityThresholdLabel" Text="0.82" FontWeight="SemiBold" Foreground="#2563EB" FontSize="11" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <Slider x:Name="ReplacementSimilarityThresholdSlider" Minimum="0.1" Maximum="1.0" Margin="0,0,0,12" Value="0.82" ValueChanged="FilterSettingChanged" />
+
+                                        <Grid Margin="0,0,0,8">
+                                            <TextBlock Text="중복 체크 캐시 유지 시간" FontWeight="SemiBold" Foreground="#374151" FontSize="11" HorizontalAlignment="Left" />
+                                            <TextBlock x:Name="SimilarityCacheSecondsLabel" Text="12초" FontWeight="SemiBold" Foreground="#2563EB" FontSize="11" HorizontalAlignment="Right" />
+                                        </Grid>
+                                        <Slider x:Name="SimilarityCacheSecondsSlider" Minimum="1" Maximum="60" IsSnapToTickEnabled="True" TickFrequency="1" Value="12" ValueChanged="FilterSettingChanged" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
-                    </Border>
-                </StackPanel>
-            </ScrollViewer>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- Tab 3: User Dictionary CRUD -->
+                <TabItem Header="유저 사전">
+                    <Grid Margin="0,10,12,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Dictionary DataGrid -->
+                        <DataGrid x:Name="UserDictionaryDataGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single" BorderThickness="1" HeadersVisibility="Column" Background="White">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="원문 단어 (중국어)" Binding="{Binding Source}" Width="*" />
+                                <DataGridTextColumn Header="대체 번역어 (한국어)" Binding="{Binding Target}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- Add/Delete Form -->
+                        <StackPanel Grid.Row="1" Margin="0,12,0,16">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="원문 단어" FontWeight="SemiBold" Foreground="#374151" FontSize="11" Margin="0,0,0,6" />
+                                    <TextBox x:Name="DictSourceTextBox" Padding="6" Height="30" VerticalContentAlignment="Center" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="대체 번역어" FontWeight="SemiBold" Foreground="#374151" FontSize="11" Margin="0,0,0,6" />
+                                    <TextBox x:Name="DictTargetTextBox" Padding="6" Height="30" VerticalContentAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="8" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="AddDictEntryButton" Height="32" Content="사전 단어 추가" Click="AddDictionaryEntry" Background="#2563EB" Foreground="White" BorderThickness="0" />
+                                <Button Grid.Column="2" x:Name="DeleteDictEntryButton" Width="100" Height="32" Content="선택 삭제" Click="DeleteDictionaryEntry" Background="#EF4444" Foreground="White" BorderThickness="0" />
+                            </Grid>
+                        </StackPanel>
+                    </Grid>
+                </TabItem>
+
+                <!-- Tab 4: Real-time Diagnostic Log -->
+                <TabItem Header="진단 로그">
+                    <Grid Margin="0,10,12,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <ListView x:Name="DiagnosticLogsListView" BorderThickness="1" Background="White">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="시간" DisplayMemberBinding="{Binding Time}" Width="65" />
+                                    <GridViewColumn Header="상태" DisplayMemberBinding="{Binding Status}" Width="100" />
+                                    <GridViewColumn Header="원문 / 내용" DisplayMemberBinding="{Binding Source}" Width="180" />
+                                    <GridViewColumn Header="필터 규칙" DisplayMemberBinding="{Binding Rule}" Width="100" />
+                                    <GridViewColumn Header="상세 이유" DisplayMemberBinding="{Binding Reason}" Width="140" />
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+
+                        <Grid Grid.Row="1" Margin="0,12,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="※ 최근 100개의 진단 로그만 보관합니다." Foreground="#6B7280" FontSize="11" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" Width="100" Height="32" Content="로그 비우기" Click="ClearDiagnosticLogs" />
+                        </Grid>
+                    </Grid>
+                </TabItem>
+            </TabControl>
             
             <!-- Right Panel: Session & Preview -->
             <Grid Grid.Column="2">

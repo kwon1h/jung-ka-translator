@@ -4,31 +4,41 @@ namespace GameOverlayTranslator.App.Services;
 
 public static class ChatQualityFilter
 {
-    public static ChatQualityDecision Check(ChatLine line, OcrLanguage language)
+    public static ChatQualityDecision Check(ChatLine line, OcrLanguage language, FilterSettings filter)
     {
         if (!HasPlausibleSpeaker(line.Speaker))
         {
-            return ChatQualityDecision.Reject("유저명 품질 낮음");
+            return ChatQualityDecision.Reject("유저명 품질 낮음", "SpeakerValidation");
         }
 
-        if (line.Message.Length is < 2 or > 72)
+        if (filter.EnableLengthFilter)
         {
-            return ChatQualityDecision.Reject("메시지 길이 비정상");
+            if (line.Message.Length < filter.MinMessageLength || line.Message.Length > filter.MaxMessageLength)
+            {
+                return ChatQualityDecision.Reject($"메시지 길이 비정상 (글자 수: {line.Message.Length})", "LengthFilter");
+            }
         }
 
-        if (line.Message.Count(character => character is ':' or '\uFF1A') > 0 && line.Message.Length > 28)
+        if (filter.EnableSeparatorFilter)
         {
-            return ChatQualityDecision.Reject("여러 채팅 조각 혼합");
+            int colonCount = line.Message.Count(character => character is ':' or '\uFF1A');
+            if (colonCount > filter.MaxSeparatorsCount && line.Message.Length > 28)
+            {
+                return ChatQualityDecision.Reject($"여러 채팅 조각 혼합 (구분자 수: {colonCount})", "SeparatorFilter");
+            }
         }
 
-        if (HasFragmentedLatinNoise(line.Message))
+        if (filter.EnableNoiseFilter)
         {
-            return ChatQualityDecision.Reject("OCR 조각 노이즈");
+            if (HasFragmentedLatinNoise(line.Message, filter.MaxNoiseTokenCount))
+            {
+                return ChatQualityDecision.Reject("OCR 조각 노이즈", "NoiseFilter");
+            }
         }
 
         if (!HasExpectedSourceScript(line.Message, language))
         {
-            return ChatQualityDecision.ShowSource("원문 표시");
+            return ChatQualityDecision.ShowSource("원문 표시", "ScriptFilter");
         }
 
         return ChatQualityDecision.Translate();
@@ -45,12 +55,12 @@ public static class ChatQualityFilter
         return compact.Count(character => char.IsLetterOrDigit(character) || IsHan(character)) >= 2;
     }
 
-    private static bool HasFragmentedLatinNoise(string message)
+    private static bool HasFragmentedLatinNoise(string message, int maxNoiseCount)
     {
         var fragments = message
             .Split(' ', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Count(token => token.Length == 1 && token.All(character => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9'));
-        return fragments >= 4;
+        return fragments >= maxNoiseCount;
     }
 
     private static bool HasExpectedSourceScript(string message, OcrLanguage language)
@@ -71,14 +81,14 @@ public static class ChatQualityFilter
     private static bool IsHan(char character) => character is >= '\u3400' and <= '\u9FFF';
 }
 
-public sealed record ChatQualityDecision(ChatQualityAction Action, string? Reason)
+public sealed record ChatQualityDecision(ChatQualityAction Action, string? Reason, string? Rule)
 {
     public bool Accepted => Action is not ChatQualityAction.Reject;
     public bool TranslateWithService => Action is ChatQualityAction.Translate;
 
-    public static ChatQualityDecision Translate() => new(ChatQualityAction.Translate, null);
-    public static ChatQualityDecision ShowSource(string reason) => new(ChatQualityAction.ShowSource, reason);
-    public static ChatQualityDecision Reject(string reason) => new(ChatQualityAction.Reject, reason);
+    public static ChatQualityDecision Translate() => new(ChatQualityAction.Translate, null, null);
+    public static ChatQualityDecision ShowSource(string reason, string rule) => new(ChatQualityAction.ShowSource, reason, rule);
+    public static ChatQualityDecision Reject(string reason, string rule) => new(ChatQualityAction.Reject, reason, rule);
 }
 
 public enum ChatQualityAction

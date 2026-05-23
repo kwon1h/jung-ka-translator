@@ -43,12 +43,30 @@ public sealed record TranslationRequest(string Text, string TargetLanguage, stri
 
 public sealed record TranslationResult(string SourceText, string TranslatedText, string? DetectedSourceLanguage);
 
+public sealed record FilterSettings(
+    bool EnableLengthFilter = true,
+    int MinMessageLength = 2,
+    int MaxMessageLength = 72,
+    bool EnableNoiseFilter = true,
+    int MaxNoiseTokenCount = 4,
+    bool EnableSeparatorFilter = true,
+    int MaxSeparatorsCount = 0,
+    bool EnableSimilarityFilter = true,
+    double SimilarityThreshold = 0.72,
+    double ReplacementSimilarityThreshold = 0.82,
+    int SimilarityCacheSeconds = 12
+);
+
+public sealed record UserDictEntry(string Source, string Target);
+
 public sealed record SessionOptions(
     CaptureTarget Target,
     CaptureRegion Region,
     OcrLanguage OcrLanguage,
     TranslationLanguage TargetLanguage,
-    TimeSpan Interval);
+    TimeSpan Interval,
+    FilterSettings Filter,
+    IReadOnlyList<UserDictEntry> UserDictionary);
 
 public sealed record SessionUpdate(
     string Status,
@@ -58,4 +76,7 @@ public sealed record SessionUpdate(
     string? Speaker = null,
     bool IsChatLine = false,
     string? ChatLineId = null,
-    bool ReplacesChatLine = false);
+    bool ReplacesChatLine = false,
+    string? OcrRawText = null,
+    string? FilterReason = null,
+    string? FilterRule = null);

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using GameOverlayTranslator.App.Domain;
 
 namespace GameOverlayTranslator.App.Services;
 
@@ -7,12 +8,19 @@ public sealed class RecentChatFilter
 {
     private readonly List<Entry> entries = [];
 
-    public ChatFilterDecision Evaluate(ChatLine line)
+    public ChatFilterDecision Evaluate(ChatLine line, FilterSettings filter)
     {
         var now = DateTimeOffset.UtcNow;
-        entries.RemoveAll(entry => now - entry.LastSeen > TimeSpan.FromSeconds(12));
+        entries.RemoveAll(entry => now - entry.LastSeen > TimeSpan.FromSeconds(filter.SimilarityCacheSeconds));
 
         var candidate = new Entry(Guid.NewGuid().ToString("N"), line, Tokenize(line.Message), Score(line), now);
+
+        if (!filter.EnableSimilarityFilter)
+        {
+            entries.Add(candidate);
+            return ChatFilterDecision.Translate(candidate.Id);
+        }
+
         var match = entries
             .Where(entry => SameSpeaker(entry.Line.Speaker, line.Speaker))
             .Select(entry =>
@@ -23,7 +31,7 @@ public sealed class RecentChatFilter
             .OrderByDescending(match => match.Score)
             .FirstOrDefault();
 
-        if (match is null || match.Score < 0.72)
+        if (match is null || match.Score < filter.SimilarityThreshold)
         {
             entries.Add(candidate);
             LogDecision("translate", candidate, match?.Entry, match?.Score, match?.Overlap, match?.Union);
@@ -31,17 +39,17 @@ public sealed class RecentChatFilter
         }
 
         match.Entry.LastSeen = now;
-        if (candidate.Score > match.Entry.Score + 2 && match.Score >= 0.82)
+        if (candidate.Score > match.Entry.Score + 2 && match.Score >= filter.ReplacementSimilarityThreshold)
         {
             match.Entry.Line = line;
             match.Entry.Tokens = candidate.Tokens;
             match.Entry.Score = candidate.Score;
             LogDecision("replace", candidate, match.Entry, match.Score, match.Overlap, match.Union);
-            return ChatFilterDecision.Replace(match.Entry.Id);
+            return ChatFilterDecision.Replace(match.Entry.Id, match.Score);
         }
 
         LogDecision("skip", candidate, match.Entry, match.Score, match.Overlap, match.Union);
-        return ChatFilterDecision.Skip(match.Entry.Id);
+        return ChatFilterDecision.Skip(match.Entry.Id, match.Score);
     }
 
     private static bool SameSpeaker(string left, string right) =>
@@ -125,11 +133,11 @@ public sealed class RecentChatFilter
     private sealed record SimilarityResult(double Score, int Overlap, int Union);
 }
 
-public sealed record ChatFilterDecision(string Id, ChatFilterAction Action)
+public sealed record ChatFilterDecision(string Id, ChatFilterAction Action, double SimilarityScore = 0)
 {
-    public static ChatFilterDecision Translate(string id) => new(id, ChatFilterAction.Translate);
-    public static ChatFilterDecision Replace(string id) => new(id, ChatFilterAction.Replace);
-    public static ChatFilterDecision Skip(string id) => new(id, ChatFilterAction.Skip);
+    public static ChatFilterDecision Translate(string id) => new(id, ChatFilterAction.Translate, 0);
+    public static ChatFilterDecision Replace(string id, double score) => new(id, ChatFilterAction.Replace, score);
+    public static ChatFilterDecision Skip(string id, double score) => new(id, ChatFilterAction.Skip, score);
 }
 
 public enum ChatFilterAction

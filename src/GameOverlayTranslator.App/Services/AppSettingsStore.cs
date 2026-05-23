@@ -13,7 +13,18 @@ public sealed record AppSettings(
     double FontSize = 20,
     string TextColor = "#FFFFFF",
     string OutlineColor = "#000000",
-    double StrokeThickness = 0.3);
+    double StrokeThickness = 0.3,
+    bool EnableLengthFilter = true,
+    int MinMessageLength = 2,
+    int MaxMessageLength = 72,
+    bool EnableNoiseFilter = true,
+    int MaxNoiseTokenCount = 4,
+    bool EnableSeparatorFilter = true,
+    int MaxSeparatorsCount = 0,
+    bool EnableSimilarityFilter = true,
+    double SimilarityThreshold = 0.72,
+    double ReplacementSimilarityThreshold = 0.82,
+    int SimilarityCacheSeconds = 12);
 
 public enum TranslationDisplayMode
 {
@@ -45,7 +56,14 @@ public sealed class AppSettingsStore
                         FontSize = settings.FontSize < 12 || settings.FontSize > 48 ? 20 : settings.FontSize,
                         TextColor = string.IsNullOrWhiteSpace(settings.TextColor) ? "#FFFFFF" : settings.TextColor,
                         OutlineColor = string.IsNullOrWhiteSpace(settings.OutlineColor) ? "#000000" : settings.OutlineColor,
-                        StrokeThickness = settings.StrokeThickness < 0 || settings.StrokeThickness > 8 ? 0.3 : settings.StrokeThickness
+                        StrokeThickness = settings.StrokeThickness < 0 || settings.StrokeThickness > 8 ? 0.3 : settings.StrokeThickness,
+                        MinMessageLength = settings.MinMessageLength < 1 ? 2 : settings.MinMessageLength,
+                        MaxMessageLength = settings.MaxMessageLength < 1 ? 72 : settings.MaxMessageLength,
+                        MaxNoiseTokenCount = settings.MaxNoiseTokenCount < 1 ? 4 : settings.MaxNoiseTokenCount,
+                        MaxSeparatorsCount = settings.MaxSeparatorsCount < 0 ? 0 : settings.MaxSeparatorsCount,
+                        SimilarityThreshold = settings.SimilarityThreshold < 0 || settings.SimilarityThreshold > 1 ? 0.72 : settings.SimilarityThreshold,
+                        ReplacementSimilarityThreshold = settings.ReplacementSimilarityThreshold < 0 || settings.ReplacementSimilarityThreshold > 1 ? 0.82 : settings.ReplacementSimilarityThreshold,
+                        SimilarityCacheSeconds = settings.SimilarityCacheSeconds < 1 ? 12 : settings.SimilarityCacheSeconds
                     };
                 }
             }
