@@ -732,6 +732,31 @@ public partial class MainWindow : Window
         SetStatus($"사전에서 단어 '{selectedEntry.Source}'를 삭제했습니다.");
     }
 
+    private void RestoreDefaultDictionary(object sender, RoutedEventArgs e)
+    {
+        int addedCount = 0;
+        foreach (var defaultEntry in UserDictionaryStore.DefaultDictionary)
+        {
+            if (!userDictionaryEntries.Any(entry => string.Equals(entry.Source, defaultEntry.Source, StringComparison.OrdinalIgnoreCase)))
+            {
+                userDictionaryEntries.Add(defaultEntry);
+                addedCount++;
+            }
+        }
+
+        if (addedCount > 0)
+        {
+            userDictStore.Save(userDictionaryEntries);
+            UserDictionaryDataGrid.ItemsSource = null;
+            UserDictionaryDataGrid.ItemsSource = userDictionaryEntries;
+            SetStatus($"기본 사전 항목 {addedCount}개를 추가했습니다.");
+        }
+        else
+        {
+            SetStatus("모든 기본 사전 항목이 이미 사전에 존재합니다.");
+        }
+    }
+
     private void ClearDiagnosticLogs(object sender, RoutedEventArgs e)
     {
         diagnosticLogs.Clear();

@@ -474,9 +474,12 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="8" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="8" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Button x:Name="AddDictEntryButton" Height="32" Content="사전 단어 추가" Click="AddDictionaryEntry" Background="#2563EB" Foreground="White" BorderThickness="0" />
-                                <Button Grid.Column="2" x:Name="DeleteDictEntryButton" Width="100" Height="32" Content="선택 삭제" Click="DeleteDictionaryEntry" Background="#EF4444" Foreground="White" BorderThickness="0" />
+                                <Button Grid.Column="2" x:Name="RestoreDefaultsButton" Width="120" Height="32" Content="기본 사전 추가" Click="RestoreDefaultDictionary" Background="#059669" Foreground="White" BorderThickness="0" />
+                                <Button Grid.Column="4" x:Name="DeleteDictEntryButton" Width="100" Height="32" Content="선택 삭제" Click="DeleteDictionaryEntry" Background="#EF4444" Foreground="White" BorderThickness="0" />
                             </Grid>
                         </StackPanel>
                     </Grid>
