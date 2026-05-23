@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.RegularExpressions;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Platform;
@@ -60,7 +62,17 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         var recentChat = new RecentChatFilter();
         var totalTranslationRequests = 0;
         var totalTranslationCharacters = 0;
+
+        var dictExactEntries = options.UserDictionary
+            .Select(entry => (Entry: entry, NormalizedSource: NormalizeForMatching(entry.Source)))
+            .ToList();
+
+        var dictRegexes = options.UserDictionary
+            .Select(entry => (Entry: entry, Regex: BuildFlexRegex(entry.Source)))
+            .ToList();
+
         using var timer = new PeriodicTimer(options.Interval);
+
 
         do
         {
@@ -110,7 +122,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         var trimmed = line.Text.Trim();
                         
                         // Exact match in dictionary
-                        var exactEntry = options.UserDictionary.FirstOrDefault(e => string.Equals(e.Source.Trim(), trimmed, StringComparison.OrdinalIgnoreCase));
+                        var normalizedTrimmed = NormalizeForMatching(trimmed);
+                        var exactEntry = dictExactEntries.FirstOrDefault(e => string.Equals(e.NormalizedSource, normalizedTrimmed, StringComparison.OrdinalIgnoreCase)).Entry;
                         if (exactEntry != null)
                         {
                             processedLines.Add((line, exactEntry.Target, CreateScreenTranslationCacheKey(line.Text, exactEntry.Target, options.TargetLanguage.Code), exactEntry.Target));
@@ -119,12 +132,9 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
                         // Substring replacements in dictionary
                         var processed = line.Text;
-                        foreach (var entry in options.UserDictionary)
+                        foreach (var (entry, regex) in dictRegexes)
                         {
-                            if (processed.Contains(entry.Source, StringComparison.OrdinalIgnoreCase))
-                            {
-                                processed = processed.Replace(entry.Source, entry.Target, StringComparison.OrdinalIgnoreCase);
-                            }
+                            processed = regex.Replace(processed, entry.Target);
                         }
 
                         if (HasExpectedSourceScript(processed, options.OcrLanguage))
@@ -189,6 +199,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     // 3. Reconstruct the screen translation items
                     var screenItems = new List<ScreenTranslationItem>();
                     int translateResultIndex = 0;
+
                     foreach (var entry in processedLines)
                     {
                         string translation;
@@ -229,29 +240,14 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         continue;
                     }
 
-                    var initialQuality = ChatQualityFilter.Check(line, options.OcrLanguage, options.Filter);
-                    if (!initialQuality.Accepted)
-                    {
-                        AppLog.Write($"ChatQualityFilter reject reason={initialQuality.Reason} line={Quote(line.SourceLine)}");
-                        Publish($"채팅 품질 필터: {initialQuality.Reason}", line.SourceLine, filterReason: initialQuality.Reason, filterRule: initialQuality.Rule);
-                        continue;
-                    }
-
-                    // Apply User Dictionary
-                    var activeLine = line;
-                    bool dictionaryMatchedExact = false;
-                    string? dictionaryExactTranslation = null;
-
+                    // 1. Try Exact Dictionary Match first (ignores spaces/punctuation, bypasses quality filter check)
                     var trimmedMsg = line.Message.Trim();
-                    var exactEntry = options.UserDictionary.FirstOrDefault(e => string.Equals(e.Source.Trim(), trimmedMsg, StringComparison.OrdinalIgnoreCase));
+                    var normalizedMsg = NormalizeForMatching(trimmedMsg);
+                    var exactEntry = dictExactEntries.FirstOrDefault(e => string.Equals(e.NormalizedSource, normalizedMsg, StringComparison.OrdinalIgnoreCase)).Entry;
+
                     if (exactEntry != null)
                     {
-                        dictionaryMatchedExact = true;
-                        dictionaryExactTranslation = exactEntry.Target;
-                    }
-
-                    if (dictionaryMatchedExact && dictionaryExactTranslation != null)
-                    {
+                        var dictionaryExactTranslation = exactEntry.Target;
                         AppLog.Write($"UserDictionary exact match source={Quote(line.Message)} target={Quote(dictionaryExactTranslation)}");
 
                         var decision = recentChat.Evaluate(new ChatLine(line.Speaker, dictionaryExactTranslation), options.Filter);
@@ -276,13 +272,25 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         continue;
                     }
 
+                    // 2. If not exact dictionary match, run Quality Filter Check
+                    var initialQuality = ChatQualityFilter.Check(line, options.OcrLanguage, options.Filter);
+                    if (!initialQuality.Accepted)
+                    {
+                        AppLog.Write($"ChatQualityFilter reject reason={initialQuality.Reason} line={Quote(line.SourceLine)}");
+                        Publish($"채팅 품질 필터: {initialQuality.Reason}", line.SourceLine, filterReason: initialQuality.Reason, filterRule: initialQuality.Rule);
+                        continue;
+                    }
+
+                    // 3. Substring user dictionary replacements (space and punctuation flexible)
+                    var activeLine = line;
                     var processedMessage = line.Message;
                     bool replaced = false;
-                    foreach (var entry in options.UserDictionary)
+                    foreach (var (entry, regex) in dictRegexes)
                     {
-                        if (processedMessage.Contains(entry.Source, StringComparison.OrdinalIgnoreCase))
+                        var before = processedMessage;
+                        processedMessage = regex.Replace(processedMessage, entry.Target);
+                        if (processedMessage != before)
                         {
-                            processedMessage = processedMessage.Replace(entry.Source, entry.Target, StringComparison.OrdinalIgnoreCase);
                             replaced = true;
                         }
                     }
@@ -293,8 +301,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         activeLine = new ChatLine(line.Speaker, processedMessage);
                     }
 
-                    // Quality check
-                    var quality = ChatQualityFilter.Check(activeLine, options.OcrLanguage, options.Filter);
+                    // Quality check after replacements (only if replaced, otherwise reuse initialQuality)
+                    var quality = replaced ? ChatQualityFilter.Check(activeLine, options.OcrLanguage, options.Filter) : initialQuality;
                     if (!quality.Accepted)
                     {
                         AppLog.Write($"ChatQualityFilter reject reason={quality.Reason} line={Quote(activeLine.SourceLine)}");
@@ -413,4 +421,79 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
     }
 
     private static bool IsHan(char character) => character is >= '\u3400' and <= '\u9FFF';
+
+    private static string NormalizeForMatching(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                continue;
+            }
+
+            if (IsIgnoredPunctuation(character))
+            {
+                continue;
+            }
+
+            builder.Append(char.ToLowerInvariant(character));
+        }
+
+        var normalized = builder.ToString();
+        if (normalized.Length == 0)
+        {
+            return string.Concat(value.Where(c => !char.IsWhiteSpace(c))).ToLowerInvariant();
+        }
+
+        return normalized;
+    }
+
+    private static bool IsIgnoredPunctuation(char c)
+    {
+        return c is '_' or '~' or '·' or '!' or '！' or '.' or ',' or '，' or '。' or '?' or '？'
+                  or '-' or '^' or '*' or '>' or '<' or '＞' or '＜' or '+' or '=' or '/' or '\\'
+                  or '|' or '(' or ')' or '（' or '）' or '[' or ']' or '【' or '】' or '{' or '}'
+                  or '`' or '@' or '#' or '$' or '%' or '&' or ';' or '；' or ':' or '：' or '"' or '\'' or '“' or '”';
+    }
+
+    private static Regex BuildFlexRegex(string source)
+    {
+        var coreChars = new List<string>();
+        foreach (var c in source)
+        {
+            if (char.IsWhiteSpace(c) || IsIgnoredPunctuation(c))
+            {
+                continue;
+            }
+            coreChars.Add(Regex.Escape(c.ToString()));
+        }
+
+        if (coreChars.Count == 0)
+        {
+            return new Regex(Regex.Escape(source), RegexOptions.IgnoreCase);
+        }
+
+        const string noiseClass = @"[\s_~·!！\.,，。?？\-^＊\*><＞＜\+=/\\\|\(\)（）\[\]【】\{\}`@#\$%&;:；：]*";
+        var patternBuilder = new StringBuilder();
+
+        if (source.Length > 0 && (char.IsWhiteSpace(source[0]) || IsIgnoredPunctuation(source[0])))
+        {
+            patternBuilder.Append(noiseClass);
+        }
+
+        patternBuilder.Append(string.Join(noiseClass, coreChars));
+
+        if (source.Length > 0 && (char.IsWhiteSpace(source[^1]) || IsIgnoredPunctuation(source[^1])))
+        {
+            patternBuilder.Append(noiseClass);
+        }
+
+        return new Regex(patternBuilder.ToString(), RegexOptions.IgnoreCase);
+    }
 }

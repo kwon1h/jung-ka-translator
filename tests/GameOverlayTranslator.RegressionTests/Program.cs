@@ -17,7 +17,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("사전 치환 후 원문 언어가 없으면 화면 번역 API를 호출하지 않는다", TestDictionaryOnlyScreenLineSkipsTranslation),
     ("품질 필터로 버린 채팅은 중복 캐시에 남지 않는다", TestRejectedChatDoesNotPoisonExactDuplicateCache),
     ("Repeated screen OCR line uses cached translation", TestRepeatedScreenLineUsesCachedTranslation),
-    ("Empty screen OCR does not clear overlay items", TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems)
+    ("Empty screen OCR does not clear overlay items", TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems),
+    ("사전 OCR 변형 매칭 및 공백/품질 필터 우회 테스트", TestDictionaryMatchingWithOcrVariations)
 };
 
 foreach (var test in tests)
@@ -168,7 +169,7 @@ static async Task TestRejectedChatDoesNotPoisonExactDuplicateCache()
     var translation = new CountingTranslationService();
     var session = new TranslationSession(
         new FakeCaptureService(),
-        new FakeOcrEngine(new OcrResult("z: 快使用天使!", [])),
+        new FakeOcrEngine(new OcrResult("z: 这是一个测试!", [])),
         translation);
 
     var updates = new List<SessionUpdate>();
@@ -252,6 +253,42 @@ static async Task TestOcrTrackList()
     await tcs.Task;
 }
 
+static async Task TestDictionaryMatchingWithOcrVariations()
+{
+    var translation = new CountingTranslationService();
+    // OCR results with spacing/punctuation variations and noisy speaker
+    var ocrResults = new List<OcrResult>
+    {
+        new OcrResult("z u Y e o n g : 快 帮 帮 我 ！ ！", []),
+        new OcrResult("zuyeong: 没 关 系 ·", []),
+        new OcrResult("zuyeong: 对 不 起 > <", [])
+    };
+
+    var session = new TranslationSession(
+        new FakeCaptureService(),
+        new SequencedOcrEngine(ocrResults.ToArray()),
+        translation);
+
+    var updates = new List<SessionUpdate>();
+    session.Updated += (_, update) => updates.Add(update);
+
+    using var cts = new CancellationTokenSource();
+    await session.StartAsync(CreateOptions(TranslationMode.Chat), cts.Token);
+    await Task.Delay(180); // Wait for multiple polling ticks
+    await session.StopAsync();
+
+    // Verify all 3 chat lines matched the user dictionary exactly,
+    // bypassing the normal speaker quality reject and standard translation service call.
+    Assert(translation.SingleRequests == 0, "No standard translation requests should be sent.");
+    var dictExactUpdates = updates.Where(update => update.FilterRule == "UserDictionaryExact").ToList();
+    Assert(dictExactUpdates.Count == 3, $"Expected 3 UserDictionaryExact matches, but got {dictExactUpdates.Count}.");
+
+    // Check if the translations are correct
+    Assert(dictExactUpdates.Any(u => u.TranslatedText == "빨리 도와줘!!"), "Missing translation for '快帮帮我!!'");
+    Assert(dictExactUpdates.Any(u => u.TranslatedText == "괜찮아~"), "Missing translation for '没关系~'");
+    Assert(dictExactUpdates.Any(u => u.TranslatedText == "미안해 >_<"), "Missing translation for '对不起>_<'");
+}
+
 sealed class FakeCaptureService : ICaptureService
 {
     public Task<CapturedFrame> CaptureAsync(CaptureTarget target, CaptureRegion region, CancellationToken ct)
@@ -296,3 +333,4 @@ sealed class CountingTranslationService : ITranslationService
         return Task.FromResult(new BatchTranslationResult(request.Texts.Select(text => $"translated:{text}").ToList()));
     }
 }
+
