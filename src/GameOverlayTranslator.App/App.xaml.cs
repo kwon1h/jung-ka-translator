@@ -11,7 +11,6 @@ public partial class App : Application
         {
             AppLog.Write("Dispatcher unhandled exception", args.Exception);
             args.Handled = true;
-            MessageBox.Show(args.Exception.Message, "Game OCR Translator error", MessageBoxButton.OK, MessageBoxImage.Error);
         };
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
             AppLog.Write("AppDomain unhandled exception", args.ExceptionObject as Exception);

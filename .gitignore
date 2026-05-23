@@ -31,3 +31,7 @@ Thumbs.db
 
 # Log files
 *.log
+
+# Build and packaging artifacts
+artifacts/
+

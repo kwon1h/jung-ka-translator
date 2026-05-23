@@ -44,6 +44,11 @@ public sealed class OutlinedTextBlock : Control
 
     protected override Size MeasureOverride(Size constraint)
     {
+        if (string.IsNullOrWhiteSpace(Text))
+        {
+            return new Size(0, 0);
+        }
+
         var typeface = new Typeface(FontFamily, FontStyle, FontWeight, FontStretch);
         var text = new FormattedText(
             Text ?? string.Empty,
@@ -56,7 +61,7 @@ public sealed class OutlinedTextBlock : Control
 
         if (double.IsFinite(constraint.Width))
         {
-            text.MaxTextWidth = Math.Max(0, constraint.Width);
+            text.MaxTextWidth = Math.Max(1, constraint.Width);
             text.Trimming = TextTrimming.CharacterEllipsis;
         }
         
@@ -69,12 +74,17 @@ public sealed class OutlinedTextBlock : Control
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
+        if (string.IsNullOrWhiteSpace(Text) || ActualWidth < 1 || ActualHeight < 1)
+        {
+            return;
+        }
+
         var typeface = new Typeface(FontFamily, FontStyle, FontWeight, FontStretch);
         var text = new FormattedText(Text ?? string.Empty, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, typeface, FontSize, Fill, VisualTreeHelper.GetDpi(this).PixelsPerDip);
 
         if (double.IsFinite(ActualWidth) && ActualWidth > 0)
         {
-            text.MaxTextWidth = ActualWidth;
+            text.MaxTextWidth = Math.Max(1, ActualWidth);
             text.Trimming = TextTrimming.CharacterEllipsis;
         }
 
