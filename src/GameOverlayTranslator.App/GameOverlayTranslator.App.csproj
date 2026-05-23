@@ -11,6 +11,7 @@
   <ItemGroup>
     <Resource Include="Assets\*.jpg" />
     <Resource Include="Assets\*.png" />
+    <Content Include="..\..\docs\user_dictionary.csv" Link="Assets\user_dictionary.csv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

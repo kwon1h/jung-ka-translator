@@ -383,7 +383,7 @@ public sealed class UserDictionaryStore
     private static bool MergeDefaults(List<UserDictEntry> entries)
     {
         var changed = false;
-        foreach (var defaultEntry in DefaultDictionary)
+        foreach (var defaultEntry in LoadDefaultDictionary())
         {
             if (entries.Any(entry => string.Equals(entry.Source, defaultEntry.Source, StringComparison.OrdinalIgnoreCase)))
             {
@@ -395,6 +395,35 @@ public sealed class UserDictionaryStore
         }
 
         return changed;
+    }
+
+    private static IReadOnlyList<UserDictEntry> LoadDefaultDictionary()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(AppContext.BaseDirectory, "Assets", "user_dictionary.csv"),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "docs", "user_dictionary.csv")),
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "docs", "user_dictionary.csv"))
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (!File.Exists(candidate))
+            {
+                continue;
+            }
+
+            try
+            {
+                return ParseCsv(File.ReadAllText(candidate, Encoding.UTF8));
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write($"Default user dictionary load failed. Path={candidate}", ex);
+            }
+        }
+
+        return DefaultDictionary;
     }
 
     private static bool NormalizeCategories(List<UserDictEntry> entries)
