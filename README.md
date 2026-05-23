@@ -1,4 +1,4 @@
-# 중카 번역기 - 중국 카트라이더 실시간 화면 OCR 번역기 (Game Overlay Translator)
+# 중카 번역기 - 중국 카트라이더 실시간 채팅 OCR 번역기 (Game Overlay Translator)
 
 > **중국 카트라이더(중카) 전용 실시간 화면 OCR 및 DeepL 기반 번역 프로그램**
 > 
