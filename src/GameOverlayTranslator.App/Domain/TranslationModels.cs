@@ -43,9 +43,14 @@ public enum TranslationMode
     Screen
 }
 
+public sealed record OcrWordResult(string Text, Rect BoundingRect);
+
 public sealed record OcrLineResult(string Text, Rect BoundingRect);
 
-public sealed record OcrResult(string Text, IReadOnlyList<OcrLineResult> Lines);
+public sealed record OcrResult(string Text, IReadOnlyList<OcrLineResult> Lines)
+{
+    public IReadOnlyList<OcrWordResult> Words { get; init; } = Array.Empty<OcrWordResult>();
+}
 
 public sealed record TranslationRequest(string Text, string TargetLanguage, string? SourceLanguage = null);
 
@@ -69,7 +74,7 @@ public sealed record FilterSettings(
     int SimilarityCacheSeconds = 12
 );
 
-public sealed record UserDictEntry(string Source, string Target);
+public sealed record UserDictEntry(string Source, string Target, string Category = "사용자");
 
 public sealed record ScreenTranslationItem(string SourceText, string TranslatedText, Rect BoundingRect);
 
@@ -95,4 +100,8 @@ public sealed record SessionUpdate(
     string? OcrRawText = null,
     string? FilterReason = null,
     string? FilterRule = null,
-    IReadOnlyList<ScreenTranslationItem>? ScreenItems = null);
+    IReadOnlyList<ScreenTranslationItem>? ScreenItems = null,
+    int TranslationRequestCount = 0,
+    int TranslationCharacterCount = 0,
+    int TotalTranslationRequestCount = 0,
+    int TotalTranslationCharacterCount = 0);

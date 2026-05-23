@@ -198,7 +198,7 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <RadioButton x:Name="ChatTranslationRadioButton" Grid.Column="0" Content="채팅 번역" GroupName="TranslationMode" IsChecked="True" Checked="TranslationModeChanged" MinHeight="30" VerticalContentAlignment="Center" FontWeight="SemiBold" />
-                                        <RadioButton x:Name="ScreenTranslationRadioButton" Grid.Column="2" Content="화면 번역" GroupName="TranslationMode" Checked="TranslationModeChanged" MinHeight="30" VerticalContentAlignment="Center" FontWeight="SemiBold" />
+                                        <RadioButton x:Name="ScreenTranslationRadioButton" Grid.Column="2" Content="전체화면 번역" GroupName="TranslationMode" Checked="TranslationModeChanged" MinHeight="30" VerticalContentAlignment="Center" FontWeight="SemiBold" />
                                     </Grid>
 
                                     <TextBlock Text="번역 대상 영역" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
@@ -229,6 +229,15 @@
                                     
                                     <TextBlock Text="번역 표시 방법" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
                                     <ComboBox x:Name="DisplayModeComboBox" Margin="0,6,0,0" MinHeight="34" SelectionChanged="DisplayModeSelectionChanged" />
+
+                                    <TextBlock Text="오버레이 가독성 프리셋" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,12,0,0" />
+                                    <ComboBox x:Name="OverlayPresetComboBox" Margin="0,6,0,0" MinHeight="34" SelectionChanged="OverlayPresetSelectionChanged" />
+
+                                    <Grid Margin="0,12,0,0">
+                                        <TextBlock Text="오버레이 투명도" FontWeight="SemiBold" Foreground="#374151" FontSize="12" HorizontalAlignment="Left" />
+                                        <TextBlock x:Name="OverlayOpacityLabel" Text="92%" FontWeight="SemiBold" Foreground="#2563EB" FontSize="12" HorizontalAlignment="Right" />
+                                    </Grid>
+                                    <Slider x:Name="OverlayOpacitySlider" Minimum="0.25" Maximum="1" Value="0.92" TickFrequency="0.01" Margin="0,6,0,0" ValueChanged="OverlayOpacitySlider_ValueChanged" />
                                 </StackPanel>
                             </Border>
 
@@ -452,11 +461,13 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <!-- Dictionary DataGrid -->
                         <DataGrid x:Name="UserDictionaryDataGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" SelectionMode="Single" BorderThickness="1" HeadersVisibility="Column" Background="White">
                             <DataGrid.Columns>
+                                <DataGridTextColumn Header="분류" Binding="{Binding Category}" Width="110" />
                                 <DataGridTextColumn Header="원문 단어 (중국어)" Binding="{Binding Source}" Width="*" />
                                 <DataGridTextColumn Header="대체 번역어 (한국어)" Binding="{Binding Target}" Width="*" />
                             </DataGrid.Columns>
@@ -466,15 +477,21 @@
                         <StackPanel Grid.Row="1" Margin="0,12,0,16">
                             <Grid>
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="12" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="12" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0">
+                                    <TextBlock Text="분류" FontWeight="SemiBold" Foreground="#374151" FontSize="11" Margin="0,0,0,6" />
+                                    <ComboBox x:Name="DictCategoryComboBox" Height="30" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
                                     <TextBlock Text="원문 단어" FontWeight="SemiBold" Foreground="#374151" FontSize="11" Margin="0,0,0,6" />
                                     <TextBox x:Name="DictSourceTextBox" Padding="6" Height="30" VerticalContentAlignment="Center" />
                                 </StackPanel>
-                                <StackPanel Grid.Column="2">
+                                <StackPanel Grid.Column="4">
                                     <TextBlock Text="대체 번역어" FontWeight="SemiBold" Foreground="#374151" FontSize="11" Margin="0,0,0,6" />
                                     <TextBox x:Name="DictTargetTextBox" Padding="6" Height="30" VerticalContentAlignment="Center" />
                                 </StackPanel>
@@ -487,10 +504,13 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="8" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="8" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Button x:Name="AddDictEntryButton" Height="32" Content="사전 단어 추가" Click="AddDictionaryEntry" Background="#2563EB" Foreground="White" BorderThickness="0" />
-                                <Button Grid.Column="2" x:Name="RestoreDefaultsButton" Width="120" Height="32" Content="기본 사전 추가" Click="RestoreDefaultDictionary" Background="#059669" Foreground="White" BorderThickness="0" />
-                                <Button Grid.Column="4" x:Name="DeleteDictEntryButton" Width="100" Height="32" Content="선택 삭제" Click="DeleteDictionaryEntry" Background="#EF4444" Foreground="White" BorderThickness="0" />
+                                <Button Grid.Column="2" x:Name="FillDictSourceFromOcrButton" Width="150" Height="32" Content="화면 OCR로 채우기" Click="FillDictionarySourceFromOcr" Background="#7C3AED" Foreground="White" BorderThickness="0" />
+                                <Button Grid.Column="4" x:Name="RestoreDefaultsButton" Width="120" Height="32" Content="기본 사전 추가" Click="RestoreDefaultDictionary" Background="#059669" Foreground="White" BorderThickness="0" />
+                                <Button Grid.Column="6" x:Name="DeleteDictEntryButton" Width="100" Height="32" Content="선택 삭제" Click="DeleteDictionaryEntry" Background="#EF4444" Foreground="White" BorderThickness="0" />
                             </Grid>
                         </StackPanel>
                     </Grid>
@@ -502,6 +522,7 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="*" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <ListView x:Name="DiagnosticLogsListView" BorderThickness="1" Background="White">
@@ -511,12 +532,13 @@
                                     <GridViewColumn Header="상태" DisplayMemberBinding="{Binding Status}" Width="100" />
                                     <GridViewColumn Header="원문 / 내용" DisplayMemberBinding="{Binding Source}" Width="180" />
                                     <GridViewColumn Header="필터 규칙" DisplayMemberBinding="{Binding Rule}" Width="100" />
-                                    <GridViewColumn Header="상세 이유" DisplayMemberBinding="{Binding Reason}" Width="140" />
+                                    <GridViewColumn Header="상세 이유" DisplayMemberBinding="{Binding Reason}" Width="120" />
+                                    <GridViewColumn Header="API 사용" DisplayMemberBinding="{Binding ApiUsage}" Width="90" />
                                 </GridView>
                             </ListView.View>
                         </ListView>
 
-                        <Grid Grid.Row="1" Margin="0,12,0,16">
+                        <Grid Grid.Row="1" Margin="0,12,0,12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -524,6 +546,24 @@
                             <TextBlock Text="※ 최근 100개의 진단 로그만 보관합니다." Foreground="#6B7280" FontSize="11" VerticalAlignment="Center" />
                             <Button Grid.Column="1" Width="100" Height="32" Content="로그 비우기" Click="ClearDiagnosticLogs" />
                         </Grid>
+
+                        <Border Grid.Row="2" Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="12">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="수동 OCR 텍스트 테스트" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
+                                <Grid Grid.Row="1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="ManualOcrTestTextBox" MinHeight="32" TextWrapping="Wrap" VerticalContentAlignment="Center" ToolTip="예: zuyeong: 快帮我!" />
+                                    <Button Grid.Column="1" Width="110" Margin="8,0,0,0" Content="파서 테스트" Click="RunManualOcrParserTest" />
+                                </Grid>
+                            </Grid>
+                        </Border>
                     </Grid>
                 </TabItem>
             </TabControl>
@@ -548,6 +588,14 @@
                             <Border Grid.Column="1" Margin="8,0,0,0" CornerRadius="4" Padding="8,6" Background="#F3F4F6">
                                 <TextBlock x:Name="StatusText" Text="대기" TextWrapping="Wrap" Foreground="#1F2937" FontWeight="Medium" />
                             </Border>
+                        </Grid>
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="API 사용량:" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#4B5563" />
+                            <TextBlock x:Name="ApiUsageText" Grid.Column="1" Margin="8,0,0,0" Text="이번 세션 0건 / 0자" VerticalAlignment="Center" Foreground="#4B5563" />
                         </Grid>
                         <Button x:Name="StartStopButton" Height="40" Content="번역 시작 (F8)" Click="ToggleSession" FontSize="14" FontWeight="Bold" Background="#2563EB" Foreground="White" BorderThickness="0" />
                     </StackPanel>

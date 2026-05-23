@@ -1,7 +1,9 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Platform;
@@ -27,6 +29,11 @@ public partial class MainWindow : Window
             return brush;
         }
 
+        public override string ToString() => Name;
+    }
+
+    private sealed record OverlayPreset(string Name, double FontSize, string TextColor, string OutlineColor, double StrokeThickness, double OverlayOpacity, string BackgroundColor)
+    {
         public override string ToString() => Name;
     }
 
@@ -59,25 +66,50 @@ public partial class MainWindow : Window
     ];
 
     private static readonly IReadOnlyList<double> StrokeThicknesses = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
+    private static readonly IReadOnlyList<string> DictionaryCategories =
+    [
+        UserDictionaryStore.UserCategory,
+        UserDictionaryStore.QuickReplyCategory,
+        UserDictionaryStore.UiCategory,
+        UserDictionaryStore.RaceCategory,
+        UserDictionaryStore.ItemCategory
+    ];
+    private static readonly IReadOnlyList<OverlayPreset> OverlayPresets =
+    [
+        new("기본", 22, "#FFFFFF", "#000000", 2.5, 0.92, "#99000000"),
+        new("강조", 24, "#FFFF00", "#000000", 3.0, 0.95, "#B3000000"),
+        new("원문 보호", 22, "#111111", "#FFFFFF", 3.0, 0.92, "#00000000"),
+        new("밝은 배경용", 23, "#FFFFFF", "#000000", 3.0, 0.95, "#CC000000"),
+        new("어두운 배경용", 22, "#111111", "#FFFFFF", 2.5, 0.88, "#80FFFFFF"),
+        new("사용자 지정", 22, "#FFFFFF", "#000000", 2.5, 0.92, "#99000000")
+    ];
     private readonly IWindowSource windowSource = new Win32WindowSource();
+    private readonly ICaptureService dictionaryCaptureService = new WindowCaptureService();
+    private readonly IOcrEngine dictionaryOcrEngine = new WindowsOcrEngine();
+    private static readonly CaptureRegion FullWindowRegion = new(0, 0, 1, 1);
     private readonly ApiKeyStore apiKeyStore = new();
     private readonly AppSettingsStore settingsStore = new();
-    private readonly ITranslationSession session;
+    private readonly TranslationSession session;
     private AppSettings settings;
     private ResultWindow? resultWindow;
     private OverlayWindow? overlayWindow;
     private CaptureRegion? selectedRegion;
     private CancellationTokenSource? sessionCancellation;
+    private bool applyingOverlayPreset;
 
     private readonly UserDictionaryStore userDictStore = new();
     private readonly System.Collections.ObjectModel.ObservableCollection<DiagnosticLogItem> diagnosticLogs = new();
     private readonly List<UserDictEntry> userDictionaryEntries = new();
+    private int totalTranslationRequestCount;
+    private int totalTranslationCharacterCount;
 
     public MainWindow()
     {
         settings = settingsStore.Load();
         InitializeComponent();
         session = new TranslationSession(new WindowCaptureService(), new WindowsOcrEngine(), new DeepLTranslationService(new HttpClient(), () => ApiKeyPasswordBox.Password));
+        session.BeforeCaptureAsync = SetOverlayCaptureVisibilityAsync(false);
+        session.AfterCaptureAsync = SetOverlayCaptureVisibilityAsync(true);
         session.Updated += SessionUpdated;
         OcrLanguageComboBox.ItemsSource = OcrLanguages;
         var selectedOcr = OcrLanguages.FirstOrDefault(l => string.Equals(l.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase)) ?? OcrLanguages[0];
@@ -87,6 +119,8 @@ public partial class MainWindow : Window
         var selectedTarget = TargetLanguages.FirstOrDefault(l => string.Equals(l.Code, settings.TargetLanguageCode, StringComparison.OrdinalIgnoreCase)) ?? TargetLanguages[0];
         TargetLanguageComboBox.SelectedItem = selectedTarget;
         DisplayModeComboBox.ItemsSource = DisplayModes;
+        OverlayPresetComboBox.ItemsSource = OverlayPresets;
+        OverlayPresetComboBox.SelectedItem = OverlayPresets.FirstOrDefault(preset => preset.Name == settings.OverlayPreset) ?? OverlayPresets[0];
         ApiKeyPasswordBox.Password = apiKeyStore.Load() ?? string.Empty;
         RestoreRegion(settings.LastRegion);
         UpdateRegionButtonVisual();
@@ -116,10 +150,14 @@ public partial class MainWindow : Window
         // Initialize stroke thickness slider and label
         StrokeThicknessSlider.Value = settings.StrokeThickness;
         StrokeThicknessLabel.Text = $"{settings.StrokeThickness:F1}px";
+        OverlayOpacitySlider.Value = settings.OverlayOpacity;
+        OverlayOpacityLabel.Text = $"{settings.OverlayOpacity:P0}";
 
         // Load User Dictionary
         userDictionaryEntries = userDictStore.Load();
         UserDictionaryDataGrid.ItemsSource = userDictionaryEntries;
+        DictCategoryComboBox.ItemsSource = DictionaryCategories;
+        DictCategoryComboBox.SelectedItem = UserDictionaryStore.UserCategory;
 
         // Load Advanced Filter Settings to UI
         EnableLengthFilterCheckBox.IsChecked = settings.EnableLengthFilter;
@@ -152,15 +190,8 @@ public partial class MainWindow : Window
 
         UpdateFontPreview();
 
-        // Initialize translation mode RadioButtons
-        if (settings.TranslationMode == TranslationMode.Screen)
-        {
-            ScreenTranslationRadioButton.IsChecked = true;
-        }
-        else
-        {
-            ChatTranslationRadioButton.IsChecked = true;
-        }
+        ChatTranslationRadioButton.IsChecked = settings.TranslationMode == TranslationMode.Chat;
+        ScreenTranslationRadioButton.IsChecked = settings.TranslationMode == TranslationMode.Screen;
         UpdateTranslationModeUI();
 
         RefreshWindows(this, new RoutedEventArgs());
@@ -355,6 +386,9 @@ public partial class MainWindow : Window
             return;
         }
         sessionCancellation = new CancellationTokenSource();
+        totalTranslationRequestCount = 0;
+        totalTranslationCharacterCount = 0;
+        UpdateApiUsageText();
         ShowTranslationOutput(window, region);
 
         var filterSettings = new FilterSettings(
@@ -378,7 +412,7 @@ public partial class MainWindow : Window
             region, 
             ocrLanguage, 
             targetLanguage, 
-            TimeSpan.FromMilliseconds(900), 
+            TimeSpan.FromSeconds(1), 
             filterSettings, 
             userDict,
             settings.TranslationMode), 
@@ -416,6 +450,7 @@ public partial class MainWindow : Window
                 ? new CaptureRegion(0, 0, 1, 1)
                 : (selectedRegion ?? new CaptureRegion(0, 0, 1, 1));
             overlayWindow.PositionOver(window, region);
+            overlayWindow.CurrentMode = settings.TranslationMode;
             overlayWindow.Topmost = false;
             overlayWindow.Topmost = true;
         }
@@ -424,7 +459,8 @@ public partial class MainWindow : Window
         // Handle diagnostic log recording
         if (!string.IsNullOrWhiteSpace(update.OcrRawText) || 
             !string.IsNullOrWhiteSpace(update.SourceText) || 
-            !string.IsNullOrWhiteSpace(update.FilterRule))
+            !string.IsNullOrWhiteSpace(update.FilterRule) ||
+            update.TranslationRequestCount > 0)
         {
             var logItem = new DiagnosticLogItem
             {
@@ -432,7 +468,10 @@ public partial class MainWindow : Window
                 Status = update.Status,
                 Source = update.OcrRawText ?? update.SourceText ?? string.Empty,
                 Rule = update.FilterRule ?? string.Empty,
-                Reason = update.FilterReason ?? string.Empty
+                Reason = update.FilterReason ?? string.Empty,
+                ApiUsage = update.TranslationRequestCount > 0
+                    ? $"{update.TranslationRequestCount}건/{update.TranslationCharacterCount}자"
+                    : string.Empty
             };
             diagnosticLogs.Insert(0, logItem);
             while (diagnosticLogs.Count > 100)
@@ -440,7 +479,42 @@ public partial class MainWindow : Window
                 diagnosticLogs.RemoveAt(diagnosticLogs.Count - 1);
             }
         }
+
+        if (update.TotalTranslationRequestCount > 0 || update.TotalTranslationCharacterCount > 0)
+        {
+            totalTranslationRequestCount = update.TotalTranslationRequestCount;
+            totalTranslationCharacterCount = update.TotalTranslationCharacterCount;
+            UpdateApiUsageText();
+        }
     });
+
+    private void UpdateApiUsageText()
+    {
+        if (ApiUsageText is not null)
+        {
+            ApiUsageText.Text = $"이번 세션 {totalTranslationRequestCount}건 / {totalTranslationCharacterCount}자";
+        }
+    }
+
+    private Func<CancellationToken, Task> SetOverlayCaptureVisibilityAsync(bool visible, bool force = false) =>
+        async ct =>
+        {
+            if (overlayWindow is null)
+            {
+                return;
+            }
+
+            if (!force)
+            {
+                return;
+            }
+
+            await Dispatcher.InvokeAsync(() => overlayWindow.SetCaptureVisibility(visible));
+            if (!visible)
+            {
+                await Task.Delay(60, ct);
+            }
+        };
 
     private async void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -498,12 +572,15 @@ public partial class MainWindow : Window
             resultWindow = null;
             overlayWindow ??= new OverlayWindow();
             overlayWindow.ClearAll();
+            overlayWindow.CurrentMode = settings.TranslationMode;
             overlayWindow.PositionOver(window, region);
             overlayWindow.FontFamily = new FontFamily(settings.FontFamily);
             overlayWindow.FontSize = settings.FontSize;
             overlayWindow.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(settings.TextColor));
             overlayWindow.StrokeBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(settings.OutlineColor));
             overlayWindow.StrokeThicknessValue = settings.StrokeThickness;
+            overlayWindow.OverlayBackgroundBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(settings.OverlayBackgroundColor));
+            overlayWindow.Opacity = settings.OverlayOpacity;
             overlayWindow.Show();
             return;
         }
@@ -629,7 +706,7 @@ public partial class MainWindow : Window
         if (settings == null) return;
         if (FontFamilyComboBox.SelectedItem is string fontFamilyName)
         {
-            settings = settings with { FontFamily = fontFamilyName };
+            settings = settings with { FontFamily = fontFamilyName, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
             settingsStore.Save(settings);
             UpdateFontPreview();
             if (overlayWindow is not null)
@@ -644,7 +721,7 @@ public partial class MainWindow : Window
         if (settings == null || FontSizeLabel == null) return;
         double fontSize = Math.Round(e.NewValue);
         FontSizeLabel.Text = $"{fontSize}pt";
-        settings = settings with { FontSize = fontSize };
+        settings = settings with { FontSize = fontSize, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
         settingsStore.Save(settings);
         UpdateFontPreview();
         if (overlayWindow is not null)
@@ -658,7 +735,7 @@ public partial class MainWindow : Window
         if (settings == null) return;
         if (TextColorListBox.SelectedItem is ColorChoice color)
         {
-            settings = settings with { TextColor = color.Hex };
+            settings = settings with { TextColor = color.Hex, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
             settingsStore.Save(settings);
             UpdateFontPreview();
             if (overlayWindow is not null)
@@ -673,7 +750,7 @@ public partial class MainWindow : Window
         if (settings == null) return;
         if (OutlineColorListBox.SelectedItem is ColorChoice color)
         {
-            settings = settings with { OutlineColor = color.Hex };
+            settings = settings with { OutlineColor = color.Hex, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
             settingsStore.Save(settings);
             UpdateFontPreview();
             if (overlayWindow is not null)
@@ -688,12 +765,82 @@ public partial class MainWindow : Window
         if (settings == null || StrokeThicknessLabel == null) return;
         double thickness = Math.Round(e.NewValue, 1);
         StrokeThicknessLabel.Text = $"{thickness:F1}px";
-        settings = settings with { StrokeThickness = thickness };
+        settings = settings with { StrokeThickness = thickness, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
         settingsStore.Save(settings);
         UpdateFontPreview();
         if (overlayWindow is not null)
         {
             overlayWindow.StrokeThicknessValue = thickness;
+        }
+    }
+
+    private void OverlayPresetSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (settings == null || OverlayPresetComboBox?.SelectedItem is not OverlayPreset preset)
+        {
+            return;
+        }
+
+        ApplyOverlayPreset(preset);
+    }
+
+    private void ApplyOverlayPreset(OverlayPreset preset)
+    {
+        settings = settings with
+        {
+            OverlayPreset = preset.Name,
+            FontSize = preset.FontSize,
+            TextColor = preset.TextColor,
+            OutlineColor = preset.OutlineColor,
+            StrokeThickness = preset.StrokeThickness,
+            OverlayOpacity = preset.OverlayOpacity,
+            OverlayBackgroundColor = preset.BackgroundColor
+        };
+        settingsStore.Save(settings);
+
+        applyingOverlayPreset = true;
+        try
+        {
+            FontSizeSlider.Value = preset.FontSize;
+            FontSizeLabel.Text = $"{preset.FontSize}pt";
+            TextColorListBox.SelectedItem = TextColors.FirstOrDefault(color => string.Equals(color.Hex, preset.TextColor, StringComparison.OrdinalIgnoreCase));
+            OutlineColorListBox.SelectedItem = OutlineColors.FirstOrDefault(color => string.Equals(color.Hex, preset.OutlineColor, StringComparison.OrdinalIgnoreCase));
+            StrokeThicknessSlider.Value = preset.StrokeThickness;
+            StrokeThicknessLabel.Text = $"{preset.StrokeThickness:F1}px";
+            OverlayOpacitySlider.Value = preset.OverlayOpacity;
+            OverlayOpacityLabel.Text = $"{preset.OverlayOpacity:P0}";
+        }
+        finally
+        {
+            applyingOverlayPreset = false;
+        }
+        UpdateFontPreview();
+
+        if (overlayWindow is not null)
+        {
+            overlayWindow.FontSize = preset.FontSize;
+            overlayWindow.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(preset.TextColor));
+            overlayWindow.StrokeBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(preset.OutlineColor));
+            overlayWindow.StrokeThicknessValue = preset.StrokeThickness;
+            overlayWindow.OverlayBackgroundBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(preset.BackgroundColor));
+            overlayWindow.Opacity = preset.OverlayOpacity;
+        }
+    }
+
+    private void OverlayOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (settings == null || OverlayOpacityLabel == null)
+        {
+            return;
+        }
+
+        var opacity = Math.Round(e.NewValue, 2);
+        OverlayOpacityLabel.Text = $"{opacity:P0}";
+        settings = settings with { OverlayOpacity = opacity, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
+        settingsStore.Save(settings);
+        if (overlayWindow is not null)
+        {
+            overlayWindow.Opacity = opacity;
         }
     }
 
@@ -774,7 +921,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var entry = new UserDictEntry(source, target);
+        var category = DictCategoryComboBox.SelectedItem as string ?? UserDictionaryStore.UserCategory;
+        var entry = new UserDictEntry(source, target, category);
         userDictionaryEntries.Add(entry);
         userDictStore.Save(userDictionaryEntries);
 
@@ -785,6 +933,141 @@ public partial class MainWindow : Window
         DictSourceTextBox.Clear();
         DictTargetTextBox.Clear();
         SetStatus($"사전에 단어 '{source}'를 추가했습니다.");
+    }
+
+    private async void FillDictionarySourceFromOcr(object sender, RoutedEventArgs e)
+    {
+        if (WindowComboBox.SelectedItem is not CapturableWindow window)
+        {
+            SetStatus("먼저 OCR할 게임 창을 선택하세요.", true);
+            return;
+        }
+
+        if (OcrLanguageComboBox.SelectedItem is not OcrLanguage ocrLanguage)
+        {
+            SetStatus("OCR 언어를 먼저 선택하세요.", true);
+            return;
+        }
+
+        if (session.IsRunning)
+        {
+            await StopSessionAsync();
+            SetStatus("사전 OCR을 위해 번역을 잠시 정지했습니다.");
+        }
+
+        var picker = new RegionSelectionWindow(window) { Owner = this };
+        SetStatus("사전에 추가할 원문 글자 영역을 드래그하세요.");
+        if (picker.ShowDialog() != true || picker.Region is not { } region)
+        {
+            SetStatus("사전 OCR 영역 선택을 취소했습니다.");
+            return;
+        }
+
+        FillDictSourceFromOcrButton.IsEnabled = false;
+        Mouse.OverrideCursor = Cursors.Wait;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            await SetOverlayCaptureVisibilityAsync(false, force: true)(cts.Token);
+            await Task.Delay(120, cts.Token);
+            var frame = await dictionaryCaptureService.CaptureAsync(new CaptureTarget(window), FullWindowRegion, cts.Token);
+            var source = await RecognizeDictionaryTextAsync(frame, region, ocrLanguage, cts.Token);
+
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                SetStatus("선택 영역에서 OCR 텍스트를 찾지 못했습니다.", true);
+                return;
+            }
+
+            DictSourceTextBox.Text = source;
+            DictTargetTextBox.Focus();
+            DictTargetTextBox.SelectAll();
+            SetStatus($"OCR 원문을 입력했습니다: {source}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Dictionary OCR capture failed", ex);
+            SetStatus($"사전 OCR 실패: {ex.Message}", true);
+        }
+        finally
+        {
+            Mouse.OverrideCursor = null;
+            FillDictSourceFromOcrButton.IsEnabled = true;
+            try
+            {
+                await SetOverlayCaptureVisibilityAsync(true, force: true)(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("Failed to restore overlay visibility after dictionary OCR", ex);
+            }
+        }
+    }
+
+    private static string NormalizeDictionaryOcrText(string text)
+    {
+        return Regex.Replace(text.Replace("\r", " ").Replace("\n", " "), @"\s+", " ").Trim();
+    }
+
+    private async Task<string> RecognizeDictionaryTextAsync(CapturedFrame frame, CaptureRegion selectedRegion, OcrLanguage language, CancellationToken ct)
+    {
+        var recognized = await dictionaryOcrEngine.RecognizeAsync(frame, language, ct);
+        return ExtractDictionaryTextFromSelection(recognized, selectedRegion, frame.Bitmap.PixelWidth, frame.Bitmap.PixelHeight);
+    }
+
+    private static string ExtractDictionaryTextFromSelection(OcrResult recognized, CaptureRegion selectedRegion, int frameWidth, int frameHeight)
+    {
+        var selectedRect = ToRect(selectedRegion.ToPixels(frameWidth, frameHeight));
+        selectedRect.Inflate(4, 4);
+
+        var selectedWords = recognized.Words
+            .Where(word => Intersects(word.BoundingRect, selectedRect))
+            .Select(word => ClipWordToSelection(word, selectedRect))
+            .Where(text => !string.IsNullOrWhiteSpace(text));
+
+        var wordText = NormalizeDictionaryOcrText(string.Concat(selectedWords));
+        if (!string.IsNullOrWhiteSpace(wordText))
+        {
+            return wordText;
+        }
+
+        var selectedLines = recognized.Lines
+            .Where(line => Intersects(line.BoundingRect, selectedRect))
+            .Select(line => line.Text);
+
+        return NormalizeDictionaryOcrText(string.Join(" ", selectedLines));
+    }
+
+    private static Rect ToRect(Int32Rect rect)
+    {
+        return new Rect(rect.X, rect.Y, rect.Width, rect.Height);
+    }
+
+    private static string ClipWordToSelection(OcrWordResult word, Rect selectedRect)
+    {
+        var text = word.Text.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var intersection = word.BoundingRect;
+        intersection.Intersect(selectedRect);
+        if (intersection.IsEmpty || word.BoundingRect.Width <= 0 || text.Length <= 1)
+        {
+            return intersection.IsEmpty ? string.Empty : text;
+        }
+
+        var charWidth = word.BoundingRect.Width / text.Length;
+        var start = Math.Clamp((int)Math.Floor((intersection.Left - word.BoundingRect.Left) / charWidth), 0, text.Length - 1);
+        var end = Math.Clamp((int)Math.Ceiling((intersection.Right - word.BoundingRect.Left) / charWidth), start + 1, text.Length);
+        return text[start..end];
+    }
+
+    private static bool Intersects(Rect a, Rect b)
+    {
+        a.Intersect(b);
+        return !a.IsEmpty && a.Width > 0 && a.Height > 0;
     }
 
     private void DeleteDictionaryEntry(object sender, RoutedEventArgs e)
@@ -835,6 +1118,65 @@ public partial class MainWindow : Window
         diagnosticLogs.Clear();
         SetStatus("진단 로그를 비웠습니다.");
     }
+
+    private void RunManualOcrParserTest(object sender, RoutedEventArgs e)
+    {
+        var raw = ManualOcrTestTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            SetStatus("테스트할 OCR 텍스트를 입력해 주세요.", true);
+            return;
+        }
+
+        var language = OcrLanguageComboBox.SelectedItem as OcrLanguage ?? OcrLanguages[0];
+        var filter = new FilterSettings(
+            EnableLengthFilterCheckBox.IsChecked == true,
+            (int)MinMessageLengthSlider.Value,
+            (int)MaxMessageLengthSlider.Value,
+            EnableNoiseFilterCheckBox.IsChecked == true,
+            (int)MaxNoiseTokenCountSlider.Value,
+            EnableSeparatorFilterCheckBox.IsChecked == true,
+            (int)MaxSeparatorsCountSlider.Value,
+            EnableSimilarityFilterCheckBox.IsChecked == true,
+            SimilarityThresholdSlider.Value,
+            ReplacementSimilarityThresholdSlider.Value,
+            (int)SimilarityCacheSecondsSlider.Value);
+
+        var lines = ChatLineParser.Parse(raw);
+        if (lines.Count == 0)
+        {
+            diagnosticLogs.Insert(0, new DiagnosticLogItem
+            {
+                Time = DateTime.Now.ToString("HH:mm:ss"),
+                Status = "수동 테스트",
+                Source = raw,
+                Rule = "ChatLineParser",
+                Reason = "파싱 실패"
+            });
+            SetStatus("수동 테스트: 채팅 줄을 파싱하지 못했습니다.", true);
+            return;
+        }
+
+        foreach (var line in lines)
+        {
+            var quality = ChatQualityFilter.Check(line, language, filter);
+            diagnosticLogs.Insert(0, new DiagnosticLogItem
+            {
+                Time = DateTime.Now.ToString("HH:mm:ss"),
+                Status = quality.Action.ToString(),
+                Source = line.SourceLine,
+                Rule = quality.Rule ?? "Translate",
+                Reason = quality.Reason ?? "번역 대상"
+            });
+        }
+
+        while (diagnosticLogs.Count > 100)
+        {
+            diagnosticLogs.RemoveAt(diagnosticLogs.Count - 1);
+        }
+
+        SetStatus($"수동 테스트: {lines.Count}개 줄을 분석했습니다.");
+    }
 }
 
 public sealed class DiagnosticLogItem
@@ -844,4 +1186,5 @@ public sealed class DiagnosticLogItem
     public string Source { get; set; } = string.Empty;
     public string Rule { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
+    public string ApiUsage { get; set; } = string.Empty;
 }
