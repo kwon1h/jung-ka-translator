@@ -80,9 +80,12 @@ public partial class MainWindow : Window
         session = new TranslationSession(new WindowCaptureService(), new WindowsOcrEngine(), new DeepLTranslationService(new HttpClient(), () => ApiKeyPasswordBox.Password));
         session.Updated += SessionUpdated;
         OcrLanguageComboBox.ItemsSource = OcrLanguages;
-        OcrLanguageComboBox.SelectedIndex = 0;
+        var selectedOcr = OcrLanguages.FirstOrDefault(l => string.Equals(l.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase)) ?? OcrLanguages[0];
+        OcrLanguageComboBox.SelectedItem = selectedOcr;
+
         TargetLanguageComboBox.ItemsSource = TargetLanguages;
-        TargetLanguageComboBox.SelectedIndex = 0;
+        var selectedTarget = TargetLanguages.FirstOrDefault(l => string.Equals(l.Code, settings.TargetLanguageCode, StringComparison.OrdinalIgnoreCase)) ?? TargetLanguages[0];
+        TargetLanguageComboBox.SelectedItem = selectedTarget;
         DisplayModeComboBox.ItemsSource = DisplayModes;
         ApiKeyPasswordBox.Password = apiKeyStore.Load() ?? string.Empty;
         RestoreRegion(settings.LastRegion);
@@ -233,6 +236,26 @@ public partial class MainWindow : Window
             resultWindow.ApplyMode(displayMode);
         }
         UpdateDisplayModePreview();
+    }
+
+    private void OcrLanguageSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (settings == null) return;
+        if (OcrLanguageComboBox.SelectedItem is OcrLanguage ocrLanguage)
+        {
+            settings = settings with { OcrLanguageTag = ocrLanguage.Tag };
+            settingsStore.Save(settings);
+        }
+    }
+
+    private void TargetLanguageSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (settings == null) return;
+        if (TargetLanguageComboBox.SelectedItem is TranslationLanguage targetLanguage)
+        {
+            settings = settings with { TargetLanguageCode = targetLanguage.Code };
+            settingsStore.Save(settings);
+        }
     }
 
     private void SelectRegion(object sender, RoutedEventArgs e)
@@ -456,7 +479,7 @@ public partial class MainWindow : Window
 
     private void SaveSelection(CapturableWindow window, CaptureRegion region)
     {
-        settings = new AppSettings(window.Title, window.ProcessName, region, settings.DisplayMode, settings.FontFamily, settings.FontSize, settings.TextColor, settings.OutlineColor, settings.StrokeThickness);
+        settings = settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName, LastRegion = region };
         settingsStore.Save(settings);
     }
 

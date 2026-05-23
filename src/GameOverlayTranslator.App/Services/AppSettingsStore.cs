@@ -24,7 +24,9 @@ public sealed record AppSettings(
     bool EnableSimilarityFilter = true,
     double SimilarityThreshold = 0.72,
     double ReplacementSimilarityThreshold = 0.82,
-    int SimilarityCacheSeconds = 12);
+    int SimilarityCacheSeconds = 12,
+    string OcrLanguageTag = "zh-Hans",
+    string TargetLanguageCode = "ko");
 
 public enum TranslationDisplayMode
 {
@@ -63,7 +65,9 @@ public sealed class AppSettingsStore
                         MaxSeparatorsCount = settings.MaxSeparatorsCount < 0 ? 0 : settings.MaxSeparatorsCount,
                         SimilarityThreshold = settings.SimilarityThreshold < 0 || settings.SimilarityThreshold > 1 ? 0.72 : settings.SimilarityThreshold,
                         ReplacementSimilarityThreshold = settings.ReplacementSimilarityThreshold < 0 || settings.ReplacementSimilarityThreshold > 1 ? 0.82 : settings.ReplacementSimilarityThreshold,
-                        SimilarityCacheSeconds = settings.SimilarityCacheSeconds < 1 ? 12 : settings.SimilarityCacheSeconds
+                        SimilarityCacheSeconds = settings.SimilarityCacheSeconds < 1 ? 12 : settings.SimilarityCacheSeconds,
+                        OcrLanguageTag = string.IsNullOrWhiteSpace(settings.OcrLanguageTag) ? "zh-Hans" : settings.OcrLanguageTag,
+                        TargetLanguageCode = string.IsNullOrWhiteSpace(settings.TargetLanguageCode) ? "ko" : settings.TargetLanguageCode
                     };
                 }
             }

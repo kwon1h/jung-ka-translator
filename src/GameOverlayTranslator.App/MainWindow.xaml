@@ -208,11 +208,11 @@
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0">
                                             <TextBlock Text="OCR 언어" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
-                                            <ComboBox x:Name="OcrLanguageComboBox" Margin="0,6,0,0" MinHeight="34" />
+                                            <ComboBox x:Name="OcrLanguageComboBox" Margin="0,6,0,0" MinHeight="34" SelectionChanged="OcrLanguageSelectionChanged" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="2">
                                             <TextBlock Text="번역 언어" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
-                                            <ComboBox x:Name="TargetLanguageComboBox" Margin="0,6,0,0" MinHeight="34" />
+                                            <ComboBox x:Name="TargetLanguageComboBox" Margin="0,6,0,0" MinHeight="34" SelectionChanged="TargetLanguageSelectionChanged" />
                                         </StackPanel>
                                     </Grid>
                                     
