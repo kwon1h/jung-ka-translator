@@ -190,6 +190,17 @@
                                         <Button Grid.Column="1" Width="88" Margin="8,0,0,0" Content="새로고침" Click="RefreshWindows" />
                                     </Grid>
                                     
+                                    <TextBlock Text="번역 모드" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
+                                    <Grid Margin="0,6,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="12" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <RadioButton x:Name="ChatTranslationRadioButton" Grid.Column="0" Content="채팅 번역" GroupName="TranslationMode" IsChecked="True" Checked="TranslationModeChanged" MinHeight="30" VerticalContentAlignment="Center" FontWeight="SemiBold" />
+                                        <RadioButton x:Name="ScreenTranslationRadioButton" Grid.Column="2" Content="화면 번역" GroupName="TranslationMode" Checked="TranslationModeChanged" MinHeight="30" VerticalContentAlignment="Center" FontWeight="SemiBold" />
+                                    </Grid>
+
                                     <TextBlock Text="번역 대상 영역" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
                                     <Grid Margin="0,6,0,12">
                                         <Grid.ColumnDefinitions>

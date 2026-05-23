@@ -20,6 +20,7 @@ public interface IOcrEngine
 public interface ITranslationService
 {
     Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct);
+    Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct);
 }
 
 public interface ITranslationSession

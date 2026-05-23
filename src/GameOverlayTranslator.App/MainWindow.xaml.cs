@@ -152,6 +152,17 @@ public partial class MainWindow : Window
 
         UpdateFontPreview();
 
+        // Initialize translation mode RadioButtons
+        if (settings.TranslationMode == TranslationMode.Screen)
+        {
+            ScreenTranslationRadioButton.IsChecked = true;
+        }
+        else
+        {
+            ChatTranslationRadioButton.IsChecked = true;
+        }
+        UpdateTranslationModeUI();
+
         RefreshWindows(this, new RoutedEventArgs());
         Closed += OnClosed;
     }
@@ -221,6 +232,40 @@ public partial class MainWindow : Window
         }
     }
 
+    private void TranslationModeChanged(object sender, RoutedEventArgs e)
+    {
+        if (settings == null || ChatTranslationRadioButton == null || ScreenTranslationRadioButton == null) return;
+        var mode = ScreenTranslationRadioButton.IsChecked == true ? TranslationMode.Screen : TranslationMode.Chat;
+        settings = settings with { TranslationMode = mode };
+        settingsStore.Save(settings);
+        UpdateTranslationModeUI();
+    }
+
+    private void UpdateTranslationModeUI()
+    {
+        if (ChatTranslationRadioButton.IsChecked == true)
+        {
+            SelectRegionButton.IsEnabled = true;
+            if (selectedRegion is { } r)
+            {
+                ShowRegion(r);
+            }
+            else
+            {
+                RegionText.Text = "선택되지 않음";
+            }
+            UpdateRegionButtonVisual();
+        }
+        else
+        {
+            SelectRegionButton.IsEnabled = false;
+            RegionText.Text = "전체 화면 (자동)";
+            SelectRegionButton.ClearValue(BackgroundProperty);
+            SelectRegionButton.ClearValue(ForegroundProperty);
+            SelectRegionButton.ClearValue(FontWeightProperty);
+        }
+    }
+
     private void DisplayModeSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (DisplayModeComboBox.SelectedItem is not DisplayModeChoice choice)
@@ -283,11 +328,27 @@ public partial class MainWindow : Window
             await StopSessionAsync();
             return;
         }
-        if (WindowComboBox.SelectedItem is not CapturableWindow window || selectedRegion is not { } region)
+        if (WindowComboBox.SelectedItem is not CapturableWindow window)
         {
-            SetStatus("게임 창과 번역 영역을 먼저 선택하세요.", true);
+            SetStatus("게임 창을 먼저 선택하세요.", true);
             return;
         }
+
+        CaptureRegion region;
+        if (settings.TranslationMode == TranslationMode.Screen)
+        {
+            region = new CaptureRegion(0, 0, 1, 1);
+        }
+        else
+        {
+            if (selectedRegion is not { } r)
+            {
+                SetStatus("번역 영역을 먼저 선택하세요.", true);
+                return;
+            }
+            region = r;
+        }
+
         if (OcrLanguageComboBox.SelectedItem is not OcrLanguage ocrLanguage || TargetLanguageComboBox.SelectedItem is not TranslationLanguage targetLanguage)
         {
             SetStatus("언어 설정을 확인하세요.", true);
@@ -319,10 +380,19 @@ public partial class MainWindow : Window
             targetLanguage, 
             TimeSpan.FromMilliseconds(900), 
             filterSettings, 
-            userDict), 
+            userDict,
+            settings.TranslationMode), 
             sessionCancellation.Token);
 
-        SaveSelection(window, region);
+        if (settings.TranslationMode != TranslationMode.Screen)
+        {
+            SaveSelection(window, region);
+        }
+        else
+        {
+            settings = settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName };
+            settingsStore.Save(settings);
+        }
         StartStopButton.Content = "번역 정지 (F8)";
     }
 
@@ -340,8 +410,11 @@ public partial class MainWindow : Window
     {
         SetStatus(update.Status, update.IsError);
         resultWindow?.Apply(update);
-        if (overlayWindow is not null && WindowComboBox.SelectedItem is CapturableWindow window && selectedRegion is { } region)
+        if (overlayWindow is not null && WindowComboBox.SelectedItem is CapturableWindow window)
         {
+            var region = settings.TranslationMode == TranslationMode.Screen
+                ? new CaptureRegion(0, 0, 1, 1)
+                : (selectedRegion ?? new CaptureRegion(0, 0, 1, 1));
             overlayWindow.PositionOver(window, region);
             overlayWindow.Topmost = false;
             overlayWindow.Topmost = true;

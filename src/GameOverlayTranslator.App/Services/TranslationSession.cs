@@ -69,6 +69,87 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     Publish("OCR 감지", ocrRawText: recognized.Text);
                 }
 
+                if (options.Mode == TranslationMode.Screen)
+                {
+                    var linesToTranslate = recognized.Lines;
+                    if (linesToTranslate.Count == 0)
+                    {
+                        Publish("화면 번역 완료", screenItems: Array.Empty<ScreenTranslationItem>());
+                        continue;
+                    }
+
+                    // 1. Pre-process all lines (apply dictionary, identify which ones need DeepL translation)
+                    var processedLines = new List<(OcrLineResult OcrLine, string ProcessedText, string? DirectTranslation)>();
+                    var textsToTranslate = new List<string>();
+
+                    foreach (var line in linesToTranslate)
+                    {
+                        var trimmed = line.Text.Trim();
+                        
+                        // Exact match in dictionary
+                        var exactEntry = options.UserDictionary.FirstOrDefault(e => string.Equals(e.Source.Trim(), trimmed, StringComparison.OrdinalIgnoreCase));
+                        if (exactEntry != null)
+                        {
+                            processedLines.Add((line, exactEntry.Target, exactEntry.Target));
+                            continue;
+                        }
+
+                        // Substring replacements in dictionary
+                        var processed = line.Text;
+                        foreach (var entry in options.UserDictionary)
+                        {
+                            if (processed.Contains(entry.Source, StringComparison.OrdinalIgnoreCase))
+                            {
+                                processed = processed.Replace(entry.Source, entry.Target, StringComparison.OrdinalIgnoreCase);
+                            }
+                        }
+
+                        processedLines.Add((line, processed, null));
+                        textsToTranslate.Add(processed);
+                    }
+
+                    // 2. Perform batch translation for lines that need it
+                    IReadOnlyList<string> translatedTexts = Array.Empty<string>();
+                    if (textsToTranslate.Count > 0)
+                    {
+                        try
+                        {
+                            var batchResult = await translationService.TranslateBatchAsync(
+                                new BatchTranslationRequest(textsToTranslate, options.TargetLanguage.Code), 
+                                ct);
+                            translatedTexts = batchResult.TranslatedTexts;
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLog.Write("Batch translation failed, falling back to raw texts", ex);
+                            // Fallback to using the processed texts (with dictionary replacements)
+                            translatedTexts = textsToTranslate;
+                        }
+                    }
+
+                    // 3. Reconstruct the screen translation items
+                    var screenItems = new List<ScreenTranslationItem>();
+                    int translateResultIndex = 0;
+                    foreach (var entry in processedLines)
+                    {
+                        string translation;
+                        if (entry.DirectTranslation != null)
+                        {
+                            translation = entry.DirectTranslation;
+                        }
+                        else
+                        {
+                            translation = translateResultIndex < translatedTexts.Count 
+                                ? translatedTexts[translateResultIndex++] 
+                                : entry.ProcessedText;
+                        }
+                        screenItems.Add(new ScreenTranslationItem(entry.OcrLine.Text, translation, entry.OcrLine.BoundingRect));
+                    }
+
+                    Publish("화면 번역 완료", screenItems: screenItems);
+                    continue;
+                }
+
                 var chatLines = ChatLineParser.Parse(recognized.Text);
                 AppLog.Write($"OCR chat poll raw={Quote(recognized.Text)} parsedLines={chatLines.Count}");
                 if (chatLines.Count == 0)
@@ -218,8 +299,9 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         bool replacesChatLine = false,
         string? ocrRawText = null,
         string? filterReason = null,
-        string? filterRule = null) =>
-        Updated?.Invoke(this, new SessionUpdate(status, source, translated, isError, speaker, isChatLine, chatLineId, replacesChatLine, ocrRawText, filterReason, filterRule));
+        string? filterRule = null,
+        IReadOnlyList<ScreenTranslationItem>? screenItems = null) =>
+        Updated?.Invoke(this, new SessionUpdate(status, source, translated, isError, speaker, isChatLine, chatLineId, replacesChatLine, ocrRawText, filterReason, filterRule, screenItems));
 
     private static string Quote(string value) =>
         $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\r", string.Empty, StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}\"";

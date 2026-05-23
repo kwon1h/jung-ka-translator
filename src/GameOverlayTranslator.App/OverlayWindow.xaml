@@ -20,5 +20,7 @@
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
         </ItemsControl>
+        
+        <Canvas x:Name="ScreenOverlayCanvas" Background="Transparent" Visibility="Collapsed" />
     </Grid>
 </Window>

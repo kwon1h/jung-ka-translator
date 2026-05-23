@@ -26,7 +26,8 @@ public sealed record AppSettings(
     double ReplacementSimilarityThreshold = 0.82,
     int SimilarityCacheSeconds = 12,
     string OcrLanguageTag = "zh-Hans",
-    string TargetLanguageCode = "ko");
+    string TargetLanguageCode = "ko",
+    TranslationMode TranslationMode = TranslationMode.Chat);
 
 public enum TranslationDisplayMode
 {

@@ -52,28 +52,32 @@ public sealed class OutlinedTextBlock : Control
             typeface,
             FontSize,
             Fill,
-            VisualTreeHelper.GetDpi(this).PixelsPerDip)
+            VisualTreeHelper.GetDpi(this).PixelsPerDip);
+
+        if (double.IsFinite(constraint.Width))
         {
-            MaxTextWidth = Math.Max(0, constraint.Width),
-            Trimming = TextTrimming.CharacterEllipsis
-        };
+            text.MaxTextWidth = Math.Max(0, constraint.Width);
+            text.Trimming = TextTrimming.CharacterEllipsis;
+        }
         
         double offset = StrokeThickness * 2;
-        return new Size(
-            Math.Min(constraint.Width, text.Width + offset),
-            Math.Min(constraint.Height, text.Height + offset)
-        );
+        double width = double.IsFinite(constraint.Width) ? Math.Min(constraint.Width, text.Width + offset) : text.Width + offset;
+        double height = double.IsFinite(constraint.Height) ? Math.Min(constraint.Height, text.Height + offset) : text.Height + offset;
+        return new Size(width, height);
     }
 
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
         var typeface = new Typeface(FontFamily, FontStyle, FontWeight, FontStretch);
-        var text = new FormattedText(Text ?? string.Empty, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, typeface, FontSize, Fill, VisualTreeHelper.GetDpi(this).PixelsPerDip)
+        var text = new FormattedText(Text ?? string.Empty, System.Globalization.CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, typeface, FontSize, Fill, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+
+        if (double.IsFinite(ActualWidth) && ActualWidth > 0)
         {
-            MaxTextWidth = Math.Max(0, ActualWidth),
-            Trimming = TextTrimming.CharacterEllipsis
-        };
+            text.MaxTextWidth = ActualWidth;
+            text.Trimming = TextTrimming.CharacterEllipsis;
+        }
+
         var geometry = text.BuildGeometry(new Point(0, 0));
         drawingContext.DrawGeometry(Fill, new Pen(Stroke, StrokeThickness), geometry);
     }

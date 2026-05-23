@@ -1,4 +1,6 @@
 using System.IO;
+using System.Collections.Generic;
+using System.Windows;
 using System.Windows.Media.Imaging;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
@@ -25,7 +27,33 @@ public sealed class WindowsOcrEngine : IOcrEngine
         var result = await engine.RecognizeAsync(bitmap);
         ct.ThrowIfCancellationRequested();
 
-        return new GameOverlayTranslator.App.Domain.OcrResult(result.Text.Trim());
+        var lines = new List<OcrLineResult>();
+        foreach (var ocrLine in result.Lines)
+        {
+            var text = ocrLine.Text.Trim();
+            if (!string.IsNullOrWhiteSpace(text) && ocrLine.Words.Count > 0)
+            {
+                var firstWordRect = ocrLine.Words[0].BoundingRect;
+                double minX = firstWordRect.X;
+                double minY = firstWordRect.Y;
+                double maxX = firstWordRect.X + firstWordRect.Width;
+                double maxY = firstWordRect.Y + firstWordRect.Height;
+
+                for (int i = 1; i < ocrLine.Words.Count; i++)
+                {
+                    var wordRect = ocrLine.Words[i].BoundingRect;
+                    minX = Math.Min(minX, wordRect.X);
+                    minY = Math.Min(minY, wordRect.Y);
+                    maxX = Math.Max(maxX, wordRect.X + wordRect.Width);
+                    maxY = Math.Max(maxY, wordRect.Y + wordRect.Height);
+                }
+
+                var rect = new Rect(minX, minY, maxX - minX, maxY - minY);
+                lines.Add(new OcrLineResult(text, rect));
+            }
+        }
+
+        return new GameOverlayTranslator.App.Domain.OcrResult(result.Text.Trim(), lines);
     }
 
     private static async Task WritePngAsync(BitmapSource bitmap, IRandomAccessStream stream, CancellationToken ct)

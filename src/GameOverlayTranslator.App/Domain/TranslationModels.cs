@@ -37,11 +37,23 @@ public sealed record TranslationLanguage(string Code, string DisplayName)
     public override string ToString() => DisplayName;
 }
 
-public sealed record OcrResult(string Text);
+public enum TranslationMode
+{
+    Chat,
+    Screen
+}
+
+public sealed record OcrLineResult(string Text, Rect BoundingRect);
+
+public sealed record OcrResult(string Text, IReadOnlyList<OcrLineResult> Lines);
 
 public sealed record TranslationRequest(string Text, string TargetLanguage, string? SourceLanguage = null);
 
 public sealed record TranslationResult(string SourceText, string TranslatedText, string? DetectedSourceLanguage);
+
+public sealed record BatchTranslationRequest(IReadOnlyList<string> Texts, string TargetLanguage, string? SourceLanguage = null);
+
+public sealed record BatchTranslationResult(IReadOnlyList<string> TranslatedTexts);
 
 public sealed record FilterSettings(
     bool EnableLengthFilter = true,
@@ -59,6 +71,8 @@ public sealed record FilterSettings(
 
 public sealed record UserDictEntry(string Source, string Target);
 
+public sealed record ScreenTranslationItem(string SourceText, string TranslatedText, Rect BoundingRect);
+
 public sealed record SessionOptions(
     CaptureTarget Target,
     CaptureRegion Region,
@@ -66,7 +80,8 @@ public sealed record SessionOptions(
     TranslationLanguage TargetLanguage,
     TimeSpan Interval,
     FilterSettings Filter,
-    IReadOnlyList<UserDictEntry> UserDictionary);
+    IReadOnlyList<UserDictEntry> UserDictionary,
+    TranslationMode Mode = TranslationMode.Chat);
 
 public sealed record SessionUpdate(
     string Status,
@@ -79,4 +94,5 @@ public sealed record SessionUpdate(
     bool ReplacesChatLine = false,
     string? OcrRawText = null,
     string? FilterReason = null,
-    string? FilterRule = null);
+    string? FilterRule = null,
+    IReadOnlyList<ScreenTranslationItem>? ScreenItems = null);

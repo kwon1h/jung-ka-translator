@@ -1,11 +1,13 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Platform;
+using GameOverlayTranslator.App.Services;
 
 namespace GameOverlayTranslator.App;
 
@@ -67,6 +69,70 @@ public partial class OverlayWindow : Window
 
     public void Apply(SessionUpdate update)
     {
+        if (update.ScreenItems is not null)
+        {
+            try
+            {
+                OverlayItems.Visibility = Visibility.Collapsed;
+                ScreenOverlayCanvas.Visibility = Visibility.Visible;
+                ScreenOverlayCanvas.Children.Clear();
+
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                var dpiScale = Math.Max(1, NativeMethods.GetDpiForWindow(hwnd) / 96d);
+
+                foreach (var screenItem in update.ScreenItems)
+                {
+                    var wpfX = screenItem.BoundingRect.Left / dpiScale;
+                    var wpfY = screenItem.BoundingRect.Top / dpiScale;
+                    var wpfWidth = screenItem.BoundingRect.Width / dpiScale;
+                    var wpfHeight = screenItem.BoundingRect.Height / dpiScale;
+
+                    if (!double.IsFinite(wpfX) || !double.IsFinite(wpfY) || 
+                        !double.IsFinite(wpfWidth) || !double.IsFinite(wpfHeight) ||
+                        wpfWidth <= 0 || wpfHeight <= 0)
+                    {
+                        continue;
+                    }
+
+                    var textBlock = new OutlinedTextBlock
+                    {
+                        Text = screenItem.TranslatedText,
+                        FontFamily = this.FontFamily,
+                        FontSize = Math.Max(10, wpfHeight * 0.85),
+                        Fill = this.Foreground,
+                        Stroke = this.StrokeBrush,
+                        StrokeThickness = this.StrokeThicknessValue,
+                        FontWeight = FontWeights.Bold,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+
+                    var border = new Border
+                    {
+                        Background = new SolidColorBrush(Color.FromArgb(230, 0, 0, 0)),
+                        Padding = new Thickness(2, 0, 2, 0),
+                        CornerRadius = new CornerRadius(2),
+                        Child = textBlock,
+                        MinWidth = wpfWidth,
+                        MinHeight = wpfHeight,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+
+                    Canvas.SetLeft(border, wpfX - 2);
+                    Canvas.SetTop(border, wpfY);
+                    ScreenOverlayCanvas.Children.Add(border);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("Screen overlay rendering failed", ex);
+            }
+            return;
+        }
+
+        OverlayItems.Visibility = Visibility.Visible;
+        ScreenOverlayCanvas.Visibility = Visibility.Collapsed;
+
         if (!update.IsChatLine || string.IsNullOrWhiteSpace(update.TranslatedText))
         {
             return;
@@ -137,6 +203,7 @@ public partial class OverlayWindow : Window
         Dispatcher.Invoke(() =>
         {
             lines.Clear();
+            ScreenOverlayCanvas?.Children.Clear();
             foreach (var cts in activeTimers.Values)
             {
                 cts.Cancel();
