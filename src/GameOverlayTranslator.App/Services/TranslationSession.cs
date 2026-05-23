@@ -10,6 +10,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
     private Task? runTask;
 
     public event EventHandler<SessionUpdate>? Updated;
+    public Func<CancellationToken, Task>? BeforeCaptureAsync { get; set; }
+    public Func<CancellationToken, Task>? AfterCaptureAsync { get; set; }
 
     public bool IsRunning => runTask is { IsCompleted: false };
 
@@ -54,14 +56,34 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
     private async Task RunAsync(SessionOptions options, CancellationToken ct)
     {
         var exactLines = new HashSet<string>(StringComparer.Ordinal);
+        var screenTranslationCache = new Dictionary<string, string>(StringComparer.Ordinal);
         var recentChat = new RecentChatFilter();
+        var totalTranslationRequests = 0;
+        var totalTranslationCharacters = 0;
         using var timer = new PeriodicTimer(options.Interval);
 
         do
         {
             try
             {
-                var frame = await captureService.CaptureAsync(options.Target, options.Region, ct);
+                if (BeforeCaptureAsync is not null)
+                {
+                    await BeforeCaptureAsync(ct);
+                }
+
+                CapturedFrame frame;
+                try
+                {
+                    frame = await captureService.CaptureAsync(options.Target, options.Region, ct);
+                }
+                finally
+                {
+                    if (AfterCaptureAsync is not null)
+                    {
+                        await AfterCaptureAsync(ct);
+                    }
+                }
+
                 var recognized = await ocrEngine.RecognizeAsync(frame, options.OcrLanguage, ct);
 
                 if (!string.IsNullOrWhiteSpace(recognized.Text))
@@ -74,13 +96,14 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     var linesToTranslate = recognized.Lines;
                     if (linesToTranslate.Count == 0)
                     {
-                        Publish("화면 번역 완료", screenItems: Array.Empty<ScreenTranslationItem>());
+                        Publish("화면 번역 대기");
                         continue;
                     }
 
                     // 1. Pre-process all lines (apply dictionary, identify which ones need DeepL translation)
-                    var processedLines = new List<(OcrLineResult OcrLine, string ProcessedText, string? DirectTranslation)>();
+                    var processedLines = new List<(OcrLineResult OcrLine, string ProcessedText, string CacheKey, string? DirectTranslation)>();
                     var textsToTranslate = new List<string>();
+                    var cacheKeysToTranslate = new List<string>();
 
                     foreach (var line in linesToTranslate)
                     {
@@ -90,7 +113,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         var exactEntry = options.UserDictionary.FirstOrDefault(e => string.Equals(e.Source.Trim(), trimmed, StringComparison.OrdinalIgnoreCase));
                         if (exactEntry != null)
                         {
-                            processedLines.Add((line, exactEntry.Target, exactEntry.Target));
+                            processedLines.Add((line, exactEntry.Target, CreateScreenTranslationCacheKey(line.Text, exactEntry.Target, options.TargetLanguage.Code), exactEntry.Target));
                             continue;
                         }
 
@@ -104,8 +127,24 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                             }
                         }
 
-                        processedLines.Add((line, processed, null));
-                        textsToTranslate.Add(processed);
+                        if (HasExpectedSourceScript(processed, options.OcrLanguage))
+                        {
+                            var cacheKey = CreateScreenTranslationCacheKey(line.Text, processed, options.TargetLanguage.Code);
+                            if (screenTranslationCache.TryGetValue(cacheKey, out var cachedTranslation))
+                            {
+                                processedLines.Add((line, processed, cacheKey, cachedTranslation));
+                            }
+                            else
+                            {
+                                processedLines.Add((line, processed, cacheKey, null));
+                                textsToTranslate.Add(processed);
+                                cacheKeysToTranslate.Add(cacheKey);
+                            }
+                        }
+                        else
+                        {
+                            processedLines.Add((line, processed, CreateScreenTranslationCacheKey(line.Text, processed, options.TargetLanguage.Code), processed));
+                        }
                     }
 
                     // 2. Perform batch translation for lines that need it
@@ -114,10 +153,26 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     {
                         try
                         {
+                            var batchCharacters = textsToTranslate.Sum(text => text.Length);
+                            totalTranslationRequests += textsToTranslate.Count;
+                            totalTranslationCharacters += batchCharacters;
+                            AppLog.Write($"TranslationRequest mode=screen count={textsToTranslate.Count} chars={batchCharacters}");
+                            Publish(
+                                "화면 번역 요청",
+                                filterReason: $"요청 {textsToTranslate.Count}건 / {batchCharacters}자",
+                                filterRule: "TranslationRequest",
+                                translationRequestCount: textsToTranslate.Count,
+                                translationCharacterCount: batchCharacters,
+                                totalTranslationRequestCount: totalTranslationRequests,
+                                totalTranslationCharacterCount: totalTranslationCharacters);
                             var batchResult = await translationService.TranslateBatchAsync(
                                 new BatchTranslationRequest(textsToTranslate, options.TargetLanguage.Code), 
                                 ct);
                             translatedTexts = batchResult.TranslatedTexts;
+                            for (var index = 0; index < translatedTexts.Count && index < cacheKeysToTranslate.Count; index++)
+                            {
+                                screenTranslationCache[cacheKeysToTranslate[index]] = translatedTexts[index];
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -125,6 +180,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                             // Fallback to using the processed texts (with dictionary replacements)
                             translatedTexts = textsToTranslate;
                         }
+                    }
+                    else
+                    {
+                        Publish("화면 사전 처리 완료", filterReason: "사전 치환 후 번역 API 건너뜀", filterRule: "DictionaryOnly");
                     }
 
                     // 3. Reconstruct the screen translation items
@@ -164,9 +223,17 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
                 foreach (var line in chatLines)
                 {
-                    if (!exactLines.Add(line.DeduplicationKey))
+                    if (exactLines.Contains(line.DeduplicationKey))
                     {
                         Publish("중복 필터링", source: line.SourceLine, filterReason: "동일 프레임/세션 내 중복 메시지", filterRule: "ExactDuplicateFilter");
+                        continue;
+                    }
+
+                    var initialQuality = ChatQualityFilter.Check(line, options.OcrLanguage, options.Filter);
+                    if (!initialQuality.Accepted)
+                    {
+                        AppLog.Write($"ChatQualityFilter reject reason={initialQuality.Reason} line={Quote(line.SourceLine)}");
+                        Publish($"채팅 품질 필터: {initialQuality.Reason}", line.SourceLine, filterReason: initialQuality.Reason, filterRule: initialQuality.Rule);
                         continue;
                     }
 
@@ -205,6 +272,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                             filterReason: "유저 사전 100% 일치 (번역 API 건너뜀)",
                             filterRule: "UserDictionaryExact"
                         );
+                        exactLines.Add(line.DeduplicationKey);
                         continue;
                     }
 
@@ -254,10 +322,22 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                             replacesChatLine: decisionForLine.Action == ChatFilterAction.Replace,
                             filterReason: quality.Reason,
                             filterRule: quality.Rule);
+                        exactLines.Add(line.DeduplicationKey);
                         continue;
                     }
 
-                    Publish("채팅 번역 요청", activeLine.SourceLine);
+                    AppLog.Write($"TranslationRequest mode=chat count=1 chars={activeLine.Message.Length} speaker={Quote(activeLine.Speaker)} message={Quote(activeLine.Message)}");
+                    totalTranslationRequests += 1;
+                    totalTranslationCharacters += activeLine.Message.Length;
+                    Publish(
+                        "채팅 번역 요청",
+                        activeLine.SourceLine,
+                        filterReason: $"요청 1건 / {activeLine.Message.Length}자",
+                        filterRule: "TranslationRequest",
+                        translationRequestCount: 1,
+                        translationCharacterCount: activeLine.Message.Length,
+                        totalTranslationRequestCount: totalTranslationRequests,
+                        totalTranslationCharacterCount: totalTranslationCharacters);
                     var translated = await translationService.TranslateAsync(new TranslationRequest(activeLine.Message, options.TargetLanguage.Code), ct);
                     Publish(
                         decisionForLine.Action == ChatFilterAction.Replace ? "유사 채팅 교체" : "채팅 번역 완료",
@@ -270,6 +350,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         filterReason: replaced ? "유저 사전 치환 후 번역 완료" : "필터 통과 및 번역 완료",
                         filterRule: replaced ? "UserDictionaryReplace" : "TranslateSuccess"
                     );
+                    exactLines.Add(line.DeduplicationKey);
                 }
             }
             catch (CaptureException ex)
@@ -300,9 +381,36 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         string? ocrRawText = null,
         string? filterReason = null,
         string? filterRule = null,
-        IReadOnlyList<ScreenTranslationItem>? screenItems = null) =>
-        Updated?.Invoke(this, new SessionUpdate(status, source, translated, isError, speaker, isChatLine, chatLineId, replacesChatLine, ocrRawText, filterReason, filterRule, screenItems));
+        IReadOnlyList<ScreenTranslationItem>? screenItems = null,
+        int translationRequestCount = 0,
+        int translationCharacterCount = 0,
+        int totalTranslationRequestCount = 0,
+        int totalTranslationCharacterCount = 0) =>
+        Updated?.Invoke(this, new SessionUpdate(status, source, translated, isError, speaker, isChatLine, chatLineId, replacesChatLine, ocrRawText, filterReason, filterRule, screenItems, translationRequestCount, translationCharacterCount, totalTranslationRequestCount, totalTranslationCharacterCount));
 
     private static string Quote(string value) =>
         $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\r", string.Empty, StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}\"";
+
+    private static string CreateScreenTranslationCacheKey(string sourceText, string processedText, string targetLanguage) =>
+        $"{targetLanguage}\u001f{NormalizeScreenCacheText(sourceText)}\u001f{NormalizeScreenCacheText(processedText)}";
+
+    private static string NormalizeScreenCacheText(string value) =>
+        string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
+
+    private static bool HasExpectedSourceScript(string message, OcrLanguage language)
+    {
+        if (language.Tag.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
+        {
+            return message.Any(IsHan);
+        }
+
+        if (language.Tag.StartsWith("ja", StringComparison.OrdinalIgnoreCase))
+        {
+            return message.Any(character => IsHan(character) || character is >= '\u3040' and <= '\u30FF');
+        }
+
+        return true;
+    }
+
+    private static bool IsHan(char character) => character is >= '\u3400' and <= '\u9FFF';
 }

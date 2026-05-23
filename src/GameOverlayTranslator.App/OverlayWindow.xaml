@@ -21,6 +21,7 @@
             </ItemsControl.ItemTemplate>
         </ItemsControl>
         
-        <Canvas x:Name="ScreenOverlayCanvas" Background="Transparent" Visibility="Collapsed" />
+        <Canvas x:Name="ScreenOverlayCanvas1" Background="Transparent" Visibility="Collapsed" />
+        <Canvas x:Name="ScreenOverlayCanvas2" Background="Transparent" Visibility="Collapsed" />
     </Grid>
 </Window>

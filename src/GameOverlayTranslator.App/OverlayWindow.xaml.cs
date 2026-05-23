@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Collections.Concurrent;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using GameOverlayTranslator.App.Domain;
@@ -19,11 +20,19 @@ public partial class OverlayWindow : Window
     private readonly ObservableCollection<OverlayChatItem> lines = [];
     private readonly ConcurrentDictionary<string, CancellationTokenSource> activeTimers = new();
 
+    public TranslationMode CurrentMode { get; set; } = TranslationMode.Chat;
+
+    private Canvas activeCanvas = null!;
+    private Canvas inactiveCanvas = null!;
+
     public static readonly DependencyProperty StrokeBrushProperty =
         DependencyProperty.Register(nameof(StrokeBrush), typeof(Brush), typeof(OverlayWindow), new PropertyMetadata(Brushes.Black));
 
     public static readonly DependencyProperty StrokeThicknessValueProperty =
         DependencyProperty.Register(nameof(StrokeThicknessValue), typeof(double), typeof(OverlayWindow), new PropertyMetadata(3.0));
+
+    public static readonly DependencyProperty OverlayBackgroundBrushProperty =
+        DependencyProperty.Register(nameof(OverlayBackgroundBrush), typeof(Brush), typeof(OverlayWindow), new PropertyMetadata(new SolidColorBrush(Color.FromArgb(0x99, 0, 0, 0))));
 
     public Brush StrokeBrush
     {
@@ -37,10 +46,18 @@ public partial class OverlayWindow : Window
         set => SetValue(StrokeThicknessValueProperty, value);
     }
 
+    public Brush OverlayBackgroundBrush
+    {
+        get => (Brush)GetValue(OverlayBackgroundBrushProperty);
+        set => SetValue(OverlayBackgroundBrushProperty, value);
+    }
+
     public OverlayWindow()
     {
         InitializeComponent();
         OverlayItems.ItemsSource = lines;
+        activeCanvas = ScreenOverlayCanvas1;
+        inactiveCanvas = ScreenOverlayCanvas2;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -49,7 +66,10 @@ public partial class OverlayWindow : Window
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         int extendedStyle = Platform.NativeMethods.GetWindowLong(hwnd, Platform.NativeMethods.GWL_EXSTYLE);
         Platform.NativeMethods.SetWindowLong(hwnd, Platform.NativeMethods.GWL_EXSTYLE, extendedStyle | Platform.NativeMethods.WS_EX_TRANSPARENT | Platform.NativeMethods.WS_EX_NOACTIVATE);
-        Platform.NativeMethods.SetWindowDisplayAffinity(hwnd, Platform.NativeMethods.WDA_EXCLUDEFROMCAPTURE);
+        if (!Platform.NativeMethods.SetWindowDisplayAffinity(hwnd, Platform.NativeMethods.WDA_EXCLUDEFROMCAPTURE))
+        {
+            AppLog.Write("Failed to exclude overlay from capture.");
+        }
     }
 
     public void PositionOver(CapturableWindow window, CaptureRegion region)
@@ -69,21 +89,32 @@ public partial class OverlayWindow : Window
 
     public void Apply(SessionUpdate update)
     {
-        if (update.ScreenItems is not null)
+        if (CurrentMode == TranslationMode.Screen)
         {
+            if (update.ScreenItems is null)
+            {
+                return;
+            }
+
+            if (update.ScreenItems.Count == 0)
+            {
+                return;
+            }
+
             try
             {
                 OverlayItems.Visibility = Visibility.Collapsed;
-                ScreenOverlayCanvas.Visibility = Visibility.Visible;
-                ScreenOverlayCanvas.Children.Clear();
+
+                // Clear the inactive canvas first (it is currently hidden, so no flicker)
+                inactiveCanvas.Children.Clear();
 
                 var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
                 var dpiScale = Math.Max(1, NativeMethods.GetDpiForWindow(hwnd) / 96d);
 
                 foreach (var screenItem in update.ScreenItems)
                 {
-                    var wpfX = screenItem.BoundingRect.Left / dpiScale;
-                    var wpfY = screenItem.BoundingRect.Top / dpiScale;
+                    var wpfX = ClampToCanvas(screenItem.BoundingRect.Left / dpiScale, ActualWidth);
+                    var wpfY = ClampToCanvas(screenItem.BoundingRect.Top / dpiScale, ActualHeight);
                     var wpfWidth = screenItem.BoundingRect.Width / dpiScale;
                     var wpfHeight = screenItem.BoundingRect.Height / dpiScale;
 
@@ -98,30 +129,37 @@ public partial class OverlayWindow : Window
                     {
                         Text = screenItem.TranslatedText,
                         FontFamily = this.FontFamily,
-                        FontSize = Math.Max(10, wpfHeight * 0.85),
+                        FontSize = this.FontSize,
                         Fill = this.Foreground,
                         Stroke = this.StrokeBrush,
                         StrokeThickness = this.StrokeThicknessValue,
                         FontWeight = FontWeights.Bold,
-                        VerticalAlignment = VerticalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Top,
                         HorizontalAlignment = HorizontalAlignment.Left
                     };
 
                     var border = new Border
                     {
-                        Background = new SolidColorBrush(Color.FromArgb(230, 0, 0, 0)),
-                        Padding = new Thickness(2, 0, 2, 0),
-                        CornerRadius = new CornerRadius(2),
+                        Background = Brushes.Transparent,
+                        Padding = new Thickness(0),
                         Child = textBlock,
                         MinWidth = wpfWidth,
-                        MinHeight = wpfHeight,
-                        VerticalAlignment = VerticalAlignment.Center
+                        VerticalAlignment = VerticalAlignment.Top
                     };
 
-                    Canvas.SetLeft(border, wpfX - 2);
+                    Canvas.SetLeft(border, wpfX);
                     Canvas.SetTop(border, wpfY);
-                    ScreenOverlayCanvas.Children.Add(border);
+                    inactiveCanvas.Children.Add(border);
                 }
+
+                // Swap visibility in one frame
+                inactiveCanvas.Visibility = Visibility.Visible;
+                activeCanvas.Visibility = Visibility.Collapsed;
+
+                // Swap active/inactive canvas references
+                var temp = activeCanvas;
+                activeCanvas = inactiveCanvas;
+                inactiveCanvas = temp;
             }
             catch (Exception ex)
             {
@@ -131,7 +169,8 @@ public partial class OverlayWindow : Window
         }
 
         OverlayItems.Visibility = Visibility.Visible;
-        ScreenOverlayCanvas.Visibility = Visibility.Collapsed;
+        ScreenOverlayCanvas1.Visibility = Visibility.Collapsed;
+        ScreenOverlayCanvas2.Visibility = Visibility.Collapsed;
 
         if (!update.IsChatLine || string.IsNullOrWhiteSpace(update.TranslatedText))
         {
@@ -148,6 +187,7 @@ public partial class OverlayWindow : Window
         }
         else
         {
+            RemoveContainedPreviousLines(item);
             lines.Add(item);
             while (lines.Count > MaxOverlayLines)
             {
@@ -198,12 +238,71 @@ public partial class OverlayWindow : Window
         }
     }
 
+    private void RemoveContainedPreviousLines(OverlayChatItem next)
+    {
+        var nextText = NormalizeContainment(next.DisplayText);
+        if (nextText.Length < 2)
+        {
+            return;
+        }
+
+        for (var index = lines.Count - 1; index >= 0; index--)
+        {
+            var previous = lines[index];
+            var previousText = NormalizeContainment(previous.DisplayText);
+            if (previousText.Length >= 2
+                && nextText.Length > previousText.Length
+                && nextText.Contains(previousText, StringComparison.Ordinal))
+            {
+                if (activeTimers.TryRemove(previous.Id, out var cts))
+                {
+                    cts.Cancel();
+                    cts.Dispose();
+                }
+
+                lines.RemoveAt(index);
+            }
+        }
+    }
+
+    private static string NormalizeContainment(string value)
+    {
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                builder.Append(char.ToLowerInvariant(character));
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static double ClampToCanvas(double value, double canvasLength)
+    {
+        if (!double.IsFinite(value))
+        {
+            return 0;
+        }
+
+        if (!double.IsFinite(canvasLength) || canvasLength <= 1)
+        {
+            return Math.Max(0, value);
+        }
+
+        return Math.Clamp(value, 0, canvasLength - 1);
+    }
+
     public void ClearAll()
     {
         Dispatcher.Invoke(() =>
         {
             lines.Clear();
-            ScreenOverlayCanvas?.Children.Clear();
+            ScreenOverlayCanvas1?.Children.Clear();
+            ScreenOverlayCanvas2?.Children.Clear();
+            if (ScreenOverlayCanvas1 is not null) ScreenOverlayCanvas1.Visibility = Visibility.Collapsed;
+            if (ScreenOverlayCanvas2 is not null) ScreenOverlayCanvas2.Visibility = Visibility.Collapsed;
             foreach (var cts in activeTimers.Values)
             {
                 cts.Cancel();
