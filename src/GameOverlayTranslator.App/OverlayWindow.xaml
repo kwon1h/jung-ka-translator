@@ -9,13 +9,16 @@
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
                     <Grid Margin="0,0,0,2">
-                        <local:OutlinedTextBlock Text="{Binding DisplayText}" 
-                                                 FontFamily="{Binding Path=FontFamily, RelativeSource={RelativeSource AncestorType=Window}}" 
-                                                 FontSize="{Binding Path=FontSize, RelativeSource={RelativeSource AncestorType=Window}}" 
-                                                 Fill="{Binding Path=Foreground, RelativeSource={RelativeSource AncestorType=Window}}" 
-                                                 Stroke="{Binding Path=StrokeBrush, RelativeSource={RelativeSource AncestorType=Window}}" 
-                                                 StrokeThickness="{Binding Path=StrokeThicknessValue, RelativeSource={RelativeSource AncestorType=Window}}" 
-                                                 FontWeight="Bold" />
+                        <Border Background="{Binding Path=OverlayBackgroundBrush, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                CornerRadius="4" Padding="6,4" Margin="0,0,0,4" HorizontalAlignment="Left">
+                            <local:OutlinedTextBlock Text="{Binding DisplayText}" 
+                                                     FontFamily="{Binding Path=FontFamily, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                     FontSize="{Binding Path=FontSize, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                     Fill="{Binding Path=Foreground, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                     Stroke="{Binding Path=StrokeBrush, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                     StrokeThickness="{Binding Path=StrokeThicknessValue, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                     FontWeight="Bold" />
+                        </Border>
                     </Grid>
                 </DataTemplate>
             </ItemsControl.ItemTemplate>

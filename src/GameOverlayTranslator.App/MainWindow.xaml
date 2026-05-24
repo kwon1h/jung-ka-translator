@@ -317,10 +317,46 @@
                                         </StackPanel>
                                     </Grid>
 
+                                    <!-- Background Color and Opacity Controls -->
+                                    <Grid Margin="0,0,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="12" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <!-- Background Color Swatches -->
+                                        <StackPanel Grid.Column="0">
+                                            <TextBlock Text="배경 색" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
+                                            <ListBox x:Name="BackgroundColorsListBox" ItemContainerStyle="{StaticResource ColorSwatchItemStyle}" BorderThickness="0" Background="Transparent" SelectionChanged="BackgroundColorSelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                                                <ListBox.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel Orientation="Horizontal" />
+                                                    </ItemsPanelTemplate>
+                                                </ListBox.ItemsPanel>
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Ellipse Width="20" Height="20" Fill="{Binding HexBrush}" ToolTip="{Binding Name}" Cursor="Hand" Margin="2" />
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                        </StackPanel>
+                                        
+                                        <!-- Background Opacity Slider -->
+                                        <StackPanel Grid.Column="2">
+                                            <Grid>
+                                                <TextBlock Text="배경 투명도" FontWeight="SemiBold" Foreground="#374151" FontSize="12" HorizontalAlignment="Left" />
+                                                <TextBlock x:Name="BackgroundOpacityLabel" Text="60%" FontWeight="SemiBold" Foreground="#2563EB" FontSize="12" HorizontalAlignment="Right" />
+                                            </Grid>
+                                            <Slider x:Name="BackgroundOpacitySlider" Minimum="0" Maximum="1" TickFrequency="0.01" IsSnapToTickEnabled="False" Margin="0,6,0,0" ValueChanged="BackgroundOpacitySlider_ValueChanged" />
+                                        </StackPanel>
+                                    </Grid>
+
                                     <TextBlock Text="폰트 예시 미리보기" FontWeight="SemiBold" Foreground="#374151" FontSize="12" Margin="0,0,0,6" />
                                     <Border Background="#1A1A1A" BorderBrush="#D1D5DB" BorderThickness="1" CornerRadius="5" Height="60" SnapsToDevicePixels="True">
                                         <Grid VerticalAlignment="Center" HorizontalAlignment="Center">
-                                            <local:OutlinedTextBlock x:Name="FontPreviewTextBlock" Text="즐카~" FontWeight="Bold" />
+                                            <Border x:Name="FontPreviewBgBorder" CornerRadius="4" Padding="6,4">
+                                                <local:OutlinedTextBlock x:Name="FontPreviewTextBlock" Text="즐카~" FontWeight="Bold" />
+                                            </Border>
                                         </Grid>
                                     </Border>
                                 </StackPanel>

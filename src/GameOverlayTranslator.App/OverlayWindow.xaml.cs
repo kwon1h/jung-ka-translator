@@ -151,8 +151,9 @@ public partial class OverlayWindow : Window
 
                     var border = new Border
                     {
-                        Background = Brushes.Transparent,
-                        Padding = new Thickness(0),
+                        Background = this.OverlayBackgroundBrush,
+                        Padding = new Thickness(4, 2, 4, 2),
+                        CornerRadius = new CornerRadius(4),
                         Child = textBlock,
                         MinWidth = wpfWidth,
                         Height = wpfHeight,

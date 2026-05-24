@@ -66,6 +66,16 @@ public partial class MainWindow : Window
         new("#990000", "빨간색")
     ];
 
+    private static readonly IReadOnlyList<ColorChoice> BackgroundColors =
+    [
+        new("#000000", "검은색"),
+        new("#FFFFFF", "흰색"),
+        new("#333333", "회색"),
+        new("#2563EB", "파란색"),
+        new("#EF4444", "빨간색"),
+        new("#10B981", "초록색")
+    ];
+
     private static readonly IReadOnlyList<double> StrokeThicknesses = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
     private static readonly IReadOnlyList<string> DictionaryCategories =
     [
@@ -161,6 +171,16 @@ public partial class MainWindow : Window
         StrokeThicknessLabel.Text = $"{settings.StrokeThickness:F1}px";
         OverlayOpacitySlider.Value = settings.OverlayOpacity;
         OverlayOpacityLabel.Text = $"{settings.OverlayOpacity:P0}";
+
+        // Populate and select background color swatches and opacity
+        var (bgRgb, bgOpacity) = SplitArgbHex(settings.OverlayBackgroundColor);
+        BackgroundColorsListBox.ItemsSource = BackgroundColors;
+        var selectedBgColor = BackgroundColors.FirstOrDefault(c => string.Equals(c.Hex, bgRgb, StringComparison.OrdinalIgnoreCase)) ?? BackgroundColors[0];
+        BackgroundColorsListBox.SelectedItem = selectedBgColor;
+
+        // Initialize background opacity slider and label
+        BackgroundOpacitySlider.Value = bgOpacity;
+        BackgroundOpacityLabel.Text = $"{bgOpacity:P0}";
 
         // Load User Dictionary
         userDictionaryEntries = userDictStore.Load();
@@ -769,6 +789,15 @@ public partial class MainWindow : Window
         {
             FontPreviewTextBlock.StrokeThickness = Math.Round(StrokeThicknessSlider.Value, 1);
         }
+        if (FontPreviewBgBorder != null && settings != null)
+        {
+            var (bgRgb, bgOpacity) = SplitArgbHex(settings.OverlayBackgroundColor);
+            var color = (Color)ColorConverter.ConvertFromString(bgRgb);
+            color.A = (byte)Math.Clamp(Math.Round(bgOpacity * 255), 0, 255);
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            FontPreviewBgBorder.Background = brush;
+        }
     }
 
     private void FontFamilySelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -844,6 +873,92 @@ public partial class MainWindow : Window
         }
     }
 
+    private void BackgroundColorSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (settings == null || BackgroundColorsListBox.SelectedItem is not ColorChoice color) return;
+
+        var (_, currentOpacity) = SplitArgbHex(settings.OverlayBackgroundColor);
+        var mergedHex = GetMergedHexColor(color.Hex, currentOpacity);
+
+        settings = settings with { OverlayBackgroundColor = mergedHex, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
+        settingsStore.Save(settings);
+        UpdateFontPreview();
+        if (overlayWindow is not null)
+        {
+            overlayWindow.OverlayBackgroundBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(mergedHex));
+        }
+    }
+
+    private void BackgroundOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (settings == null || BackgroundOpacityLabel == null) return;
+
+        var opacity = Math.Round(e.NewValue, 2);
+        BackgroundOpacityLabel.Text = $"{opacity:P0}";
+
+        var (currentRgb, _) = SplitArgbHex(settings.OverlayBackgroundColor);
+        var mergedHex = GetMergedHexColor(currentRgb, opacity);
+
+        settings = settings with { OverlayBackgroundColor = mergedHex, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
+        settingsStore.Save(settings);
+        UpdateFontPreview();
+        if (overlayWindow is not null)
+        {
+            overlayWindow.OverlayBackgroundBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(mergedHex));
+        }
+    }
+
+    private (string rgb, double opacity) SplitArgbHex(string argbHex)
+    {
+        if (string.IsNullOrWhiteSpace(argbHex))
+        {
+            return ("#000000", 0.6);
+        }
+
+        if (argbHex.StartsWith("#"))
+        {
+            argbHex = argbHex.Substring(1);
+        }
+
+        if (argbHex.Length == 8)
+        {
+            var alphaHex = argbHex.Substring(0, 2);
+            var rgbHex = argbHex.Substring(2);
+
+            if (byte.TryParse(alphaHex, System.Globalization.NumberStyles.HexNumber, null, out byte alpha))
+            {
+                return ($"#{rgbHex}", alpha / 255.0);
+            }
+            return ($"#{rgbHex}", 1.0);
+        }
+        else if (argbHex.Length == 6)
+        {
+            return ($"#{argbHex}", 1.0);
+        }
+
+        return ("#000000", 0.6);
+    }
+
+    private string GetMergedHexColor(string rgbHex, double opacity)
+    {
+        if (rgbHex.StartsWith("#"))
+        {
+            rgbHex = rgbHex.Substring(1);
+        }
+
+        if (rgbHex.Length == 8)
+        {
+            rgbHex = rgbHex.Substring(2);
+        }
+        else if (rgbHex.Length == 3)
+        {
+            rgbHex = $"{rgbHex[0]}{rgbHex[0]}{rgbHex[1]}{rgbHex[1]}{rgbHex[2]}{rgbHex[2]}";
+        }
+
+        byte alpha = (byte)Math.Clamp(Math.Round(opacity * 255), 0, 255);
+        return $"#{alpha:X2}{rgbHex}";
+    }
+
     private void OverlayPresetSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (settings == null || OverlayPresetComboBox?.SelectedItem is not OverlayPreset preset)
@@ -879,6 +994,11 @@ public partial class MainWindow : Window
             StrokeThicknessLabel.Text = $"{preset.StrokeThickness:F1}px";
             OverlayOpacitySlider.Value = preset.OverlayOpacity;
             OverlayOpacityLabel.Text = $"{preset.OverlayOpacity:P0}";
+
+            var (presetBgRgb, presetBgOpacity) = SplitArgbHex(preset.BackgroundColor);
+            BackgroundColorsListBox.SelectedItem = BackgroundColors.FirstOrDefault(color => string.Equals(color.Hex, presetBgRgb, StringComparison.OrdinalIgnoreCase));
+            BackgroundOpacitySlider.Value = presetBgOpacity;
+            BackgroundOpacityLabel.Text = $"{presetBgOpacity:P0}";
         }
         finally
         {
