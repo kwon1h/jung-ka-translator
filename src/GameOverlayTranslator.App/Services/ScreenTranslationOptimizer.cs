@@ -128,7 +128,7 @@ internal sealed class ScreenTranslationMemory
     }
 }
 
-internal static class ScreenTranslationSegmenter
+public static class ScreenTranslationSegmenter
 {
     public static IReadOnlyList<ScreenTextSegment> Split(string text, OcrLanguage language)
     {
@@ -140,6 +140,7 @@ internal static class ScreenTranslationSegmenter
 
         var chunks = SplitByHardBreaks(normalized)
             .SelectMany(chunk => chunk.Length > 120 ? SplitBySoftBreaks(chunk) : [chunk])
+            .SelectMany(chunk => chunk.Split(' ', StringSplitOptions.RemoveEmptyEntries))
             .Select(chunk => TranslationTextNormalizer.NormalizeForTranslation(chunk, language))
             .Where(chunk => !string.IsNullOrWhiteSpace(chunk))
             .ToList();
@@ -211,4 +212,4 @@ internal static class ScreenTranslationSegmenter
         character is ',' or '\uFF0C' or '\u3001';
 }
 
-internal sealed record ScreenTextSegment(string Text, string CanonicalText);
+public sealed record ScreenTextSegment(string Text, string CanonicalText);

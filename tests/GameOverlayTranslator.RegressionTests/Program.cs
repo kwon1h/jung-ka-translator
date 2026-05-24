@@ -27,7 +27,10 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Repeated screen segments are deduplicated", TestScreenSegmentDeduplicatesRepeatedSentences),
     ("Cache hit usage is zero", TestDirectCacheHitUsageIsZero),
     ("Provider usage is preserved", TestProviderUsageIsPreserved),
-    ("Translation failure cooldown bypasses API", TestTranslationFailureCooldown)
+    ("Translation failure cooldown bypasses API", TestTranslationFailureCooldown),
+    ("Screen segment splits by spaces", TestScreenSegmentSplitsBySpaces),
+    ("Chinese ratio bypasses screen filter", TestChineseRatioBypassesScreenFilter),
+    ("Chinese ratio bypasses chat filter", TestChineseRatioBypassesChatFilter)
 };
 
 var cachePath = Path.Combine(
@@ -368,6 +371,42 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static Task TestScreenSegmentSplitsBySpaces()
+{
+    var segments = ScreenTranslationSegmenter.Split("hello world test", new OcrLanguage("en", "English"));
+    Assert(segments.Count == 3, $"Expected 3 segments, got {segments.Count}");
+    Assert(segments[0].Text == "hello", $"Expected 'hello', got '{segments[0].Text}'");
+    Assert(segments[1].Text == "world", $"Expected 'world', got '{segments[1].Text}'");
+    Assert(segments[2].Text == "test", $"Expected 'test', got '{segments[2].Text}'");
+    return Task.CompletedTask;
+}
+
+static async Task TestChineseRatioBypassesScreenFilter()
+{
+    var translation = new CountingTranslationService();
+    var source = Chinese("8bd1"); // "译"
+    var session = ScreenSession(source, translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Screen));
+
+    Assert(translation.BatchRequests == 1, "Should bypass filter and request translation for Chinese text.");
+    Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated), "Expected translated diagnostic.");
+}
+
+static async Task TestChineseRatioBypassesChatFilter()
+{
+    var translation = new CountingTranslationService();
+    var source = Chinese("8bd1"); // "译"
+    var session = new TranslationSession(new FakeCaptureService(), new FakeOcrEngine(new OcrResult($"racer: {source}", [])), translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat));
+
+    Assert(translation.SingleRequests == 1, "Should bypass quality filter and request translation for Chinese chat line.");
+    Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated), "Expected translated diagnostic.");
 }
 
 sealed class FakeCaptureService : ICaptureService

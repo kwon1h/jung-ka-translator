@@ -215,7 +215,9 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                 }
 
                 var processedSegment = new ScreenTextSegment(processed, canonical);
-                if (!ScreenTranslationSegmenter.ShouldSendToTranslation(processedSegment, options.OcrLanguage))
+                var shouldSend = ScreenTranslationSegmenter.ShouldSendToTranslation(processedSegment, options.OcrLanguage)
+                                 || NeedsTranslationDueToChineseRatio(processed);
+                if (!shouldSend)
                 {
                     segmentPlans.Add(new ScreenSegmentPlan(processed, canonical, processed));
                     continue;
@@ -396,7 +398,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             }
 
             var initialQuality = ChatQualityFilter.Check(activeLine, options.OcrLanguage, options.Filter);
-            if (!initialQuality.Accepted)
+            var bypassFilter = NeedsTranslationDueToChineseRatio(activeLine.Message);
+            if (!initialQuality.Accepted && !bypassFilter)
             {
                 AppLog.Write($"ChatQualityFilter reject reason={initialQuality.Reason} line={Quote(line.SourceLine)}");
                 Publish(
@@ -424,7 +427,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             }
 
             var quality = replaced ? ChatQualityFilter.Check(activeLine, options.OcrLanguage, options.Filter) : initialQuality;
-            if (!quality.Accepted)
+            if (!quality.Accepted && !bypassFilter)
             {
                 AppLog.Write($"ChatQualityFilter reject reason={quality.Reason} line={Quote(activeLine.SourceLine)}");
                 Publish(
@@ -448,7 +451,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                 continue;
             }
 
-            if (!quality.TranslateWithService)
+            if (!quality.TranslateWithService && !bypassFilter)
             {
                 AppLog.Write($"ChatQualityFilter source-only reason={quality.Reason} line={Quote(activeLine.SourceLine)}");
                 Publish(
@@ -613,5 +616,49 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         public string SourceText { get; } = sourceText;
         public string CanonicalText { get; } = canonicalText;
         public string? TranslatedText { get; set; } = translatedText;
+    }
+
+    private static bool IsKorean(char character)
+    {
+        return (character >= '\uAC00' && character <= '\uD7A3')
+            || (character >= '\u3130' && character <= '\u318F')
+            || (character >= '\u1100' && character <= '\u11FF');
+    }
+
+    private static bool IsChinese(char character)
+    {
+        return character is >= '\u3400' and <= '\u9FFF';
+    }
+
+    private static bool NeedsTranslationDueToChineseRatio(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        int koreanCount = 0;
+        int chineseCount = 0;
+
+        foreach (var character in text)
+        {
+            if (IsKorean(character))
+            {
+                koreanCount++;
+            }
+            else if (IsChinese(character))
+            {
+                chineseCount++;
+            }
+        }
+
+        int total = koreanCount + chineseCount;
+        if (total == 0)
+        {
+            return false;
+        }
+
+        double koreanRatio = (double)koreanCount / total;
+        return koreanRatio <= 0.95;
     }
 }
