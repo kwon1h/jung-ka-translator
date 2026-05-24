@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:GameOverlayTranslator.App"
         Title="중카 번역기 (Game OCR Translator)" Height="650" Width="820" MinHeight="620" MinWidth="800"
-        Background="#F5F6F8" PreviewKeyDown="OnPreviewKeyDown">
+        Background="#F5F6F8">
     <Window.Resources>
         <!-- Modern Rounded Button Style -->
         <Style TargetType="Button">
@@ -207,7 +207,7 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <Button x:Name="SelectRegionButton" Width="120" Height="34" Content="영역 선택 (F9)" Click="SelectRegion" />
+                                        <Button x:Name="SelectRegionButton" Width="120" Height="34" Content="영역 선택" Click="SelectRegion" />
                                         <TextBlock x:Name="RegionText" Grid.Column="1" Margin="12,8,0,0" Text="선택되지 않음" TextWrapping="Wrap" Foreground="#4B5563" FontWeight="Medium" />
                                     </Grid>
                                     
@@ -561,18 +561,46 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <ListView x:Name="DiagnosticLogsListView" BorderThickness="1" Background="White">
-                            <ListView.View>
-                                <GridView>
-                                    <GridViewColumn Header="시간" DisplayMemberBinding="{Binding Time}" Width="65" />
-                                    <GridViewColumn Header="상태" DisplayMemberBinding="{Binding Status}" Width="100" />
-                                    <GridViewColumn Header="원문 / 내용" DisplayMemberBinding="{Binding Source}" Width="180" />
-                                    <GridViewColumn Header="필터 규칙" DisplayMemberBinding="{Binding Rule}" Width="100" />
-                                    <GridViewColumn Header="상세 이유" DisplayMemberBinding="{Binding Reason}" Width="120" />
-                                    <GridViewColumn Header="API 사용" DisplayMemberBinding="{Binding ApiUsage}" Width="90" />
-                                </GridView>
-                            </ListView.View>
-                        </ListView>
+                        <DataGrid x:Name="DiagnosticLogsListView"
+                                  BorderThickness="1"
+                                  Background="White"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  CanUserReorderColumns="True"
+                                  CanUserResizeColumns="True"
+                                  ClipboardCopyMode="IncludeHeader"
+                                  GridLinesVisibility="All"
+                                  HeadersVisibility="Column"
+                                  IsReadOnly="True"
+                                  SelectionMode="Extended"
+                                  SelectionUnit="CellOrRowHeader"
+                                  ScrollViewer.CanContentScroll="True"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Visible"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <DataGrid.Resources>
+                                <Style TargetType="{x:Type DataGridCell}">
+                                    <Setter Property="Padding" Value="6,4" />
+                                    <Setter Property="BorderBrush" Value="#E5E7EB" />
+                                    <Setter Property="BorderThickness" Value="0,0,1,1" />
+                                </Style>
+                                <Style TargetType="{x:Type DataGridColumnHeader}">
+                                    <Setter Property="Padding" Value="6,5" />
+                                    <Setter Property="Background" Value="#F9FAFB" />
+                                    <Setter Property="BorderBrush" Value="#D1D5DB" />
+                                    <Setter Property="BorderThickness" Value="0,0,1,1" />
+                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                </Style>
+                            </DataGrid.Resources>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="시간" Binding="{Binding Time}" Width="80" />
+                                <DataGridTextColumn Header="상태" Binding="{Binding Status}" Width="120" />
+                                <DataGridTextColumn Header="원문 / 내용" Binding="{Binding Source}" Width="320" />
+                                <DataGridTextColumn Header="필터 규칙" Binding="{Binding Rule}" Width="130" />
+                                <DataGridTextColumn Header="상세 이유" Binding="{Binding Reason}" Width="260" />
+                                <DataGridTextColumn Header="API 사용" Binding="{Binding ApiUsage}" Width="110" />
+                            </DataGrid.Columns>
+                        </DataGrid>
 
                         <Grid Grid.Row="1" Margin="0,12,0,12">
                             <Grid.ColumnDefinitions>
@@ -633,7 +661,7 @@
                             <TextBlock Text="API 사용량:" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#4B5563" />
                             <TextBlock x:Name="ApiUsageText" Grid.Column="1" Margin="8,0,0,0" Text="이번 세션 0건 / 0자" VerticalAlignment="Center" Foreground="#4B5563" />
                         </Grid>
-                        <Button x:Name="StartStopButton" Height="40" Content="번역 시작 (F8)" Click="ToggleSession" FontSize="14" FontWeight="Bold" Background="#2563EB" Foreground="White" BorderThickness="0" />
+                        <Button x:Name="StartStopButton" Height="40" Content="번역 시작" Click="ToggleSession" FontSize="14" FontWeight="Bold" Background="#2563EB" Foreground="White" BorderThickness="0" />
                     </StackPanel>
                 </Border>
                 
@@ -663,6 +691,6 @@
         </Grid>
         
         <!-- Footer / Shortcuts -->
-        <TextBlock Grid.Row="2" Foreground="#6B7280" FontSize="12" Text="단축키: F8 시작/정지, F9 영역 선택 | 독점 전체화면 게임(Exclusive Fullscreen)은 창모드(Windowed) 전환이 필요합니다." HorizontalAlignment="Center" />
+        <TextBlock Grid.Row="2" Foreground="#6B7280" FontSize="12" Text="독점 전체화면 게임(Exclusive Fullscreen)은 창모드(Windowed) 전환이 필요합니다." HorizontalAlignment="Center" />
     </Grid>
 </Window>

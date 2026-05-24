@@ -54,11 +54,39 @@ public sealed record OcrResult(string Text, IReadOnlyList<OcrLineResult> Lines)
 
 public sealed record TranslationRequest(string Text, string TargetLanguage, string? SourceLanguage = null);
 
-public sealed record TranslationResult(string SourceText, string TranslatedText, string? DetectedSourceLanguage);
+public sealed record TranslationUsage(
+    int OutboundRequestCount = 0,
+    int OutboundCharacterCount = 0,
+    int CacheHitCount = 0,
+    int SkippedCount = 0)
+{
+    public static readonly TranslationUsage None = new();
+
+    public static TranslationUsage Outbound(int requestCount, int characterCount) =>
+        new(Math.Max(0, requestCount), Math.Max(0, characterCount));
+
+    public TranslationUsage Add(TranslationUsage? other) =>
+        other is null
+            ? this
+            : new TranslationUsage(
+                OutboundRequestCount + other.OutboundRequestCount,
+                OutboundCharacterCount + other.OutboundCharacterCount,
+                CacheHitCount + other.CacheHitCount,
+                SkippedCount + other.SkippedCount);
+}
+
+public sealed record TranslationResult(string SourceText, string TranslatedText, string? DetectedSourceLanguage, TranslationUsage? Usage = null);
 
 public sealed record BatchTranslationRequest(IReadOnlyList<string> Texts, string TargetLanguage, string? SourceLanguage = null);
 
-public sealed record BatchTranslationResult(IReadOnlyList<string> TranslatedTexts);
+public sealed record BatchTranslationResult(IReadOnlyList<string> TranslatedTexts, TranslationUsage? Usage = null);
+
+public enum DiagnosticKind
+{
+    Other,
+    OcrTranslated,
+    OcrSkipped
+}
 
 public sealed record FilterSettings(
     bool EnableLengthFilter = true,
@@ -104,4 +132,5 @@ public sealed record SessionUpdate(
     int TranslationRequestCount = 0,
     int TranslationCharacterCount = 0,
     int TotalTranslationRequestCount = 0,
-    int TotalTranslationCharacterCount = 0);
+    int TotalTranslationCharacterCount = 0,
+    DiagnosticKind DiagnosticKind = DiagnosticKind.Other);

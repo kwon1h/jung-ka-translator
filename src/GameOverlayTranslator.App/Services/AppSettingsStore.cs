@@ -46,10 +46,12 @@ public sealed record AppSettings(
     TranslationMode TranslationMode = TranslationMode.Chat,
     TranslationServiceType TranslatorType = TranslationServiceType.DeepL,
     string GoogleWebAppUrl = "",
-    bool ShowOverlayInScreenShare = false);
+    bool ShowOverlayInScreenShare = false,
+    int CaptureGeometryVersion = 2);
 
 public sealed class AppSettingsStore
 {
+    private const int CurrentCaptureGeometryVersion = 2;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly string settingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -62,12 +64,16 @@ public sealed class AppSettingsStore
         {
             if (File.Exists(settingsPath))
             {
-                var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(settingsPath), JsonOptions);
+                var json = File.ReadAllText(settingsPath);
+                var hasGeometryVersion = HasJsonProperty(json, nameof(AppSettings.CaptureGeometryVersion));
+                var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions);
                 if (settings != null)
                 {
+                    var legacyGeometry = !hasGeometryVersion || settings.CaptureGeometryVersion < CurrentCaptureGeometryVersion;
                     // Normalize settings to ensure default values are used for missing/invalid properties
                     return settings with
                     {
+                        LastRegion = legacyGeometry ? null : settings.LastRegion,
                         FontFamily = string.IsNullOrWhiteSpace(settings.FontFamily) ? "Malgun Gothic" : settings.FontFamily,
                         FontSize = settings.FontSize < 12 || settings.FontSize > 48 ? 22 : settings.FontSize,
                         TextColor = string.IsNullOrWhiteSpace(settings.TextColor) ? "#FFFFFF" : settings.TextColor,
@@ -86,16 +92,30 @@ public sealed class AppSettingsStore
                         OcrLanguageTag = string.IsNullOrWhiteSpace(settings.OcrLanguageTag) ? "zh-Hans" : settings.OcrLanguageTag,
                         TargetLanguageCode = string.IsNullOrWhiteSpace(settings.TargetLanguageCode) ? "ko" : settings.TargetLanguageCode,
                         GoogleWebAppUrl = settings.GoogleWebAppUrl ?? string.Empty,
-                        ShowOverlayInScreenShare = settings.ShowOverlayInScreenShare
+                        ShowOverlayInScreenShare = settings.ShowOverlayInScreenShare,
+                        CaptureGeometryVersion = CurrentCaptureGeometryVersion
                     };
                 }
             }
-            return new AppSettings();
+            return new AppSettings(CaptureGeometryVersion: CurrentCaptureGeometryVersion);
         }
         catch (Exception ex)
         {
             AppLog.Write("Settings load failed", ex);
-            return new AppSettings();
+            return new AppSettings(CaptureGeometryVersion: CurrentCaptureGeometryVersion);
+        }
+    }
+
+    private static bool HasJsonProperty(string json, string propertyName)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.TryGetProperty(propertyName, out _);
+        }
+        catch
+        {
+            return false;
         }
     }
 

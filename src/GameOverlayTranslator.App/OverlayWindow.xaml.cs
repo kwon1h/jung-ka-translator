@@ -85,7 +85,7 @@ public partial class OverlayWindow : Window
 
     public void PositionOver(CapturableWindow window, CaptureRegion region)
     {
-        if (!NativeMethods.GetWindowRect(window.Handle, out var rect))
+        if (!WindowGeometry.TryGetClientScreenRect(window.Handle, out var rect))
         {
             return;
         }
@@ -145,7 +145,7 @@ public partial class OverlayWindow : Window
                         Stroke = this.StrokeBrush,
                         StrokeThickness = this.StrokeThicknessValue,
                         FontWeight = FontWeights.Bold,
-                        VerticalAlignment = VerticalAlignment.Top,
+                        VerticalAlignment = VerticalAlignment.Center,
                         HorizontalAlignment = HorizontalAlignment.Left
                     };
 
@@ -155,7 +155,8 @@ public partial class OverlayWindow : Window
                         Padding = new Thickness(0),
                         Child = textBlock,
                         MinWidth = wpfWidth,
-                        VerticalAlignment = VerticalAlignment.Top
+                        Height = wpfHeight,
+                        VerticalAlignment = VerticalAlignment.Center
                     };
 
                     Canvas.SetLeft(border, wpfX);

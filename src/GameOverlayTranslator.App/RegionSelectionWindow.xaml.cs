@@ -14,7 +14,7 @@ public partial class RegionSelectionWindow : Window
     public RegionSelectionWindow(CapturableWindow window)
     {
         InitializeComponent();
-        if (!NativeMethods.GetWindowRect(window.Handle, out var rect) || rect.Width < 2 || rect.Height < 2)
+        if (!WindowGeometry.TryGetClientScreenRect(window.Handle, out var rect))
         {
             throw new InvalidOperationException("선택한 창의 영역을 읽을 수 없습니다.");
         }

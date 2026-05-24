@@ -22,7 +22,7 @@ public sealed class WindowCaptureService : ICaptureService
             throw new CaptureException("최소화된 창은 캡처할 수 없습니다.");
         }
 
-        if (!NativeMethods.GetWindowRect(target.Window.Handle, out var rect) || rect.Width < 2 || rect.Height < 2)
+        if (!WindowGeometry.TryGetClientScreenRect(target.Window.Handle, out var rect))
         {
             throw new CaptureException("창 크기를 읽을 수 없습니다.");
         }

@@ -19,6 +19,13 @@ internal static class NativeMethods
         public int Height => Bottom - Top;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
     [DllImport("user32.dll")]
     internal static extern bool EnumWindows(EnumWindowsProc callback, nint lParam);
 
@@ -42,6 +49,12 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     internal static extern bool GetWindowRect(nint hwnd, out NativeRect rect);
+
+    [DllImport("user32.dll")]
+    internal static extern bool GetClientRect(nint hwnd, out NativeRect rect);
+
+    [DllImport("user32.dll")]
+    internal static extern bool ClientToScreen(nint hwnd, ref NativePoint point);
 
     [DllImport("user32.dll")]
     internal static extern uint GetDpiForWindow(nint hwnd);

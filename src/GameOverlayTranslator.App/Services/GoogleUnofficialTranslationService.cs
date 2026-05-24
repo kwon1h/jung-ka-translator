@@ -16,7 +16,7 @@ public sealed class GoogleUnofficialTranslationService(HttpClient httpClient) : 
     {
         if (string.IsNullOrWhiteSpace(request.Text))
         {
-            return new TranslationResult(request.Text, string.Empty, request.SourceLanguage);
+            return new TranslationResult(request.Text, string.Empty, request.SourceLanguage, TranslationUsage.None);
         }
 
         var source = string.IsNullOrWhiteSpace(request.SourceLanguage) ? "auto" : request.SourceLanguage;
@@ -59,19 +59,38 @@ public sealed class GoogleUnofficialTranslationService(HttpClient httpClient) : 
             }
         }
 
-        return new TranslationResult(request.Text, translatedTextBuilder.ToString(), detectedLanguage ?? request.SourceLanguage);
+        return new TranslationResult(
+            request.Text,
+            translatedTextBuilder.ToString(),
+            detectedLanguage ?? request.SourceLanguage,
+            TranslationUsage.Outbound(1, request.Text.Length));
     }
 
     public async Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
     {
         if (request.Texts.Count == 0)
         {
-            return new BatchTranslationResult(Array.Empty<string>());
+            return new BatchTranslationResult(Array.Empty<string>(), TranslationUsage.None);
+        }
+
+        if (request.Texts.Count == 1)
+        {
+            var result = await TranslateAsync(new TranslationRequest(request.Texts[0], request.TargetLanguage, request.SourceLanguage), ct);
+            return new BatchTranslationResult(new[] { result.TranslatedText }, result.Usage);
+        }
+
+        var delimiter = $"\n\uE000GOT_SPLIT_{Guid.NewGuid():N}\uE000\n";
+        var packedText = string.Join(delimiter, request.Texts);
+        var packedResult = await TranslateAsync(new TranslationRequest(packedText, request.TargetLanguage, request.SourceLanguage), ct);
+        var packedParts = packedResult.TranslatedText.Split(delimiter, StringSplitOptions.None);
+        if (packedParts.Length == request.Texts.Count)
+        {
+            return new BatchTranslationResult(packedParts, TranslationUsage.Outbound(1, packedText.Length));
         }
 
         // Google Unofficial API has no batch endpoint. Use parallel requests with a Semaphore to avoid Rate Limits.
         var semaphore = new SemaphoreSlim(4);
-        var tasks = new List<Task<string>>();
+        var tasks = new List<Task<TranslationResult>>();
 
         foreach (var text in request.Texts)
         {
@@ -80,8 +99,7 @@ public sealed class GoogleUnofficialTranslationService(HttpClient httpClient) : 
                 await semaphore.WaitAsync(ct);
                 try
                 {
-                    var result = await TranslateAsync(new TranslationRequest(text, request.TargetLanguage, request.SourceLanguage), ct);
-                    return result.TranslatedText;
+                    return await TranslateAsync(new TranslationRequest(text, request.TargetLanguage, request.SourceLanguage), ct);
                 }
                 finally
                 {
@@ -91,6 +109,12 @@ public sealed class GoogleUnofficialTranslationService(HttpClient httpClient) : 
         }
 
         var results = await Task.WhenAll(tasks);
-        return new BatchTranslationResult(results);
+        var usage = packedResult.Usage ?? TranslationUsage.Outbound(1, packedText.Length);
+        foreach (var result in results)
+        {
+            usage = usage.Add(result.Usage ?? TranslationUsage.Outbound(1, result.SourceText.Length));
+        }
+
+        return new BatchTranslationResult(results.Select(result => result.TranslatedText).ToArray(), usage);
     }
 }

@@ -89,6 +89,18 @@ public sealed class OutlinedTextBlock : Control
         }
 
         var geometry = text.BuildGeometry(new Point(0, 0));
+        var bounds = geometry.Bounds;
+
+        if (bounds.Width > 0 && bounds.Height > 0)
+        {
+            // geometry의 실제 시각적 높이 중심을 컨트롤의 세로 중심에 맞춤
+            double offsetY = (ActualHeight / 2.0) - (bounds.Y + bounds.Height / 2.0);
+            
+            // X축은 원래 기준을 유지하되, Y축 방향으로만 평행이동 적용
+            var transform = new TranslateTransform(0, offsetY);
+            geometry.Transform = transform;
+        }
+
         drawingContext.DrawGeometry(Fill, new Pen(Stroke, StrokeThickness), geometry);
     }
 }

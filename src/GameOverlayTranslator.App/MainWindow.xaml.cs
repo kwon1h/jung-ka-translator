@@ -114,7 +114,8 @@ public partial class MainWindow : Window
             () => ApiKeyPasswordBox.Password,
             () => settings
         );
-        session = new TranslationSession(new WindowCaptureService(), new WindowsOcrEngine(), delegator);
+        var cachingTranslationService = new CachingTranslationService(delegator, new ScreenTranslationCacheStore());
+        session = new TranslationSession(new WindowCaptureService(), new WindowsOcrEngine(), cachingTranslationService);
         session.BeforeCaptureAsync = SetOverlayCaptureVisibilityAsync(false);
         session.AfterCaptureAsync = SetOverlayCaptureVisibilityAsync(true);
         session.Updated += SessionUpdated;
@@ -523,10 +524,7 @@ public partial class MainWindow : Window
         overlayWindow?.Apply(update);
 
         // Handle diagnostic log recording
-        if (!string.IsNullOrWhiteSpace(update.OcrRawText) || 
-            !string.IsNullOrWhiteSpace(update.SourceText) || 
-            !string.IsNullOrWhiteSpace(update.FilterRule) ||
-            update.TranslationRequestCount > 0)
+        if (update.DiagnosticKind is DiagnosticKind.OcrTranslated or DiagnosticKind.OcrSkipped)
         {
             var logItem = new DiagnosticLogItem
             {
@@ -535,9 +533,9 @@ public partial class MainWindow : Window
                 Source = update.OcrRawText ?? update.SourceText ?? string.Empty,
                 Rule = update.FilterRule ?? string.Empty,
                 Reason = update.FilterReason ?? string.Empty,
-                ApiUsage = update.TranslationRequestCount > 0
+                ApiUsage = update.DiagnosticKind == DiagnosticKind.OcrTranslated
                     ? $"{update.TranslationRequestCount}건/{update.TranslationCharacterCount}자"
-                    : string.Empty
+                    : "0건/0자"
             };
             diagnosticLogs.Insert(0, logItem);
             while (diagnosticLogs.Count > 100)
@@ -546,10 +544,14 @@ public partial class MainWindow : Window
             }
         }
 
-        if (update.TotalTranslationRequestCount > 0 || update.TotalTranslationCharacterCount > 0)
+        if (update.DiagnosticKind == DiagnosticKind.OcrTranslated)
         {
             totalTranslationRequestCount = update.TotalTranslationRequestCount;
             totalTranslationCharacterCount = update.TotalTranslationCharacterCount;
+            UpdateApiUsageText();
+        }
+        else if (update.DiagnosticKind == DiagnosticKind.OcrSkipped)
+        {
             UpdateApiUsageText();
         }
     });

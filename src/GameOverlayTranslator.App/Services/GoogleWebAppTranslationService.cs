@@ -24,7 +24,7 @@ public sealed class GoogleWebAppTranslationService(HttpClient httpClient, Func<s
 
         if (string.IsNullOrWhiteSpace(request.Text))
         {
-            return new TranslationResult(request.Text, string.Empty, request.SourceLanguage);
+            return new TranslationResult(request.Text, string.Empty, request.SourceLanguage, TranslationUsage.None);
         }
 
         var payload = new
@@ -50,7 +50,7 @@ public sealed class GoogleWebAppTranslationService(HttpClient httpClient, Func<s
         if (root.TryGetProperty("translatedText", out var textProp))
         {
             var translatedText = textProp.GetString() ?? string.Empty;
-            return new TranslationResult(request.Text, translatedText, request.SourceLanguage);
+            return new TranslationResult(request.Text, translatedText, request.SourceLanguage, TranslationUsage.Outbound(1, request.Text.Length));
         }
 
         throw new InvalidOperationException("Google Web App 번역 응답이 올바르지 않습니다. 'translatedText' 속성을 찾을 수 없습니다.");
@@ -66,7 +66,7 @@ public sealed class GoogleWebAppTranslationService(HttpClient httpClient, Func<s
 
         if (request.Texts.Count == 0)
         {
-            return new BatchTranslationResult(Array.Empty<string>());
+            return new BatchTranslationResult(Array.Empty<string>(), TranslationUsage.None);
         }
 
         var payload = new
@@ -96,16 +96,18 @@ public sealed class GoogleWebAppTranslationService(HttpClient httpClient, Func<s
             {
                 translatedTexts.Add(element.GetString() ?? string.Empty);
             }
-            return new BatchTranslationResult(translatedTexts);
+            return new BatchTranslationResult(translatedTexts, TranslationUsage.Outbound(1, request.Texts.Sum(text => text.Length)));
         }
 
         // If the web app didn't return translatedTexts, fallback to translating sequentially.
         var fallbackResults = new List<string>();
+        var usage = TranslationUsage.None;
         foreach (var text in request.Texts)
         {
             var res = await TranslateAsync(new TranslationRequest(text, request.TargetLanguage, request.SourceLanguage), ct);
             fallbackResults.Add(res.TranslatedText);
+            usage = usage.Add(res.Usage ?? TranslationUsage.Outbound(1, text.Length));
         }
-        return new BatchTranslationResult(fallbackResults);
+        return new BatchTranslationResult(fallbackResults, usage);
     }
 }

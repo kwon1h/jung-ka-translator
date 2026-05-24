@@ -34,7 +34,7 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
         var detected = translation.TryGetProperty("detected_source_language", out var detectedNode)
             ? detectedNode.GetString()
             : request.SourceLanguage;
-        return new TranslationResult(request.Text, translatedText, detected);
+        return new TranslationResult(request.Text, translatedText, detected, TranslationUsage.Outbound(1, request.Text.Length));
     }
 
     public async Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
@@ -47,7 +47,7 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
 
         if (request.Texts.Count == 0)
         {
-            return new BatchTranslationResult(Array.Empty<string>());
+            return new BatchTranslationResult(Array.Empty<string>(), TranslationUsage.None);
         }
 
         using var message = new HttpRequestMessage(HttpMethod.Post, "https://api-free.deepl.com/v2/translate");
@@ -82,7 +82,7 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
             translatedTexts.Add(text);
         }
         
-        return new BatchTranslationResult(translatedTexts);
+        return new BatchTranslationResult(translatedTexts, TranslationUsage.Outbound(1, request.Texts.Sum(text => text.Length)));
     }
 
     private static IEnumerable<KeyValuePair<string, string>> BuildParameters(TranslationRequest request)
