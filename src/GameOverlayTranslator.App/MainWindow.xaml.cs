@@ -76,7 +76,7 @@ public partial class MainWindow : Window
         new("#10B981", "초록색")
     ];
 
-    private static readonly IReadOnlyList<double> StrokeThicknesses = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
+    private static readonly IReadOnlyList<double> StrokeThicknesses = [0.0, 0.5, 1.0];
     private static readonly IReadOnlyList<string> DictionaryCategories =
     [
         UserDictionaryStore.UserCategory,
@@ -87,12 +87,12 @@ public partial class MainWindow : Window
     ];
     private static readonly IReadOnlyList<OverlayPreset> OverlayPresets =
     [
-        new("기본", 22, "#FFFFFF", "#000000", 2.5, 0.92, "#99000000"),
-        new("강조", 24, "#FFFF00", "#000000", 3.0, 0.95, "#B3000000"),
-        new("원문 보호", 22, "#111111", "#FFFFFF", 3.0, 0.92, "#00000000"),
-        new("밝은 배경용", 23, "#FFFFFF", "#000000", 3.0, 0.95, "#CC000000"),
-        new("어두운 배경용", 22, "#111111", "#FFFFFF", 2.5, 0.88, "#80FFFFFF"),
-        new("사용자 지정", 22, "#FFFFFF", "#000000", 2.5, 0.92, "#99000000")
+        new("기본", AppSettingsDefaults.DefaultFontSize, "#FFFFFF", "#000000", AppSettingsDefaults.DefaultStrokeThickness, 0.92, "#99000000"),
+        new("강조", 25, "#FFFF00", "#000000", 1.0, 0.95, "#B3000000"),
+        new("원문 보호", 25, "#111111", "#FFFFFF", 1.0, 0.92, "#00000000"),
+        new("밝은 배경용", 25, "#FFFFFF", "#000000", 1.0, 0.95, "#CC000000"),
+        new("어두운 배경용", 25, "#111111", "#FFFFFF", AppSettingsDefaults.DefaultStrokeThickness, 0.88, "#80FFFFFF"),
+        new("사용자 지정", AppSettingsDefaults.DefaultFontSize, "#FFFFFF", "#000000", AppSettingsDefaults.DefaultStrokeThickness, 0.92, "#99000000")
     ];
     private readonly IWindowSource windowSource = new Win32WindowSource();
     private readonly ICaptureService dictionaryCaptureService = new WindowCaptureService();
@@ -106,6 +106,9 @@ public partial class MainWindow : Window
     private ResultWindow? resultWindow;
     private OverlayWindow? overlayWindow;
     private CaptureRegion? selectedRegion;
+    private CaptureRegion? excludedRegion;
+    private CaptureRegion? activeSessionRegion;
+    private TranslationMode? activeSessionMode;
     private CancellationTokenSource? sessionCancellation;
     private bool applyingOverlayPreset;
 
@@ -141,15 +144,24 @@ public partial class MainWindow : Window
         OverlayPresetComboBox.SelectedItem = OverlayPresets.FirstOrDefault(preset => preset.Name == settings.OverlayPreset) ?? OverlayPresets[0];
         ApiKeyPasswordBox.Password = apiKeyStore.Load() ?? string.Empty;
         RestoreRegion(settings.LastRegion);
+        RestoreExcludedRegion(settings.LastExcludedRegion);
         UpdateRegionButtonVisual();
         DisplayModeComboBox.SelectedItem = DisplayModes.First(mode => mode.Mode == settings.DisplayMode);
         ShowOverlayInScreenShareCheckBox.IsChecked = settings.ShowOverlayInScreenShare;
         UpdateDisplayModePreview();
 
         // Populate and select font family
-        var systemFonts = Fonts.SystemFontFamilies.Select(f => f.Source).OrderBy(s => s).ToList();
+        var systemFonts = Fonts.SystemFontFamilies
+            .Select(f => f.Source)
+            .Where(fontName => !fontName.StartsWith("HY", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(s => s)
+            .ToList();
         FontFamilyComboBox.ItemsSource = systemFonts;
-        var selectedFont = systemFonts.FirstOrDefault(f => string.Equals(f, settings.FontFamily, StringComparison.OrdinalIgnoreCase)) ?? "Malgun Gothic";
+        var preferredFont = systemFonts.FirstOrDefault(f => string.Equals(f, AppSettingsDefaults.PreferredFontFamily, StringComparison.OrdinalIgnoreCase));
+        var savedFont = systemFonts.FirstOrDefault(f => string.Equals(f, settings.FontFamily, StringComparison.OrdinalIgnoreCase));
+        var selectedFont = string.Equals(settings.FontFamily, AppSettingsDefaults.LegacyFontFamily, StringComparison.OrdinalIgnoreCase) && preferredFont is not null
+            ? preferredFont
+            : savedFont ?? preferredFont ?? AppSettingsDefaults.LegacyFontFamily;
         FontFamilyComboBox.SelectedItem = selectedFont;
 
         // Initialize font size slider and label
@@ -188,34 +200,8 @@ public partial class MainWindow : Window
         DictCategoryComboBox.ItemsSource = DictionaryCategories;
         DictCategoryComboBox.SelectedItem = UserDictionaryStore.UserCategory;
 
-        // Load Advanced Filter Settings to UI
-        EnableLengthFilterCheckBox.IsChecked = settings.EnableLengthFilter;
-        MinMessageLengthSlider.Value = settings.MinMessageLength;
-        MinMessageLengthLabel.Text = $"{settings.MinMessageLength}자";
-        MaxMessageLengthSlider.Value = settings.MaxMessageLength;
-        MaxMessageLengthLabel.Text = $"{settings.MaxMessageLength}자";
-
-        EnableNoiseFilterCheckBox.IsChecked = settings.EnableNoiseFilter;
-        MaxNoiseTokenCountSlider.Value = settings.MaxNoiseTokenCount;
-        MaxNoiseTokenCountLabel.Text = $"{settings.MaxNoiseTokenCount}개";
-
-        EnableSeparatorFilterCheckBox.IsChecked = settings.EnableSeparatorFilter;
-        MaxSeparatorsCountSlider.Value = settings.MaxSeparatorsCount;
-        MaxSeparatorsCountLabel.Text = $"{settings.MaxSeparatorsCount}개";
-
-        EnableSimilarityFilterCheckBox.IsChecked = settings.EnableSimilarityFilter;
-        SimilarityThresholdSlider.Value = settings.SimilarityThreshold;
-        SimilarityThresholdLabel.Text = $"{settings.SimilarityThreshold:F2}";
-        ReplacementSimilarityThresholdSlider.Value = settings.ReplacementSimilarityThreshold;
-        ReplacementSimilarityThresholdLabel.Text = $"{settings.ReplacementSimilarityThreshold:F2}";
-        SimilarityCacheSecondsSlider.Value = settings.SimilarityCacheSeconds;
-        SimilarityCacheSecondsLabel.Text = $"{settings.SimilarityCacheSeconds}초";
-
         // Bind Diagnostic Log List
         DiagnosticLogsListView.ItemsSource = diagnosticLogs;
-
-        // Initialize filter panel enablement
-        UpdateFilterPanelEnablement();
 
         UpdateFontPreview();
 
@@ -238,6 +224,11 @@ public partial class MainWindow : Window
         }
         GoogleWebAppUrlTextBox.Text = settings.GoogleWebAppUrl;
         UpdateTranslatorPanelsVisibility(settings.TranslatorType);
+    }
+
+    private void MainWindowLoaded(object sender, RoutedEventArgs e)
+    {
+        UpdateTranslationModeUI();
     }
 
     private void RefreshWindows(object sender, RoutedEventArgs e)
@@ -332,8 +323,11 @@ public partial class MainWindow : Window
             || !string.Equals(window.ProcessName, settings.LastWindowProcessName, StringComparison.OrdinalIgnoreCase))
         {
             selectedRegion = null;
+            excludedRegion = null;
             RegionText.Text = "선택되지 않음";
+            ScreenExcludeRegionText.Text = "선택되지 않음";
             UpdateRegionButtonVisual();
+            UpdateTranslationModeUI();
         }
     }
 
@@ -348,26 +342,35 @@ public partial class MainWindow : Window
 
     private void UpdateTranslationModeUI()
     {
-        if (ChatTranslationRadioButton.IsChecked == true)
+        SelectRegionButton.IsEnabled = true;
+        if (selectedRegion is { } r)
         {
-            SelectRegionButton.IsEnabled = true;
-            if (selectedRegion is { } r)
-            {
-                ShowRegion(r);
-            }
-            else
-            {
-                RegionText.Text = "선택되지 않음";
-            }
-            UpdateRegionButtonVisual();
+            ShowRegion(r);
+        }
+        else if (ScreenTranslationRadioButton.IsChecked == true)
+        {
+            RegionText.Text = "전체 화면 (기본)";
         }
         else
         {
-            SelectRegionButton.IsEnabled = false;
-            RegionText.Text = "전체 화면 (자동)";
-            SelectRegionButton.ClearValue(BackgroundProperty);
-            SelectRegionButton.ClearValue(ForegroundProperty);
-            SelectRegionButton.ClearValue(FontWeightProperty);
+            RegionText.Text = "선택되지 않음";
+        }
+
+        if (ClearRegionButton != null)
+        {
+            ClearRegionButton.IsEnabled = selectedRegion is not null;
+        }
+
+        UpdateRegionButtonVisual();
+
+        if (SelectScreenExcludeRegionButton != null)
+        {
+            SelectScreenExcludeRegionButton.IsEnabled = true;
+        }
+
+        if (ClearScreenExcludeRegionButton != null)
+        {
+            ClearScreenExcludeRegionButton.IsEnabled = excludedRegion is not null;
         }
     }
 
@@ -435,8 +438,56 @@ public partial class MainWindow : Window
             ShowRegion(region);
             SaveSelection(window, region);
             SetStatus("번역 영역을 선택했습니다.");
+            UpdateTranslationModeUI();
             UpdateRegionButtonVisual();
         }
+    }
+
+    private void ClearRegion(object sender, RoutedEventArgs e)
+    {
+        selectedRegion = null;
+        settings = settings with { LastRegion = null };
+        settingsStore.Save(settings);
+        UpdateTranslationModeUI();
+        SetStatus(settings.TranslationMode == TranslationMode.Screen
+            ? "전체화면 번역 영역을 전체 화면으로 변경했습니다."
+            : "번역 영역을 해제했습니다.");
+    }
+
+    private void SelectScreenExcludeRegion(object sender, RoutedEventArgs e)
+    {
+        if (WindowComboBox.SelectedItem is not CapturableWindow window)
+        {
+            SetStatus("먼저 게임 창을 선택하세요.", true);
+            return;
+        }
+
+        var picker = new RegionSelectionWindow(window) { Owner = this };
+        if (picker.ShowDialog() == true && picker.Region is { } region)
+        {
+            excludedRegion = region;
+            ShowExcludedScreenRegion(region);
+            settings = settings with
+            {
+                LastWindowTitle = window.Title,
+                LastWindowProcessName = window.ProcessName,
+                LastExcludedRegion = region,
+                LastScreenExcludedRegion = null
+            };
+            settingsStore.Save(settings);
+            SetStatus("제외 영역을 선택했습니다.");
+            UpdateTranslationModeUI();
+        }
+    }
+
+    private void ClearScreenExcludeRegion(object sender, RoutedEventArgs e)
+    {
+        excludedRegion = null;
+        ScreenExcludeRegionText.Text = "선택되지 않음";
+        settings = settings with { LastExcludedRegion = null, LastScreenExcludedRegion = null };
+        settingsStore.Save(settings);
+        SetStatus("제외 영역을 해제했습니다.");
+        UpdateTranslationModeUI();
     }
 
     private async void ToggleSession(object sender, RoutedEventArgs e)
@@ -452,10 +503,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        var mode = settings.TranslationMode;
         CaptureRegion region;
-        if (settings.TranslationMode == TranslationMode.Screen)
+        if (mode == TranslationMode.Screen)
         {
-            region = new CaptureRegion(0, 0, 1, 1);
+            region = selectedRegion ?? FullWindowRegion;
         }
         else
         {
@@ -476,21 +528,11 @@ public partial class MainWindow : Window
         totalTranslationRequestCount = 0;
         totalTranslationCharacterCount = 0;
         UpdateApiUsageText();
-        ShowTranslationOutput(window, region);
+        activeSessionRegion = region;
+        activeSessionMode = mode;
+        ShowTranslationOutput(window, region, mode);
 
-        var filterSettings = new FilterSettings(
-            EnableLengthFilterCheckBox.IsChecked == true,
-            (int)MinMessageLengthSlider.Value,
-            (int)MaxMessageLengthSlider.Value,
-            EnableNoiseFilterCheckBox.IsChecked == true,
-            (int)MaxNoiseTokenCountSlider.Value,
-            EnableSeparatorFilterCheckBox.IsChecked == true,
-            (int)MaxSeparatorsCountSlider.Value,
-            EnableSimilarityFilterCheckBox.IsChecked == true,
-            SimilarityThresholdSlider.Value,
-            ReplacementSimilarityThresholdSlider.Value,
-            (int)SimilarityCacheSecondsSlider.Value
-        );
+        var filterSettings = new FilterSettings();
 
         var userDict = userDictStore.Load();
 
@@ -502,10 +544,11 @@ public partial class MainWindow : Window
             TimeSpan.FromSeconds(1), 
             filterSettings, 
             userDict,
-            settings.TranslationMode), 
+            mode,
+            excludedRegion is not null ? [excludedRegion.Value] : null),
             sessionCancellation.Token);
 
-        if (settings.TranslationMode != TranslationMode.Screen)
+        if (selectedRegion is not null)
         {
             SaveSelection(window, region);
         }
@@ -523,6 +566,8 @@ public partial class MainWindow : Window
         await session.StopAsync();
         sessionCancellation?.Dispose();
         sessionCancellation = null;
+        activeSessionRegion = null;
+        activeSessionMode = null;
         StartStopButton.Content = "번역 시작 (F8)";
         overlayWindow?.ClearAll();
     }
@@ -533,29 +578,27 @@ public partial class MainWindow : Window
         resultWindow?.Apply(update);
         if (overlayWindow is not null && WindowComboBox.SelectedItem is CapturableWindow window)
         {
-            var region = settings.TranslationMode == TranslationMode.Screen
-                ? new CaptureRegion(0, 0, 1, 1)
-                : (selectedRegion ?? new CaptureRegion(0, 0, 1, 1));
+            var region = activeSessionRegion ?? selectedRegion ?? FullWindowRegion;
+            var mode = activeSessionMode ?? settings.TranslationMode;
             overlayWindow.PositionOver(window, region);
-            overlayWindow.CurrentMode = settings.TranslationMode;
+            overlayWindow.CurrentMode = mode;
             overlayWindow.Topmost = false;
             overlayWindow.Topmost = true;
         }
         overlayWindow?.Apply(update);
 
         // Handle diagnostic log recording
-        if (update.DiagnosticKind is DiagnosticKind.OcrTranslated or DiagnosticKind.OcrSkipped)
+        var diagnosticEntry = DiagnosticLogFormatter.Create(update);
+        if (diagnosticEntry is not null)
         {
             var logItem = new DiagnosticLogItem
             {
                 Time = DateTime.Now.ToString("HH:mm:ss"),
-                Status = update.Status,
-                Source = update.OcrRawText ?? update.SourceText ?? string.Empty,
-                Rule = update.FilterRule ?? string.Empty,
-                Reason = update.FilterReason ?? string.Empty,
-                ApiUsage = update.DiagnosticKind == DiagnosticKind.OcrTranslated
-                    ? $"{update.TranslationRequestCount}건/{update.TranslationCharacterCount}자"
-                    : "0건/0자"
+                Status = diagnosticEntry.Status,
+                Source = diagnosticEntry.Source,
+                Rule = diagnosticEntry.Rule,
+                Reason = diagnosticEntry.Reason,
+                ApiUsage = diagnosticEntry.ApiUsage
             };
             diagnosticLogs.Insert(0, logItem);
             while (diagnosticLogs.Count > 100)
@@ -652,7 +695,7 @@ public partial class MainWindow : Window
         return resultWindow;
     }
 
-    private void ShowTranslationOutput(CapturableWindow window, CaptureRegion region)
+    private void ShowTranslationOutput(CapturableWindow window, CaptureRegion region, TranslationMode mode)
     {
         if (settings.DisplayMode == TranslationDisplayMode.TransparentOverlay)
         {
@@ -660,7 +703,7 @@ public partial class MainWindow : Window
             resultWindow = null;
             overlayWindow ??= new OverlayWindow();
             overlayWindow.ClearAll();
-            overlayWindow.CurrentMode = settings.TranslationMode;
+            overlayWindow.CurrentMode = mode;
             overlayWindow.PositionOver(window, region);
             overlayWindow.FontFamily = new FontFamily(settings.FontFamily);
             overlayWindow.FontSize = settings.FontSize;
@@ -712,9 +755,25 @@ public partial class MainWindow : Window
         ShowRegion(restored);
     }
 
+    private void RestoreExcludedRegion(CaptureRegion? region)
+    {
+        if (region is not { Width: > 0, Height: > 0 } restored)
+        {
+            return;
+        }
+
+        excludedRegion = restored;
+        ShowExcludedScreenRegion(restored);
+    }
+
     private void ShowRegion(CaptureRegion region)
     {
         RegionText.Text = $"{region.X:P0}, {region.Y:P0} / {region.Width:P0} x {region.Height:P0}";
+    }
+
+    private void ShowExcludedScreenRegion(CaptureRegion region)
+    {
+        ScreenExcludeRegionText.Text = $"{region.X:P0}, {region.Y:P0} / {region.Width:P0} x {region.Height:P0}";
     }
 
     private void SaveSelection(CapturableWindow window, CaptureRegion region)
@@ -732,7 +791,7 @@ public partial class MainWindow : Window
 
     private void UpdateRegionButtonVisual()
     {
-        if (selectedRegion == null)
+        if (selectedRegion == null && ChatTranslationRadioButton.IsChecked == true)
         {
             SelectRegionButton.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E65F2B"));
             SelectRegionButton.Foreground = Brushes.White;
@@ -1034,66 +1093,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void FilterSettingChanged(object sender, RoutedEventArgs e)
-    {
-        if (settings == null || MinMessageLengthSlider == null || MaxMessageLengthSlider == null || 
-            MaxNoiseTokenCountSlider == null || MaxSeparatorsCountSlider == null || 
-            SimilarityThresholdSlider == null || ReplacementSimilarityThresholdSlider == null || 
-            SimilarityCacheSecondsSlider == null)
-        {
-            return;
-        }
-
-        // Update Labels
-        MinMessageLengthLabel.Text = $"{(int)MinMessageLengthSlider.Value}자";
-        MaxMessageLengthLabel.Text = $"{(int)MaxMessageLengthSlider.Value}자";
-        MaxNoiseTokenCountLabel.Text = $"{(int)MaxNoiseTokenCountSlider.Value}개";
-        MaxSeparatorsCountLabel.Text = $"{(int)MaxSeparatorsCountSlider.Value}개";
-        SimilarityThresholdLabel.Text = $"{SimilarityThresholdSlider.Value:F2}";
-        ReplacementSimilarityThresholdLabel.Text = $"{ReplacementSimilarityThresholdSlider.Value:F2}";
-        SimilarityCacheSecondsLabel.Text = $"{(int)SimilarityCacheSecondsSlider.Value}초";
-
-        // Enablement
-        UpdateFilterPanelEnablement();
-
-        // Update Settings object and Save
-        settings = settings with
-        {
-            EnableLengthFilter = EnableLengthFilterCheckBox.IsChecked == true,
-            MinMessageLength = (int)MinMessageLengthSlider.Value,
-            MaxMessageLength = (int)MaxMessageLengthSlider.Value,
-            EnableNoiseFilter = EnableNoiseFilterCheckBox.IsChecked == true,
-            MaxNoiseTokenCount = (int)MaxNoiseTokenCountSlider.Value,
-            EnableSeparatorFilter = EnableSeparatorFilterCheckBox.IsChecked == true,
-            MaxSeparatorsCount = (int)MaxSeparatorsCountSlider.Value,
-            EnableSimilarityFilter = EnableSimilarityFilterCheckBox.IsChecked == true,
-            SimilarityThreshold = Math.Round(SimilarityThresholdSlider.Value, 2),
-            ReplacementSimilarityThreshold = Math.Round(ReplacementSimilarityThresholdSlider.Value, 2),
-            SimilarityCacheSeconds = (int)SimilarityCacheSecondsSlider.Value
-        };
-        settingsStore.Save(settings);
-    }
-
-    private void UpdateFilterPanelEnablement()
-    {
-        if (LengthFilterSettingsPanel != null && EnableLengthFilterCheckBox != null)
-        {
-            LengthFilterSettingsPanel.IsEnabled = EnableLengthFilterCheckBox.IsChecked == true;
-        }
-        if (NoiseFilterSettingsPanel != null && EnableNoiseFilterCheckBox != null)
-        {
-            NoiseFilterSettingsPanel.IsEnabled = EnableNoiseFilterCheckBox.IsChecked == true;
-        }
-        if (SeparatorFilterSettingsPanel != null && EnableSeparatorFilterCheckBox != null)
-        {
-            SeparatorFilterSettingsPanel.IsEnabled = EnableSeparatorFilterCheckBox.IsChecked == true;
-        }
-        if (SimilarityFilterSettingsPanel != null && EnableSimilarityFilterCheckBox != null)
-        {
-            SimilarityFilterSettingsPanel.IsEnabled = EnableSimilarityFilterCheckBox.IsChecked == true;
-        }
-    }
-
     private void AddDictionaryEntry(object sender, RoutedEventArgs e)
     {
         var source = DictSourceTextBox.Text?.Trim();
@@ -1319,18 +1318,7 @@ public partial class MainWindow : Window
         }
 
         var language = OcrLanguageComboBox.SelectedItem as OcrLanguage ?? OcrLanguages[0];
-        var filter = new FilterSettings(
-            EnableLengthFilterCheckBox.IsChecked == true,
-            (int)MinMessageLengthSlider.Value,
-            (int)MaxMessageLengthSlider.Value,
-            EnableNoiseFilterCheckBox.IsChecked == true,
-            (int)MaxNoiseTokenCountSlider.Value,
-            EnableSeparatorFilterCheckBox.IsChecked == true,
-            (int)MaxSeparatorsCountSlider.Value,
-            EnableSimilarityFilterCheckBox.IsChecked == true,
-            SimilarityThresholdSlider.Value,
-            ReplacementSimilarityThresholdSlider.Value,
-            (int)SimilarityCacheSecondsSlider.Value);
+        var filter = new FilterSettings();
 
         var lines = ChatLineParser.Parse(raw);
         if (lines.Count == 0)

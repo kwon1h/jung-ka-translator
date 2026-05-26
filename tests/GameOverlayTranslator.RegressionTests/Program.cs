@@ -10,6 +10,9 @@ var tests = new List<(string Name, Func<Task> Run)>
 {
     ("Default dictionary has entries", TestDefaultDictionaryCategories),
     ("Chat parser splits speaker and message", TestChatParser),
+    ("Chat parser supports mixed speaker names", TestChatParserMixedSpeakerNames),
+    ("Chat parser splits concatenated speaker lines", TestChatParserSplitsConcatenatedSpeakerLines),
+    ("Concatenated chat does not translate embedded speaker", TestConcatenatedChatDoesNotTranslateEmbeddedSpeaker),
     ("User dictionary CSV round trip", TestUserDictionaryCsvRoundTrip),
     ("Overlay defaults are readable", TestOverlayDefaults),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
@@ -19,10 +22,19 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Repeated chat translation uses cache", TestRepeatedChatLineUsesCachedTranslation),
     ("Empty screen OCR keeps overlay items", TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems),
     ("Screen translation publishes translated diagnostic", TestScreenTranslatedDiagnostic),
+    ("Screen diagnostic source contains only translation requests", TestScreenDiagnosticSourceContainsOnlyTranslationRequests),
     ("Screen cache publishes skipped diagnostic", TestScreenCacheSkippedDiagnostic),
+    ("Skipped diagnostics are not log entries", TestSkippedDiagnosticsAreNotLogEntries),
+    ("Screen exclude region skips OCR lines", TestScreenExcludeRegionSkipsOcrLines),
+    ("Chat exclude region skips OCR lines", TestChatExcludeRegionSkipsOcrLines),
+    ("Chat small excluded edge overlap keeps OCR line", TestChatSmallExcludedEdgeOverlapKeepsOcrLine),
+    ("Screen selected region applies window-relative exclude", TestScreenSelectedRegionAppliesWindowRelativeExclude),
+    ("Exclude region outside selection does not skip OCR lines", TestExcludeRegionOutsideSelectionDoesNotSkipOcrLines),
+    ("All excluded OCR lines skip translation", TestAllExcludedOcrLinesSkipTranslation),
     ("No OCR publishes no text skip", TestNoOcrPublishesSkip),
     ("Duplicate chat publishes skip", TestDuplicateChatPublishesSkip),
     ("Chat API usage is counted once", TestChatApiUsageCounted),
+    ("Chat diagnostic source excludes speaker", TestChatDiagnosticSourceExcludesSpeaker),
     ("Screen API usage is counted once", TestScreenApiUsageCounted),
     ("Repeated screen segments are deduplicated", TestScreenSegmentDeduplicatesRepeatedSentences),
     ("Cache hit usage is zero", TestDirectCacheHitUsageIsZero),
@@ -65,6 +77,60 @@ static Task TestChatParser()
     return Task.CompletedTask;
 }
 
+static Task TestChatParserMixedSpeakerNames()
+{
+    var lines = ChatLineParser.Parse("Ry\u66F9\u601D\u59AE: \u5E26\u4F60\u53BB");
+    Assert(lines.Count == 1, "Expected one parsed mixed-name chat line.");
+    Assert(lines[0].Speaker == "Ry\u66F9\u601D\u59AE", "Unexpected mixed speaker.");
+    Assert(lines[0].Message == "\u5E26\u4F60\u53BB", "Unexpected mixed-speaker message.");
+
+    lines = ChatLineParser.Parse("sToRy\u66F9\u601D\u59AE: \u6211\u8BF4\u6211\u773C\u79D1\u6709\u4EBA");
+    Assert(lines.Count == 1, "Expected one parsed mixed-name chat line with Chinese message.");
+    Assert(lines[0].Speaker == "sToRy\u66F9\u601D\u59AE", "Unexpected Chinese mixed speaker.");
+    Assert(lines[0].Message == "\u6211\u8BF4\u6211\u773C\u79D1\u6709\u4EBA", "Unexpected Chinese mixed-speaker message.");
+    return Task.CompletedTask;
+}
+
+static Task TestChatParserSplitsConcatenatedSpeakerLines()
+{
+    var speaker = "sToRy\u00E4\u601D\u59AE";
+    var firstMessage = "\u6211\u8BF4\u6211\u773C\u79D1\u6709\u4EBA";
+    var secondMessage = "\u5E26\u4F60\u53BB";
+    var lines = ChatLineParser.Parse($"{speaker}: {firstMessage}{speaker}\uFF1A{secondMessage}");
+
+    Assert(lines.Count == 2, $"Expected two parsed chat lines, got {lines.Count}.");
+    Assert(lines[0].Speaker == speaker, "Unexpected first speaker.");
+    Assert(lines[0].Message == firstMessage, "Unexpected first message.");
+    Assert(lines[1].Speaker == speaker, "Unexpected second speaker.");
+    Assert(lines[1].Message == secondMessage, "Unexpected second message.");
+    return Task.CompletedTask;
+}
+
+static async Task TestConcatenatedChatDoesNotTranslateEmbeddedSpeaker()
+{
+    var speaker = "sToRy\u00E4\u601D\u59AE";
+    var firstMessage = "\u6211\u8BF4\u6211\u773C\u79D1\u6709\u4EBA";
+    var secondMessage = "\u5E26\u4F60\u53BB";
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(
+        new FakeCaptureService(),
+        new FakeOcrEngine(new OcrResult($"{speaker}: {firstMessage}{speaker}\uFF1A{secondMessage}", [])),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat));
+
+    Assert(translation.SingleRequests == 2, $"Expected two chat translation requests, got {translation.SingleRequests}.");
+    Assert(translation.LastSingleTexts.SequenceEqual([firstMessage, secondMessage]), "Translation requests should contain messages only.");
+    Assert(translation.LastSingleTexts.All(text => !text.Contains("sToRy", StringComparison.Ordinal)), "Embedded speaker must not be sent for translation.");
+
+    var translated = Diagnostics(updates)
+        .Where(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated)
+        .ToList();
+    Assert(translated.Count == 2, $"Expected two translated chat updates, got {translated.Count}.");
+    Assert(translated.All(update => update.Speaker == speaker), "Translated chat updates should keep the speaker column.");
+}
+
 static Task TestUserDictionaryCsvRoundTrip()
 {
     var directory = Path.Combine(Path.GetTempPath(), "GameOverlayTranslatorTests", Guid.NewGuid().ToString("N"));
@@ -96,9 +162,11 @@ static Task TestUserDictionaryCsvRoundTrip()
 static Task TestOverlayDefaults()
 {
     var settings = new AppSettings();
-    Assert(settings.FontSize >= 22, "Default overlay font size should be readable.");
+    Assert(settings.FontFamily == AppSettingsDefaults.PreferredFontFamily, "Default overlay font should be the preferred Kart Gothic font.");
+    Assert(settings.FontSize == AppSettingsDefaults.DefaultFontSize, "Default overlay font size should be 25.");
     Assert(settings.TextColor == "#FFFFFF", "Default text color should be white.");
     Assert(settings.OutlineColor == "#000000", "Default outline should be black.");
+    Assert(settings.StrokeThickness == AppSettingsDefaults.DefaultStrokeThickness, "Default outline thickness should be 0.5px.");
     return Task.CompletedTask;
 }
 
@@ -199,6 +267,31 @@ static async Task TestScreenTranslatedDiagnostic()
     Assert(diagnostics.Sum(update => update.TranslationRequestCount) == 1, "Expected one outbound request counted.");
 }
 
+static async Task TestScreenDiagnosticSourceContainsOnlyTranslationRequests()
+{
+    var translation = new CountingTranslationService();
+    var sent = Chinese("6bd4 8d5 65f6 95f4");
+    var dictionaryOnly = Chinese("53ea 6709 7eff 8272 73a9 5bb6");
+    var ocr = new OcrResult($"{sent}\n{dictionaryOnly}",
+    [
+        new OcrLineResult(sent, new Rect(0, 0, 160, 24)),
+        new OcrLineResult(dictionaryOnly, new Rect(0, 30, 180, 24))
+    ]);
+    var session = new TranslationSession(new FakeCaptureService(), new FakeOcrEngine(ocr), translation);
+    var updates = Collect(session);
+
+    await RunSession(
+        session,
+        CreateOptions(TranslationMode.Screen, [new UserDictEntry(dictionaryOnly, "dictionary target", UserDictionaryStore.UserCategory)]));
+
+    var translated = Diagnostics(updates).Single(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated);
+    Assert(translated.DiagnosticSourceText == sent, "Screen diagnostic source should contain only text sent to translation.");
+    Assert(translated.OcrRawText?.Contains(dictionaryOnly, StringComparison.Ordinal) == true, "Raw OCR should remain available separately.");
+
+    var logEntry = DiagnosticLogFormatter.Create(translated);
+    Assert(logEntry?.Source == sent, "Diagnostic log entry should use DiagnosticSourceText.");
+}
+
 static async Task TestScreenCacheSkippedDiagnostic()
 {
     var translation = new CountingTranslationService();
@@ -211,6 +304,169 @@ static async Task TestScreenCacheSkippedDiagnostic()
 
     Assert(translation.BatchRequests == 1, "Expected one initial API request.");
     Assert(Diagnostics(updates).Any(update => update.DiagnosticKind == DiagnosticKind.OcrSkipped && update.TranslationRequestCount == 0), "Expected cache skip diagnostic.");
+}
+
+static async Task TestSkippedDiagnosticsAreNotLogEntries()
+{
+    var skipped = new SessionUpdate(
+        "Skipped",
+        SourceText: "racer: hello",
+        FilterRule: "Dictionary",
+        DiagnosticKind: DiagnosticKind.OcrSkipped);
+    Assert(DiagnosticLogFormatter.Create(skipped) is null, "Skipped diagnostics should not become log entries.");
+
+    var translatedWithoutRequest = new SessionUpdate(
+        "Translated",
+        DiagnosticKind: DiagnosticKind.OcrTranslated);
+    Assert(DiagnosticLogFormatter.Create(translatedWithoutRequest) is null, "Translated updates without outbound usage should not become log entries.");
+
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(new FakeCaptureService(), new FakeOcrEngine(new OcrResult(string.Empty, [])), translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Screen));
+
+    Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrSkipped && update.FilterRule == "NoText"), "Expected no-text skip diagnostic.");
+    Assert(updates.All(update => DiagnosticLogFormatter.Create(update) is null), "No-text polling should not add diagnostic log entries.");
+}
+
+static async Task TestScreenExcludeRegionSkipsOcrLines()
+{
+    var translation = new CountingTranslationService();
+    var ignored = Chinese("7528 6237 540d");
+    var translated = Chinese("6bd4 8d5 65f6 95f4");
+    var ocr = new OcrResult($"{ignored}\n{translated}",
+    [
+        new OcrLineResult(ignored, new Rect(10, 430, 180, 24)),
+        new OcrLineResult(translated, new Rect(850, 80, 120, 24))
+    ]);
+    var session = new TranslationSession(new FakeCaptureService(1000, 800), new FakeOcrEngine(ocr), translation);
+
+    await RunSession(
+        session,
+        CreateOptions(TranslationMode.Screen) with
+        {
+            ExcludedRegions = [new CaptureRegion(0, 0.4, 0.25, 0.4)]
+        });
+
+    Assert(translation.BatchRequests == 1, "Expected one batch request for non-excluded text.");
+    Assert(translation.LastBatchTexts.Count == 1, "Excluded username line should not be sent for translation.");
+    Assert(translation.LastBatchTexts[0] == translated, "Only the non-excluded line should be translated.");
+}
+
+static async Task TestChatExcludeRegionSkipsOcrLines()
+{
+    var translation = new CountingTranslationService();
+    var ignored = Chinese("5ffd 7565 6d88 606f");
+    var translated = Chinese("9700 8981 7ffb 8bd1");
+    var ignoredLine = $"bad1: {ignored}";
+    var translatedLine = $"ok1: {translated}";
+    var ocr = new OcrResult($"{ignoredLine}\n{translatedLine}",
+    [
+        new OcrLineResult(ignoredLine, new Rect(10, 430, 180, 24)),
+        new OcrLineResult(translatedLine, new Rect(850, 80, 120, 24))
+    ]);
+    var session = new TranslationSession(new FakeCaptureService(1000, 800), new FakeOcrEngine(ocr), translation);
+
+    await RunSession(
+        session,
+        CreateOptions(TranslationMode.Chat) with
+        {
+            ExcludedRegions = [new CaptureRegion(0, 0.4, 0.25, 0.4)]
+        });
+
+    Assert(translation.SingleRequests == 1, "Expected one chat request for non-excluded text.");
+    Assert(translation.LastSingleTexts.Count == 1, "Excluded chat line should not be sent for translation.");
+    Assert(translation.LastSingleTexts[0] == translated, "Only the non-excluded chat message should be translated.");
+}
+
+static async Task TestChatSmallExcludedEdgeOverlapKeepsOcrLine()
+{
+    var translation = new CountingTranslationService();
+    var translated = Chinese("8fb9 7f18 91cd 53e0");
+    var translatedLine = $"ok1: {translated}";
+    var ocr = new OcrResult(translatedLine, [new OcrLineResult(translatedLine, new Rect(10, 80, 300, 24))]);
+    var session = new TranslationSession(new FakeCaptureService(1000, 800), new FakeOcrEngine(ocr), translation);
+
+    await RunSession(
+        session,
+        CreateOptions(TranslationMode.Chat) with
+        {
+            ExcludedRegions = [new CaptureRegion(0, 0, 0.02, 1)]
+        });
+
+    Assert(translation.SingleRequests == 1, "A small edge overlap should not remove the chat OCR line.");
+    Assert(translation.LastSingleTexts[0] == translated, "The chat message should still be translated.");
+}
+
+static async Task TestScreenSelectedRegionAppliesWindowRelativeExclude()
+{
+    var translation = new CountingTranslationService();
+    var ignored = Chinese("9009 62e9 533a 57df 5185");
+    var translated = Chinese("9009 62e9 533a 57df 5916");
+    var ocr = new OcrResult($"{ignored}\n{translated}",
+    [
+        new OcrLineResult(ignored, new Rect(10, 80, 180, 24)),
+        new OcrLineResult(translated, new Rect(300, 80, 180, 24))
+    ]);
+    var session = new TranslationSession(new FakeCaptureService(500, 800), new FakeOcrEngine(ocr), translation);
+
+    await RunSession(
+        session,
+        CreateOptions(TranslationMode.Screen) with
+        {
+            Region = new CaptureRegion(0.5, 0, 0.5, 1),
+            ExcludedRegions = [new CaptureRegion(0.5, 0, 0.25, 1)]
+        });
+
+    Assert(translation.BatchRequests == 1, "Expected one screen request for non-excluded selected-region text.");
+    Assert(translation.LastBatchTexts.Count == 1, "Window-relative excluded region should map into the selected capture.");
+    Assert(translation.LastBatchTexts[0] == translated, "Only text outside the mapped excluded region should be translated.");
+}
+
+static async Task TestExcludeRegionOutsideSelectionDoesNotSkipOcrLines()
+{
+    var translation = new CountingTranslationService();
+    var first = Chinese("7b2c 4e00 884c");
+    var second = Chinese("7b2c 4e8c 884c");
+    var ocr = new OcrResult($"{first}\n{second}",
+    [
+        new OcrLineResult(first, new Rect(10, 80, 180, 24)),
+        new OcrLineResult(second, new Rect(300, 80, 180, 24))
+    ]);
+    var session = new TranslationSession(new FakeCaptureService(500, 800), new FakeOcrEngine(ocr), translation);
+
+    await RunSession(
+        session,
+        CreateOptions(TranslationMode.Screen) with
+        {
+            Region = new CaptureRegion(0.5, 0, 0.5, 1),
+            ExcludedRegions = [new CaptureRegion(0, 0, 0.25, 1)]
+        });
+
+    Assert(translation.BatchRequests == 1, "Expected one batch request.");
+    Assert(translation.LastBatchTexts.Count == 2, "Non-overlapping excluded region should not remove OCR lines.");
+    Assert(translation.LastBatchTexts.Contains(first), "First line should still be translated.");
+    Assert(translation.LastBatchTexts.Contains(second), "Second line should still be translated.");
+}
+
+static async Task TestAllExcludedOcrLinesSkipTranslation()
+{
+    var translation = new CountingTranslationService();
+    var source = Chinese("5168 90e8 9664 5916");
+    var ocr = new OcrResult(source, [new OcrLineResult(source, new Rect(10, 80, 180, 24))]);
+    var session = new TranslationSession(new FakeCaptureService(1000, 800), new FakeOcrEngine(ocr), translation);
+    var updates = Collect(session);
+
+    await RunSession(
+        session,
+        CreateOptions(TranslationMode.Screen) with
+        {
+            ExcludedRegions = [new CaptureRegion(0, 0, 1, 1)]
+        });
+
+    Assert(translation.BatchRequests == 0, "All excluded OCR lines should not call the translation API.");
+    Assert(Diagnostics(updates).Any(update => update.DiagnosticKind == DiagnosticKind.OcrSkipped && update.FilterRule == "NoText"), "Expected NoText skip after all OCR lines are excluded.");
 }
 
 static async Task TestNoOcrPublishesSkip()
@@ -250,6 +506,24 @@ static async Task TestChatApiUsageCounted()
     var translated = Diagnostics(updates).Single(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated);
     Assert(translated.TranslationRequestCount == 1, "Chat usage should count one request.");
     Assert(translated.TotalTranslationRequestCount == 1, "Chat total usage should be one request.");
+}
+
+static async Task TestChatDiagnosticSourceExcludesSpeaker()
+{
+    var translation = new CountingTranslationService();
+    var message = Chinese("6211 60f3 89c1 5979 4e86");
+    var session = new TranslationSession(new FakeCaptureService(), new FakeOcrEngine(new OcrResult($"racer: {message}", [])), translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat));
+
+    var translated = Diagnostics(updates).Single(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated);
+    Assert(translated.SourceText == $"racer: {message}", "Chat source text should remain available for result windows.");
+    Assert(translated.DiagnosticSourceText == message, "Chat diagnostic source should contain only the translated message.");
+    Assert(translated.DiagnosticSourceText?.Contains("racer", StringComparison.OrdinalIgnoreCase) == false, "Diagnostic source should not contain the speaker.");
+
+    var logEntry = DiagnosticLogFormatter.Create(translated);
+    Assert(logEntry?.Source == message, "Diagnostic log entry should use speaker-free DiagnosticSourceText.");
 }
 
 static async Task TestScreenApiUsageCounted()
@@ -409,11 +683,11 @@ static async Task TestChineseRatioBypassesChatFilter()
     Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated), "Expected translated diagnostic.");
 }
 
-sealed class FakeCaptureService : ICaptureService
+sealed class FakeCaptureService(int width = 1, int height = 1) : ICaptureService
 {
     public Task<CapturedFrame> CaptureAsync(CaptureTarget target, CaptureRegion region, CancellationToken ct)
     {
-        var bitmap = new RenderTargetBitmap(1, 1, 96, 96, PixelFormats.Pbgra32);
+        var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
         return Task.FromResult(new CapturedFrame(bitmap));
     }
 }
@@ -440,11 +714,15 @@ sealed class CountingTranslationService : ITranslationService
 {
     public int SingleRequests { get; private set; }
     public int BatchRequests { get; private set; }
+    public IReadOnlyList<string> LastSingleTexts => singleTexts;
     public IReadOnlyList<string> LastBatchTexts { get; private set; } = Array.Empty<string>();
+
+    private readonly List<string> singleTexts = [];
 
     public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
     {
         SingleRequests++;
+        singleTexts.Add(request.Text);
         return Task.FromResult(new TranslationResult(request.Text, $"translated:{request.Text}", null));
     }
 

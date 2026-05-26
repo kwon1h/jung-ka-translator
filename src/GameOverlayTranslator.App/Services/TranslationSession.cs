@@ -1,6 +1,9 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Platform;
@@ -96,13 +99,19 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     }
                 }
 
-                var recognized = await ocrEngine.RecognizeAsync(frame, options.OcrLanguage, ct);
+                var frameForOcr = ApplyExcludedRegionMask(frame, options);
+                var recognized = await ocrEngine.RecognizeAsync(frameForOcr, options.OcrLanguage, ct);
+                var recognizedForTranslation = ApplyExcludedRegions(
+                    recognized,
+                    options,
+                    frameForOcr.Bitmap.PixelWidth,
+                    frameForOcr.Bitmap.PixelHeight);
 
                 if (options.Mode == TranslationMode.Screen)
                 {
                     await HandleScreenTranslationAsync(
                         options,
-                        recognized,
+                        recognizedForTranslation,
                         dictExactEntries,
                         dictRegexes,
                         screenTranslationMemory,
@@ -118,7 +127,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
                 await HandleChatTranslationAsync(
                     options,
-                    recognized,
+                    recognizedForTranslation,
                     exactLines,
                     recentChat,
                     dictExactEntries,
@@ -303,6 +312,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     filterReason: $"Outbound {pendingScreenUsage.OutboundRequestCount} request(s) / {pendingScreenUsage.OutboundCharacterCount} chars",
                     filterRule: "Translated",
                     screenItems: screenItems,
+                    diagnosticSourceText: string.Join(Environment.NewLine, textsToTranslate),
                     translationRequestCount: pendingScreenUsage.OutboundRequestCount,
                     translationCharacterCount: pendingScreenUsage.OutboundCharacterCount,
                     totalTranslationRequestCount: pendingScreenTotals.TotalRequests,
@@ -320,6 +330,135 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     diagnosticKind: DiagnosticKind.OcrSkipped);
             }
         }
+    }
+
+    private static CapturedFrame ApplyExcludedRegionMask(CapturedFrame frame, SessionOptions options)
+    {
+        var excludedRects = BuildExcludedRects(
+            options.ExcludedRegions,
+            options.Region,
+            frame.Bitmap.PixelWidth,
+            frame.Bitmap.PixelHeight);
+        if (excludedRects.Count == 0)
+        {
+            return frame;
+        }
+
+        var width = frame.Bitmap.PixelWidth;
+        var height = frame.Bitmap.PixelHeight;
+        var visual = new DrawingVisual();
+        using (var context = visual.RenderOpen())
+        {
+            context.DrawImage(frame.Bitmap, new Rect(0, 0, width, height));
+            foreach (var excludedRect in excludedRects)
+            {
+                context.DrawRectangle(Brushes.Black, null, excludedRect);
+            }
+        }
+
+        var masked = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        masked.Render(visual);
+        masked.Freeze();
+        return new CapturedFrame(masked);
+    }
+
+    private static OcrResult ApplyExcludedRegions(
+        OcrResult recognized,
+        SessionOptions options,
+        int frameWidth,
+        int frameHeight)
+    {
+        var excludedRects = BuildExcludedRects(options.ExcludedRegions, options.Region, frameWidth, frameHeight);
+        if (excludedRects.Count == 0 || recognized.Lines.Count == 0)
+        {
+            return recognized;
+        }
+
+        var includedLines = recognized.Lines
+            .Where(line => !IsInExcludedRegion(line.BoundingRect, excludedRects))
+            .ToList();
+
+        if (includedLines.Count == recognized.Lines.Count)
+        {
+            return recognized;
+        }
+
+        var includedText = string.Join(Environment.NewLine, includedLines.Select(line => line.Text));
+        var includedWords = recognized.Words
+            .Where(word => !IsInExcludedRegion(word.BoundingRect, excludedRects))
+            .ToList();
+
+        return new OcrResult(includedText, includedLines)
+        {
+            Words = includedWords
+        };
+    }
+
+    private static IReadOnlyList<Rect> BuildExcludedRects(
+        IReadOnlyList<CaptureRegion>? regions,
+        CaptureRegion captureRegion,
+        int frameWidth,
+        int frameHeight)
+    {
+        if (regions is null
+            || regions.Count == 0
+            || captureRegion.Width <= 0
+            || captureRegion.Height <= 0
+            || frameWidth <= 0
+            || frameHeight <= 0)
+        {
+            return Array.Empty<Rect>();
+        }
+
+        var captureRect = new Rect(captureRegion.X, captureRegion.Y, captureRegion.Width, captureRegion.Height);
+        var excludedRects = new List<Rect>();
+        foreach (var region in regions.Where(region => region.Width > 0 && region.Height > 0))
+        {
+            var excludedRect = new Rect(region.X, region.Y, region.Width, region.Height);
+            excludedRect.Intersect(captureRect);
+            if (excludedRect.IsEmpty || excludedRect.Width <= 0 || excludedRect.Height <= 0)
+            {
+                continue;
+            }
+
+            excludedRects.Add(new Rect(
+                (excludedRect.X - captureRect.X) / captureRect.Width * frameWidth,
+                (excludedRect.Y - captureRect.Y) / captureRect.Height * frameHeight,
+                excludedRect.Width / captureRect.Width * frameWidth,
+                excludedRect.Height / captureRect.Height * frameHeight));
+        }
+
+        return excludedRects;
+    }
+
+    private static bool IsInExcludedRegion(Rect lineRect, IReadOnlyList<Rect> excludedRects)
+    {
+        if (lineRect.Width <= 0 || lineRect.Height <= 0)
+        {
+            return false;
+        }
+
+        var lineArea = lineRect.Width * lineRect.Height;
+        var center = new Point(lineRect.Left + lineRect.Width / 2, lineRect.Top + lineRect.Height / 2);
+        foreach (var excludedRect in excludedRects)
+        {
+            if (excludedRect.Contains(center))
+            {
+                return true;
+            }
+
+            var intersection = lineRect;
+            intersection.Intersect(excludedRect);
+            if (!intersection.IsEmpty
+                && intersection.Width > 0
+                && intersection.Height > 0
+                && intersection.Width * intersection.Height / lineArea >= 0.5)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task HandleChatTranslationAsync(
@@ -485,6 +624,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     replacesChatLine: decisionForLine.Action == ChatFilterAction.Replace,
                     filterReason: replaced ? "User dictionary replacement then translated" : "Translated",
                     filterRule: "Translated",
+                    diagnosticSourceText: activeLine.Message,
                     translationRequestCount: usage.OutboundRequestCount,
                     translationCharacterCount: usage.OutboundCharacterCount,
                     totalTranslationRequestCount: totals.TotalRequests,
@@ -527,12 +667,13 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         string? filterReason = null,
         string? filterRule = null,
         IReadOnlyList<ScreenTranslationItem>? screenItems = null,
+        string? diagnosticSourceText = null,
         int translationRequestCount = 0,
         int translationCharacterCount = 0,
         int totalTranslationRequestCount = 0,
         int totalTranslationCharacterCount = 0,
         DiagnosticKind diagnosticKind = DiagnosticKind.Other) =>
-        Updated?.Invoke(this, new SessionUpdate(status, source, translated, isError, speaker, isChatLine, chatLineId, replacesChatLine, ocrRawText, filterReason, filterRule, screenItems, translationRequestCount, translationCharacterCount, totalTranslationRequestCount, totalTranslationCharacterCount, diagnosticKind));
+        Updated?.Invoke(this, new SessionUpdate(status, source, translated, isError, speaker, isChatLine, chatLineId, replacesChatLine, ocrRawText, filterReason, filterRule, screenItems, translationRequestCount, translationCharacterCount, totalTranslationRequestCount, totalTranslationCharacterCount, diagnosticSourceText, diagnosticKind));
 
     private static string Quote(string value) =>
         $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\r", string.Empty, StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}\"";

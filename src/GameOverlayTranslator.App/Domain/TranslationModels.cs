@@ -114,7 +114,8 @@ public sealed record SessionOptions(
     TimeSpan Interval,
     FilterSettings Filter,
     IReadOnlyList<UserDictEntry> UserDictionary,
-    TranslationMode Mode = TranslationMode.Chat);
+    TranslationMode Mode = TranslationMode.Chat,
+    IReadOnlyList<CaptureRegion>? ExcludedRegions = null);
 
 public sealed record SessionUpdate(
     string Status,
@@ -133,4 +134,5 @@ public sealed record SessionUpdate(
     int TranslationCharacterCount = 0,
     int TotalTranslationRequestCount = 0,
     int TotalTranslationCharacterCount = 0,
+    string? DiagnosticSourceText = null,
     DiagnosticKind DiagnosticKind = DiagnosticKind.Other);

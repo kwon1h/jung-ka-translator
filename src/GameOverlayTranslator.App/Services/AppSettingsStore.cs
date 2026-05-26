@@ -21,12 +21,14 @@ public sealed record AppSettings(
     string? LastWindowTitle = null,
     string? LastWindowProcessName = null,
     CaptureRegion? LastRegion = null,
+    CaptureRegion? LastExcludedRegion = null,
+    CaptureRegion? LastScreenExcludedRegion = null,
     TranslationDisplayMode DisplayMode = TranslationDisplayMode.Window,
-    string FontFamily = "Malgun Gothic",
-    double FontSize = 22,
+    string FontFamily = AppSettingsDefaults.PreferredFontFamily,
+    double FontSize = AppSettingsDefaults.DefaultFontSize,
     string TextColor = "#FFFFFF",
     string OutlineColor = "#000000",
-    double StrokeThickness = 0.3,
+    double StrokeThickness = AppSettingsDefaults.DefaultStrokeThickness,
     double OverlayOpacity = 0.92,
     string OverlayPreset = "기본",
     string OverlayBackgroundColor = "#99000000",
@@ -49,6 +51,15 @@ public sealed record AppSettings(
     bool ShowOverlayInScreenShare = false,
     int CaptureGeometryVersion = 2);
 
+public static class AppSettingsDefaults
+{
+    public const string PreferredFontFamily = "넥슨 카트 고딕 Kor Bold";
+    public const string LegacyFontFamily = "Malgun Gothic";
+    public const double DefaultFontSize = 25;
+    public const double DefaultStrokeThickness = 0.5;
+    public const double MaxStrokeThickness = 1.0;
+}
+
 public sealed class AppSettingsStore
 {
     private const int CurrentCaptureGeometryVersion = 2;
@@ -70,15 +81,19 @@ public sealed class AppSettingsStore
                 if (settings != null)
                 {
                     var legacyGeometry = !hasGeometryVersion || settings.CaptureGeometryVersion < CurrentCaptureGeometryVersion;
+                    var restoredRegion = legacyGeometry ? null : settings.LastRegion;
+                    var restoredExcludedRegion = legacyGeometry ? null : settings.LastExcludedRegion ?? settings.LastScreenExcludedRegion;
                     // Normalize settings to ensure default values are used for missing/invalid properties
                     return settings with
                     {
-                        LastRegion = legacyGeometry ? null : settings.LastRegion,
-                        FontFamily = string.IsNullOrWhiteSpace(settings.FontFamily) ? "Malgun Gothic" : settings.FontFamily,
-                        FontSize = settings.FontSize < 12 || settings.FontSize > 48 ? 22 : settings.FontSize,
+                        LastRegion = restoredRegion,
+                        LastExcludedRegion = restoredExcludedRegion,
+                        LastScreenExcludedRegion = null,
+                        FontFamily = string.IsNullOrWhiteSpace(settings.FontFamily) ? AppSettingsDefaults.PreferredFontFamily : settings.FontFamily,
+                        FontSize = settings.FontSize < 12 || settings.FontSize > 48 ? AppSettingsDefaults.DefaultFontSize : settings.FontSize,
                         TextColor = string.IsNullOrWhiteSpace(settings.TextColor) ? "#FFFFFF" : settings.TextColor,
                         OutlineColor = string.IsNullOrWhiteSpace(settings.OutlineColor) ? "#000000" : settings.OutlineColor,
-                        StrokeThickness = settings.StrokeThickness < 0 || settings.StrokeThickness > 8 ? 0.3 : settings.StrokeThickness,
+                        StrokeThickness = settings.StrokeThickness < 0 || settings.StrokeThickness > AppSettingsDefaults.MaxStrokeThickness ? AppSettingsDefaults.DefaultStrokeThickness : settings.StrokeThickness,
                         OverlayOpacity = settings.OverlayOpacity < 0.25 || settings.OverlayOpacity > 1 ? 0.92 : settings.OverlayOpacity,
                         OverlayPreset = string.IsNullOrWhiteSpace(settings.OverlayPreset) ? "기본" : settings.OverlayPreset,
                         OverlayBackgroundColor = string.IsNullOrWhiteSpace(settings.OverlayBackgroundColor) ? "#99000000" : settings.OverlayBackgroundColor,
