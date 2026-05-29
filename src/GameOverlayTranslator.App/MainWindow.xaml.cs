@@ -587,7 +587,7 @@ public partial class MainWindow : Window
         activeSessionMode = mode;
         ShowTranslationOutput(window, region, mode);
 
-        var filterSettings = new FilterSettings();
+        var filterSettings = settings.ToFilterSettings();
 
         var userDict = userDictStore.Load();
 
@@ -1380,7 +1380,7 @@ public partial class MainWindow : Window
         }
 
         var language = OcrLanguageComboBox.SelectedItem as OcrLanguage ?? OcrLanguages[0];
-        var filter = new FilterSettings();
+        var filter = settings.ToFilterSettings();
 
         var lines = ChatLineParser.Parse(raw);
         if (lines.Count == 0)
