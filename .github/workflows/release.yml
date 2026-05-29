@@ -24,17 +24,16 @@ jobs:
     - name: Restore Dependencies
       run: dotnet restore GameOverlayTranslator.sln
 
-    - name: Publish Single-File Executable
-      run: dotnet publish src/GameOverlayTranslator.App/GameOverlayTranslator.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -o publish/
+    - name: Run Regression Harness
+      run: dotnet run --project tests/GameOverlayTranslator.RegressionTests/GameOverlayTranslator.RegressionTests.csproj --configuration Release
 
-    - name: Create ZIP Archive
+    - name: Build Validated Release Executable
       shell: pwsh
-      run: |
-        Compress-Archive -Path publish/* -DestinationPath GameOverlayTranslator-win-x64.zip
+      run: ./scripts/build-release.ps1
 
-    - name: Create GitHub Release and Upload Assets
+    - name: Create GitHub Release and Upload Executable
       uses: softprops/action-gh-release@v2
       with:
-        files: GameOverlayTranslator-win-x64.zip
+        files: artifacts/release/GameOverlayTranslator.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
