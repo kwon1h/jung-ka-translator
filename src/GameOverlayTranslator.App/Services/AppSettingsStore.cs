@@ -11,6 +11,12 @@ public enum TranslationServiceType
     GoogleWebApp
 }
 
+public enum OcrEngineType
+{
+    Windows,
+    PaddleOCR
+}
+
 public enum TranslationDisplayMode
 {
     Window,
@@ -21,6 +27,8 @@ public sealed record AppSettings(
     string? LastWindowTitle = null,
     string? LastWindowProcessName = null,
     CaptureRegion? LastRegion = null,
+    CaptureRegion? LastChatRegion = null,
+    CaptureRegion? LastScreenRegion = null,
     CaptureRegion? LastExcludedRegion = null,
     CaptureRegion? LastScreenExcludedRegion = null,
     TranslationDisplayMode DisplayMode = TranslationDisplayMode.Window,
@@ -47,6 +55,7 @@ public sealed record AppSettings(
     string TargetLanguageCode = "ko",
     TranslationMode TranslationMode = TranslationMode.Chat,
     TranslationServiceType TranslatorType = TranslationServiceType.DeepL,
+    OcrEngineType OcrEngineType = OcrEngineType.Windows,
     string GoogleWebAppUrl = "",
     bool ShowOverlayInScreenShare = false,
     int CaptureGeometryVersion = 2);
@@ -82,11 +91,15 @@ public sealed class AppSettingsStore
                 {
                     var legacyGeometry = !hasGeometryVersion || settings.CaptureGeometryVersion < CurrentCaptureGeometryVersion;
                     var restoredRegion = legacyGeometry ? null : settings.LastRegion;
+                    var restoredChatRegion = legacyGeometry ? null : settings.LastChatRegion ?? settings.LastRegion;
+                    var restoredScreenRegion = legacyGeometry ? null : settings.LastScreenRegion;
                     var restoredExcludedRegion = legacyGeometry ? null : settings.LastExcludedRegion ?? settings.LastScreenExcludedRegion;
                     // Normalize settings to ensure default values are used for missing/invalid properties
                     return settings with
                     {
                         LastRegion = restoredRegion,
+                        LastChatRegion = restoredChatRegion,
+                        LastScreenRegion = restoredScreenRegion,
                         LastExcludedRegion = restoredExcludedRegion,
                         LastScreenExcludedRegion = null,
                         FontFamily = string.IsNullOrWhiteSpace(settings.FontFamily) ? AppSettingsDefaults.PreferredFontFamily : settings.FontFamily,
@@ -106,6 +119,7 @@ public sealed class AppSettingsStore
                         SimilarityCacheSeconds = settings.SimilarityCacheSeconds < 1 ? 12 : settings.SimilarityCacheSeconds,
                         OcrLanguageTag = string.IsNullOrWhiteSpace(settings.OcrLanguageTag) ? "zh-Hans" : settings.OcrLanguageTag,
                         TargetLanguageCode = string.IsNullOrWhiteSpace(settings.TargetLanguageCode) ? "ko" : settings.TargetLanguageCode,
+                        OcrEngineType = settings.OcrEngineType,
                         GoogleWebAppUrl = settings.GoogleWebAppUrl ?? string.Empty,
                         ShowOverlayInScreenShare = settings.ShowOverlayInScreenShare,
                         CaptureGeometryVersion = CurrentCaptureGeometryVersion

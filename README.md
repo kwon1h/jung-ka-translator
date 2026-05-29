@@ -20,8 +20,12 @@
 2. 다운로드한 압축 파일(`.zip`)을 원하는 폴더에 풉니다.
 
 ### 2. 실행하기
-1. 폴더 안에 있는 `GameOverlayTranslator.App.exe` (또는 `GameTranslator.exe`) 파일을 더블 클릭하여 실행합니다.
+1. 폴더 안에 있는 `GameOverlayTranslator.exe` 파일을 더블 클릭하여 실행합니다.
    - *참고: 처음 실행 시 윈도우 보안 경고(SmartScreen)가 뜰 경우, `추가 정보` 클릭 후 `실행`을 눌러주시면 됩니다.*
+
+## 🛠️ 빌드 및 산출물 관리
+
+개발 빌드, 테스트, 배포용 단일 exe 생성 방법은 [빌드 가이드](docs/BUILD.md)를 확인해 주세요. 최종 배포 산출물은 `artifacts/release/GameOverlayTranslator.exe` 하나로 관리합니다.
 
 ## 🌐 DeepL 번역 설정하기
 

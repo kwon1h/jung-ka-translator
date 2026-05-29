@@ -14,6 +14,9 @@ public sealed record ChatLine(string Speaker, string Message)
 
 public static partial class ChatLineParser
 {
+    private const int MinSpeakerLength = 2;
+    private const int MaxSpeakerLength = 24;
+
     private static readonly char[] Separators = [':', '\uFF1A'];
 
     public static IReadOnlyList<ChatLine> Parse(string ocrText)
@@ -26,32 +29,114 @@ public static partial class ChatLineParser
 
     private static IEnumerable<ChatLine> ParsePhysicalLine(string line)
     {
-        var userMatches = LatinSpeakerPattern()
-            .Matches(line)
-            .Where(match => match.Index == 0 || !IsSpeakerCharacter(line[match.Index - 1]))
-            .ToList();
-        if (userMatches.Count > 0)
+        var markers = FindSpeakerMarkers(line);
+        if (markers.Count > 0)
         {
-            for (var index = 0; index < userMatches.Count; index++)
+            foreach (var chatLine in BuildLines(line, markers))
             {
-                var match = userMatches[index];
-                var nextMatchStart = index + 1 < userMatches.Count ? userMatches[index + 1].Index : line.Length;
-                var speaker = match.Groups["speaker"].Value.Trim();
-                var messageStart = match.Index + match.Length;
-                var message = line[messageStart..nextMatchStart].Trim();
-                if (!string.IsNullOrWhiteSpace(speaker) && !string.IsNullOrWhiteSpace(message))
-                {
-                    yield return new ChatLine(speaker, message);
-                }
+                yield return chatLine;
             }
+
             yield break;
         }
 
         var fallback = ParseFirstSeparator(line);
         if (fallback is not null)
         {
-            yield return fallback;
+            foreach (var chatLine in SplitEmbeddedSpeakerMarkers(fallback))
+            {
+                yield return chatLine;
+            }
         }
+    }
+
+    private static IReadOnlyList<SpeakerMarker> FindSpeakerMarkers(string line, bool allowEmbeddedFirst = false)
+    {
+        var markers = new List<SpeakerMarker>();
+        foreach (Match match in SpeakerMarkerPattern().Matches(line))
+        {
+            var speakerGroup = match.Groups["speaker"];
+            var separatorGroup = match.Groups["separator"];
+            var speaker = speakerGroup.Value.Trim();
+            if (!IsValidSpeaker(speaker) || !HasFollowingMessage(line, separatorGroup.Index + separatorGroup.Length))
+            {
+                continue;
+            }
+
+            var marker = new SpeakerMarker(speakerGroup.Index, separatorGroup.Index + separatorGroup.Length, speaker);
+            if (!CanAcceptMarker(line, markers, marker, allowEmbeddedFirst))
+            {
+                continue;
+            }
+
+            markers.Add(marker);
+        }
+
+        return markers;
+    }
+
+    private static bool CanAcceptMarker(
+        string line,
+        IReadOnlyList<SpeakerMarker> acceptedMarkers,
+        SpeakerMarker marker,
+        bool allowEmbeddedFirst)
+    {
+        if (acceptedMarkers.Count == 0)
+        {
+            if (marker.SpeakerStart == 0 || string.IsNullOrWhiteSpace(line[..marker.SpeakerStart]))
+            {
+                return true;
+            }
+
+            return allowEmbeddedFirst
+                && !char.IsWhiteSpace(line[marker.SpeakerStart - 1])
+                && !string.IsNullOrWhiteSpace(line[..marker.SpeakerStart]);
+        }
+
+        var previous = acceptedMarkers[^1];
+        return !string.IsNullOrWhiteSpace(line[previous.MessageStart..marker.SpeakerStart])
+            && !char.IsWhiteSpace(line[marker.SpeakerStart - 1]);
+    }
+
+    private static IEnumerable<ChatLine> BuildLines(string line, IReadOnlyList<SpeakerMarker> markers)
+    {
+        for (var index = 0; index < markers.Count; index++)
+        {
+            var marker = markers[index];
+            var nextMarkerStart = index + 1 < markers.Count ? markers[index + 1].SpeakerStart : line.Length;
+            var message = line[marker.MessageStart..nextMarkerStart].Trim();
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                yield return new ChatLine(marker.Speaker, message);
+            }
+        }
+    }
+
+    private static IReadOnlyList<ChatLine> SplitEmbeddedSpeakerMarkers(ChatLine line)
+    {
+        var markers = FindSpeakerMarkers(line.Message, allowEmbeddedFirst: true);
+        if (markers.Count == 0)
+        {
+            return [line];
+        }
+
+        var firstMessage = line.Message[..markers[0].SpeakerStart].Trim();
+        if (string.IsNullOrWhiteSpace(firstMessage))
+        {
+            LogUncertainEmbeddedSplit(line);
+            return [line];
+        }
+
+        var splitLines = new List<ChatLine> { new(line.Speaker, firstMessage) };
+        var embeddedLines = BuildLines(line.Message, markers).ToList();
+        if (embeddedLines.Count != markers.Count)
+        {
+            LogUncertainEmbeddedSplit(line);
+            return [line];
+        }
+
+        splitLines.AddRange(embeddedLines);
+        return splitLines;
     }
 
     private static ChatLine? ParseFirstSeparator(string line)
@@ -82,11 +167,23 @@ public static partial class ChatLineParser
         return string.IsNullOrWhiteSpace(speaker) ? trimmed : speaker;
     }
 
+    private static bool IsValidSpeaker(string value) =>
+        value.Length is >= MinSpeakerLength and <= MaxSpeakerLength
+        && value.Any(character => char.IsLetterOrDigit(character) || IsHan(character));
+
+    private static bool HasFollowingMessage(string line, int messageStart) =>
+        messageStart < line.Length && !string.IsNullOrWhiteSpace(line[messageStart..]);
+
+    private static void LogUncertainEmbeddedSplit(ChatLine line) =>
+        AppLog.Write($"ChatLineParser kept uncertain embedded speaker marker. Speaker={line.Speaker} MessageLength={line.Message.Length}");
+
     private static bool IsSpeakerCharacter(char value) =>
-        char.IsLetterOrDigit(value) || IsHan(value) || value is '_' or '-' or '.' || char.IsWhiteSpace(value);
+        char.IsLetterOrDigit(value) || IsHan(value) || value is '_' or '-' or '.' or '=' or '|' || char.IsWhiteSpace(value);
 
     private static bool IsHan(char value) => value is >= '\u3400' and <= '\u9FFF';
 
-    [GeneratedRegex(@"(?<speaker>[A-Za-z0-9_.-]{2,24})\s*[:\uFF1A]", RegexOptions.CultureInvariant)]
-    private static partial Regex LatinSpeakerPattern();
+    private readonly record struct SpeakerMarker(int SpeakerStart, int MessageStart, string Speaker);
+
+    [GeneratedRegex(@"(?<speaker>[A-Za-z0-9_.=\-|\u00C0-\u024F][A-Za-z0-9_.=\-| \p{L}\p{Nd}]{1,23})\s*(?<separator>[:\uFF1A])", RegexOptions.CultureInvariant)]
+    private static partial Regex SpeakerMarkerPattern();
 }

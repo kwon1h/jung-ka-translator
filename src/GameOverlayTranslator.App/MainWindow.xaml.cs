@@ -19,6 +19,17 @@ public partial class MainWindow : Window
         public override string ToString() => Name;
     }
 
+    private sealed record OcrEngineChoice(OcrEngineType Engine, string Name)
+    {
+        public override string ToString() => Name;
+    }
+
+    private static readonly IReadOnlyList<OcrEngineChoice> OcrEngines =
+    [
+        new(OcrEngineType.Windows, "Windows OCR (기본)"),
+        new(OcrEngineType.PaddleOCR, "PaddleOCR (OpenVINO)")
+    ];
+
     private sealed record ColorChoice(string Hex, string Name)
     {
         public Brush HexBrush { get; } = CreateFrozenBrush(Hex);
@@ -96,7 +107,10 @@ public partial class MainWindow : Window
     ];
     private readonly IWindowSource windowSource = new Win32WindowSource();
     private readonly ICaptureService dictionaryCaptureService = new WindowCaptureService();
-    private readonly IOcrEngine dictionaryOcrEngine = new WindowsOcrEngine();
+    private readonly WindowsOcrEngine windowsOcrEngine = new();
+    private readonly PaddleOcrEngine paddleOcrEngine = new();
+    private readonly IOcrEngine delegatingOcrEngine;
+    private readonly IOcrEngine dictionaryOcrEngine;
     private static readonly CaptureRegion FullWindowRegion = new(0, 0, 1, 1);
     private readonly ApiKeyStore apiKeyStore = new();
     private readonly AppSettingsStore settingsStore = new();
@@ -105,7 +119,23 @@ public partial class MainWindow : Window
     private AppSettings settings;
     private ResultWindow? resultWindow;
     private OverlayWindow? overlayWindow;
-    private CaptureRegion? selectedRegion;
+    private CaptureRegion? selectedChatRegion;
+    private CaptureRegion? selectedScreenRegion;
+    private CaptureRegion? SelectedRegion
+    {
+        get => ScreenTranslationRadioButton?.IsChecked == true ? selectedScreenRegion : selectedChatRegion;
+        set
+        {
+            if (ScreenTranslationRadioButton?.IsChecked == true)
+            {
+                selectedScreenRegion = value;
+            }
+            else
+            {
+                selectedChatRegion = value;
+            }
+        }
+    }
     private CaptureRegion? excludedRegion;
     private CaptureRegion? activeSessionRegion;
     private TranslationMode? activeSessionMode;
@@ -122,16 +152,22 @@ public partial class MainWindow : Window
     {
         settings = settingsStore.Load();
         InitializeComponent();
+        delegatingOcrEngine = new DelegatingOcrEngine(() => settings.OcrEngineType, windowsOcrEngine, paddleOcrEngine);
+        dictionaryOcrEngine = delegatingOcrEngine;
         var delegator = new TranslationServiceDelegator(
             httpClient,
             () => ApiKeyPasswordBox.Password,
             () => settings
         );
         var cachingTranslationService = new CachingTranslationService(delegator, new ScreenTranslationCacheStore());
-        session = new TranslationSession(new WindowCaptureService(), new WindowsOcrEngine(), cachingTranslationService);
+        session = new TranslationSession(new WindowCaptureService(), delegatingOcrEngine, cachingTranslationService);
         session.BeforeCaptureAsync = SetOverlayCaptureVisibilityAsync(false);
         session.AfterCaptureAsync = SetOverlayCaptureVisibilityAsync(true);
         session.Updated += SessionUpdated;
+
+        OcrEngineComboBox.ItemsSource = OcrEngines;
+        OcrEngineComboBox.SelectedItem = OcrEngines.FirstOrDefault(e => e.Engine == settings.OcrEngineType) ?? OcrEngines[0];
+
         OcrLanguageComboBox.ItemsSource = OcrLanguages;
         var selectedOcr = OcrLanguages.FirstOrDefault(l => string.Equals(l.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase)) ?? OcrLanguages[0];
         OcrLanguageComboBox.SelectedItem = selectedOcr;
@@ -143,7 +179,7 @@ public partial class MainWindow : Window
         OverlayPresetComboBox.ItemsSource = OverlayPresets;
         OverlayPresetComboBox.SelectedItem = OverlayPresets.FirstOrDefault(preset => preset.Name == settings.OverlayPreset) ?? OverlayPresets[0];
         ApiKeyPasswordBox.Password = apiKeyStore.Load() ?? string.Empty;
-        RestoreRegion(settings.LastRegion);
+        RestoreRegions(settings.LastChatRegion, settings.LastScreenRegion);
         RestoreExcludedRegion(settings.LastExcludedRegion);
         UpdateRegionButtonVisual();
         DisplayModeComboBox.SelectedItem = DisplayModes.First(mode => mode.Mode == settings.DisplayMode);
@@ -322,7 +358,8 @@ public partial class MainWindow : Window
         if (!string.Equals(window.Title, settings.LastWindowTitle, StringComparison.CurrentCulture)
             || !string.Equals(window.ProcessName, settings.LastWindowProcessName, StringComparison.OrdinalIgnoreCase))
         {
-            selectedRegion = null;
+            selectedChatRegion = null;
+            selectedScreenRegion = null;
             excludedRegion = null;
             RegionText.Text = "선택되지 않음";
             ScreenExcludeRegionText.Text = "선택되지 않음";
@@ -343,7 +380,7 @@ public partial class MainWindow : Window
     private void UpdateTranslationModeUI()
     {
         SelectRegionButton.IsEnabled = true;
-        if (selectedRegion is { } r)
+        if (SelectedRegion is { } r)
         {
             ShowRegion(r);
         }
@@ -358,7 +395,7 @@ public partial class MainWindow : Window
 
         if (ClearRegionButton != null)
         {
-            ClearRegionButton.IsEnabled = selectedRegion is not null;
+            ClearRegionButton.IsEnabled = SelectedRegion is not null;
         }
 
         UpdateRegionButtonVisual();
@@ -414,6 +451,17 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OcrEngineSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (settings == null) return;
+        if (OcrEngineComboBox.SelectedItem is OcrEngineChoice choice)
+        {
+            settings = settings with { OcrEngineType = choice.Engine };
+            settingsStore.Save(settings);
+            SetStatus($"OCR 엔진이 {choice.Name}으로 변경되었습니다.");
+        }
+    }
+
     private void TargetLanguageSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (settings == null) return;
@@ -434,7 +482,7 @@ public partial class MainWindow : Window
         var picker = new RegionSelectionWindow(window) { Owner = this };
         if (picker.ShowDialog() == true && picker.Region is { } region)
         {
-            selectedRegion = region;
+            SelectedRegion = region;
             ShowRegion(region);
             SaveSelection(window, region);
             SetStatus("번역 영역을 선택했습니다.");
@@ -445,8 +493,15 @@ public partial class MainWindow : Window
 
     private void ClearRegion(object sender, RoutedEventArgs e)
     {
-        selectedRegion = null;
-        settings = settings with { LastRegion = null };
+        SelectedRegion = null;
+        if (ScreenTranslationRadioButton.IsChecked == true)
+        {
+            settings = settings with { LastScreenRegion = null };
+        }
+        else
+        {
+            settings = settings with { LastChatRegion = null, LastRegion = null };
+        }
         settingsStore.Save(settings);
         UpdateTranslationModeUI();
         SetStatus(settings.TranslationMode == TranslationMode.Screen
@@ -507,11 +562,11 @@ public partial class MainWindow : Window
         CaptureRegion region;
         if (mode == TranslationMode.Screen)
         {
-            region = selectedRegion ?? FullWindowRegion;
+            region = SelectedRegion ?? FullWindowRegion;
         }
         else
         {
-            if (selectedRegion is not { } r)
+            if (SelectedRegion is not { } r)
             {
                 SetStatus("번역 영역을 먼저 선택하세요.", true);
                 return;
@@ -548,7 +603,7 @@ public partial class MainWindow : Window
             excludedRegion is not null ? [excludedRegion.Value] : null),
             sessionCancellation.Token);
 
-        if (selectedRegion is not null)
+        if (SelectedRegion is not null)
         {
             SaveSelection(window, region);
         }
@@ -578,7 +633,7 @@ public partial class MainWindow : Window
         resultWindow?.Apply(update);
         if (overlayWindow is not null && WindowComboBox.SelectedItem is CapturableWindow window)
         {
-            var region = activeSessionRegion ?? selectedRegion ?? FullWindowRegion;
+            var region = activeSessionRegion ?? SelectedRegion ?? FullWindowRegion;
             var mode = activeSessionMode ?? settings.TranslationMode;
             overlayWindow.PositionOver(window, region);
             overlayWindow.CurrentMode = mode;
@@ -674,6 +729,10 @@ public partial class MainWindow : Window
             resultWindow.Close();
         }
         overlayWindow?.Close();
+        if (delegatingOcrEngine is IDisposable disposableEngine)
+        {
+            disposableEngine.Dispose();
+        }
     }
 
     private void SetStatus(string status, bool isError = false)
@@ -744,15 +803,16 @@ public partial class MainWindow : Window
                    string.Equals(window.Title, settings.LastWindowTitle, StringComparison.CurrentCulture));
     }
 
-    private void RestoreRegion(CaptureRegion? region)
+    private void RestoreRegions(CaptureRegion? chatRegion, CaptureRegion? screenRegion)
     {
-        if (region is not { Width: > 0, Height: > 0 } restored)
+        if (chatRegion is { Width: > 0, Height: > 0 } restoredChat)
         {
-            return;
+            selectedChatRegion = restoredChat;
         }
-
-        selectedRegion = restored;
-        ShowRegion(restored);
+        if (screenRegion is { Width: > 0, Height: > 0 } restoredScreen)
+        {
+            selectedScreenRegion = restoredScreen;
+        }
     }
 
     private void RestoreExcludedRegion(CaptureRegion? region)
@@ -791,7 +851,7 @@ public partial class MainWindow : Window
 
     private void UpdateRegionButtonVisual()
     {
-        if (selectedRegion == null && ChatTranslationRadioButton.IsChecked == true)
+        if (SelectedRegion == null && ChatTranslationRadioButton.IsChecked == true)
         {
             SelectRegionButton.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E65F2B"));
             SelectRegionButton.Foreground = Brushes.White;

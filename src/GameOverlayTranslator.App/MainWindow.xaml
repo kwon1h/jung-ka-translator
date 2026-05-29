@@ -226,6 +226,9 @@
                                         <TextBlock x:Name="ScreenExcludeRegionText" Grid.Column="2" Margin="12,8,0,0" Text="선택되지 않음" TextWrapping="Wrap" Foreground="#4B5563" FontWeight="Medium" />
                                     </Grid>
                                     
+                                    <TextBlock Text="OCR 엔진" FontWeight="SemiBold" Foreground="#374151" FontSize="12" />
+                                    <ComboBox x:Name="OcrEngineComboBox" Margin="0,6,0,12" MinHeight="34" SelectionChanged="OcrEngineSelectionChanged" />
+                                    
                                     <Grid Margin="0,0,0,12">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
