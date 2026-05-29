@@ -4,6 +4,7 @@
         xmlns:local="clr-namespace:GameOverlayTranslator.App"
         Title="중카 번역기 (Game OCR Translator)" Height="650" Width="820" MinHeight="620" MinWidth="800"
         Loaded="MainWindowLoaded"
+        PreviewKeyDown="OnPreviewKeyDown"
         Background="#F5F6F8">
     <Window.Resources>
         <!-- Modern Rounded Button Style -->
