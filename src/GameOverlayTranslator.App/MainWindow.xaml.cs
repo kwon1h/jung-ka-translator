@@ -838,7 +838,9 @@ public partial class MainWindow : Window
 
     private void SaveSelection(CapturableWindow window, CaptureRegion region)
     {
-        settings = settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName, LastRegion = region };
+        settings = ScreenTranslationRadioButton.IsChecked == true
+            ? settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName, LastScreenRegion = region }
+            : settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName, LastRegion = region, LastChatRegion = region };
         settingsStore.Save(settings);
     }
 
