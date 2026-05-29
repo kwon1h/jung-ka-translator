@@ -61,17 +61,17 @@ public sealed record AppSettings(
     int CaptureGeometryVersion = 2)
 {
     public FilterSettings ToFilterSettings() => new(
-        EnableLengthFilter,
-        MinMessageLength,
-        MaxMessageLength,
-        EnableNoiseFilter,
-        MaxNoiseTokenCount,
-        EnableSeparatorFilter,
-        MaxSeparatorsCount,
-        EnableSimilarityFilter,
-        SimilarityThreshold,
-        ReplacementSimilarityThreshold,
-        SimilarityCacheSeconds);
+        EnableLengthFilter: EnableLengthFilter,
+        MinMessageLength: MinMessageLength,
+        MaxMessageLength: MaxMessageLength,
+        EnableNoiseFilter: EnableNoiseFilter,
+        MaxNoiseTokenCount: MaxNoiseTokenCount,
+        EnableSeparatorFilter: EnableSeparatorFilter,
+        MaxSeparatorsCount: MaxSeparatorsCount,
+        EnableSimilarityFilter: EnableSimilarityFilter,
+        SimilarityThreshold: SimilarityThreshold,
+        ReplacementSimilarityThreshold: ReplacementSimilarityThreshold,
+        SimilarityCacheSeconds: SimilarityCacheSeconds);
 }
 
 public static class AppSettingsDefaults

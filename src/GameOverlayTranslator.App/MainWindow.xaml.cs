@@ -484,7 +484,8 @@ public partial class MainWindow : Window
         {
             SelectedRegion = region;
             ShowRegion(region);
-            SaveSelection(window, region);
+            var mode = ScreenTranslationRadioButton.IsChecked == true ? TranslationMode.Screen : TranslationMode.Chat;
+            SaveSelection(window, region, mode);
             SetStatus("번역 영역을 선택했습니다.");
             UpdateTranslationModeUI();
             UpdateRegionButtonVisual();
@@ -605,7 +606,7 @@ public partial class MainWindow : Window
 
         if (SelectedRegion is not null)
         {
-            SaveSelection(window, region);
+            SaveSelection(window, region, mode);
         }
         else
         {
@@ -836,9 +837,9 @@ public partial class MainWindow : Window
         ScreenExcludeRegionText.Text = $"{region.X:P0}, {region.Y:P0} / {region.Width:P0} x {region.Height:P0}";
     }
 
-    private void SaveSelection(CapturableWindow window, CaptureRegion region)
+    private void SaveSelection(CapturableWindow window, CaptureRegion region, TranslationMode mode)
     {
-        settings = ScreenTranslationRadioButton.IsChecked == true
+        settings = mode == TranslationMode.Screen
             ? settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName, LastScreenRegion = region }
             : settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName, LastRegion = region, LastChatRegion = region };
         settingsStore.Save(settings);
