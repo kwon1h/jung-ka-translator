@@ -1,63 +1,45 @@
-# 🎮 게임 화면 실시간 번역기 (Game Overlay Translator)
+# 중카 번역기
 
-게임 속 외국어 대사나 시스템 메시지를 화면 위에 한글로 바로 번역해서 띄워주는 편리한 도구입니다. 복잡한 설정 없이 실행만 하면 게임 화면 위에 번역창이 나타납니다.
+중국 카트라이더 화면의 채팅과 화면 문구를 OCR로 읽어 한국어로 번역하는 Windows용 오버레이 번역기입니다.
 
-![번역기 작동 예시 이미지](docs/ui-preview.png)
+![중카 번역기 미리보기](docs/ui-preview.png)
 
-## ✨ 이런 기능이 있어요!
+## 기능
 
-- **실시간 화면 번역**: 게임 화면에 나오는 외국어(영어, 일본어, 중국어 등)를 자동으로 읽어 한국어로 번역합니다.
-- **게임 화면을 가리지 않는 디자인**: 글자 뒷배경이 투명하게 처리되어 게임 몰입을 방해하지 않습니다.
-- **원하는 영역만 번역**: 마우스 드래그로 번역하고 싶은 위치를 자유롭게 지정할 수 있습니다.
-- **간편한 단축키**: 마우스 조작 없이 키보드 단축키로 번역 영역을 빠르게 바꾸거나 번역 창을 숨길 수 있습니다.
+- [번역 모드](docs/features/번역모드.md): [채팅 번역](docs/features/번역모드.md#채팅-번역), [전체화면 번역](docs/features/번역모드.md#전체화면-번역), [영역 선택과 제외 영역](docs/features/번역모드.md#영역-선택과-제외-영역)
+- [OCR 엔진](docs/features/OCR엔진.md): [Windows OCR](docs/features/OCR엔진.md#windows-ocr), [PaddleOCR(OpenVINO)](docs/features/OCR엔진.md#paddleocropenvino), [엔진 선택 기준](docs/features/OCR엔진.md#엔진-선택-기준)
+- [번역 서비스](docs/features/번역서비스.md): [DeepL API](docs/features/번역서비스.md#deepl-api-추천), [Google 비공식 API](docs/features/번역서비스.md#google-번역-비공식-api), [Google Apps Script](docs/features/번역서비스.md#google-apps-script)
+- [유저 사전](docs/features/유저사전.md): [직접 추가](docs/features/유저사전.md#직접-추가), [화면 OCR로 채우기](docs/features/유저사전.md#화면-ocr로-채우기), [저장 위치](docs/features/유저사전.md#저장-위치)
 
-## 🚀 설치 및 실행 방법
+전체 목차는 [기능 가이드](docs/FEATURES.md)를 참고하세요.
 
-개발 지식이 없어도 아래 순서대로 따라 하시면 바로 사용하실 수 있습니다.
+## 설치
 
-### 1. 프로그램 다운로드
-1. 우측의 **Releases** 메뉴에서 가장 최신 버전의 파일을 다운로드합니다.
-2. 다운로드한 압축 파일(`.zip`)을 원하는 폴더에 풉니다.
+1. [Releases](https://github.com/kwon1h/jung-ka-translator/releases)에서 최신 파일을 받습니다.
+2. 압축을 풉니다.
+3. `GameOverlayTranslator.exe`를 실행합니다.
 
-### 2. 실행하기
-1. 폴더 안에 있는 `GameOverlayTranslator.exe` 파일을 더블 클릭하여 실행합니다.
-   - *참고: 처음 실행 시 윈도우 보안 경고(SmartScreen)가 뜰 경우, `추가 정보` 클릭 후 `실행`을 눌러주시면 됩니다.*
+## 사용법
 
-## 🛠️ 빌드 및 산출물 관리
+1. 게임을 창모드 또는 테두리 없는 전체화면으로 실행합니다.
+2. 번역할 게임 창을 선택합니다.
+3. `채팅 번역` 또는 `전체화면 번역`을 선택합니다.
+4. `영역 선택`으로 번역할 영역을 지정합니다.
+5. 번역 서비스와 OCR 엔진을 확인합니다.
+6. `번역 시작`을 누릅니다.
 
-개발 빌드, 테스트, 배포용 단일 exe 생성 방법은 [빌드 가이드](docs/BUILD.md)를 확인해 주세요. 최종 배포 산출물은 `artifacts/release/GameOverlayTranslator.exe` 하나로 관리합니다.
+독점 전체화면에서는 오버레이가 보이지 않을 수 있습니다.
 
-## 🌐 DeepL 번역 설정하기
+## 개발
 
-이 프로그램은 더 자연스럽고 정확한 번역을 위해 **DeepL 번역 서비스**를 연동하여 사용할 수 있습니다. 무료로 API 키를 발급받아 설정하는 방법은 다음과 같습니다.
+```powershell
+dotnet build src\GameOverlayTranslator.App\GameOverlayTranslator.App.csproj
+dotnet run --project tests\GameOverlayTranslator.RegressionTests\GameOverlayTranslator.RegressionTests.csproj
+.\scripts\build-release.ps1
+```
 
-### 1. DeepL API 키 발급받기
-1. [DeepL 개발자 포털](https://www.deepl.com/pro-api)에 접속하여 회원가입을 진행합니다. (무료 플랜인 **API Free**를 선택하시면 매달 50만 자까지 무료로 번역할 수 있습니다.)
-2. 가입 완료 후 [DeepL 계정 관리 페이지](https://www.deepl.com/your-account/keys)로 이동합니다.
-3. **'인증 키 (Authentication Key)'** 영역에 있는 영문과 숫자로 된 긴 키 값을 복사합니다. 
-   *(예시: `df45xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx`)*
+자세한 내용은 [빌드 가이드](docs/BUILD.md)를 참고하세요.
 
-### 2. 프로그램에 API 키 등록하기
-1. 프로그램을 실행합니다.
-2. 프로그램 설정 화면 또는 API 설정 메뉴에서 번역 서비스로 **'DeepL'**을 선택합니다.
-3. 복사한 API 키를 **'DeepL API Key'** 입력란에 붙여넣기(Ctrl + V)한 뒤 저장합니다.
+## License
 
-## 💻 사용 방법
-
-번역기를 켜고 게임을 더 즐겁게 즐기는 방법입니다.
-
-- **게임 설정 변경**: 번역할 게임의 화면 설정을 **'창 모드'** 또는 **'테두리 없는 전체화면(창 모드 전체화면)'**으로 설정해 주세요. *(전체 화면 모드에서는 번역 창이 보이지 않을 수 있습니다.)*
-- **번역 영역 지정**: 키보드에서 `Ctrl + Shift + T`를 누르면 화면이 흐려집니다. 이때 번역하고 싶은 글자 영역을 마우스로 드래그해 주세요.
-- **번역 확인**: 드래그한 영역 위에 투명한 번역 창이 생성되며 실시간으로 한글 번역이 시작됩니다.
-- **번역 종료/숨기기**: 번역창의 우측 상단 `X` 버튼을 누르거나, 다시 단축키를 누르면 번역 영역이 초기화됩니다.
-
-## ❓ 자주 묻는 질문 (FAQ)
-
-**Q. 번역 창이 게임 화면 뒤로 숨어서 안 보여요.**
-> 게임이 '전체 화면'으로 설정되어 있으면 번역기가 게임 화면에 가려집니다. 게임 내 그래픽 설정에서 반드시 **'창 모드'** 또는 **'전체 창 모드'**로 변경해 주세요.
-
-**Q. 글씨를 엉뚱하게 인식하거나 번역이 이상해요.**
-> 번역 영역을 지정할 때 글씨 주변의 배경이나 UI 데코레이션이 최대한 덜 들어가도록 **글씨 영역만 정확하게 드래그**해 주시면 인식률이 훨씬 올라갑니다.
-
-**Q. 실행이 안 되거나 오류가 발생해요.**
-> 프로그램 사용 중 버그나 실행 오류를 발견하시면 [문의하기 페이지](https://github.com/kwon1h/jung-ka-translator/issues)에 어떤 현상인지 적어서 남겨주시면 빠르게 해결해 드리겠습니다.
+MIT License. See [LICENSE](LICENSE).
