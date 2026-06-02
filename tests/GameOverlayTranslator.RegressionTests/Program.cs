@@ -15,6 +15,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Concatenated chat does not translate embedded speaker", TestConcatenatedChatDoesNotTranslateEmbeddedSpeaker),
     ("User dictionary CSV round trip", TestUserDictionaryCsvRoundTrip),
     ("Overlay defaults are readable", TestOverlayDefaults),
+    ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
     ("Dictionary screen line skips API", TestDictionaryOnlyScreenLineSkipsTranslation),
     ("Rejected chat does not poison duplicate cache", TestRejectedChatDoesNotPoisonExactDuplicateCache),
@@ -167,6 +168,37 @@ static Task TestOverlayDefaults()
     Assert(settings.TextColor == "#FFFFFF", "Default text color should be white.");
     Assert(settings.OutlineColor == "#000000", "Default outline should be black.");
     Assert(settings.StrokeThickness == AppSettingsDefaults.DefaultStrokeThickness, "Default outline thickness should be 0.5px.");
+    return Task.CompletedTask;
+}
+
+static Task TestAppSettingsMapsPersistedFilters()
+{
+    var settings = new AppSettings(
+        EnableLengthFilter: false,
+        MinMessageLength: 5,
+        MaxMessageLength: 48,
+        EnableNoiseFilter: false,
+        MaxNoiseTokenCount: 7,
+        EnableSeparatorFilter: false,
+        MaxSeparatorsCount: 2,
+        EnableSimilarityFilter: false,
+        SimilarityThreshold: 0.31,
+        ReplacementSimilarityThreshold: 0.64,
+        SimilarityCacheSeconds: 27);
+
+    var filter = settings.ToFilterSettings();
+
+    Assert(!filter.EnableLengthFilter, "Length filter setting was not mapped.");
+    Assert(filter.MinMessageLength == 5, "Minimum message length was not mapped.");
+    Assert(filter.MaxMessageLength == 48, "Maximum message length was not mapped.");
+    Assert(!filter.EnableNoiseFilter, "Noise filter setting was not mapped.");
+    Assert(filter.MaxNoiseTokenCount == 7, "Maximum noise token count was not mapped.");
+    Assert(!filter.EnableSeparatorFilter, "Separator filter setting was not mapped.");
+    Assert(filter.MaxSeparatorsCount == 2, "Maximum separator count was not mapped.");
+    Assert(!filter.EnableSimilarityFilter, "Similarity filter setting was not mapped.");
+    Assert(filter.SimilarityThreshold == 0.31, "Similarity threshold was not mapped.");
+    Assert(filter.ReplacementSimilarityThreshold == 0.64, "Replacement similarity threshold was not mapped.");
+    Assert(filter.SimilarityCacheSeconds == 27, "Similarity cache seconds was not mapped.");
     return Task.CompletedTask;
 }
 
