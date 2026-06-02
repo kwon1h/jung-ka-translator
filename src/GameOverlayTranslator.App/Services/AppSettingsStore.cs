@@ -58,7 +58,21 @@ public sealed record AppSettings(
     OcrEngineType OcrEngineType = OcrEngineType.Windows,
     string GoogleWebAppUrl = "",
     bool ShowOverlayInScreenShare = false,
-    int CaptureGeometryVersion = 2);
+    int CaptureGeometryVersion = 2)
+{
+    public FilterSettings ToFilterSettings() => new(
+        EnableLengthFilter: EnableLengthFilter,
+        MinMessageLength: MinMessageLength,
+        MaxMessageLength: MaxMessageLength,
+        EnableNoiseFilter: EnableNoiseFilter,
+        MaxNoiseTokenCount: MaxNoiseTokenCount,
+        EnableSeparatorFilter: EnableSeparatorFilter,
+        MaxSeparatorsCount: MaxSeparatorsCount,
+        EnableSimilarityFilter: EnableSimilarityFilter,
+        SimilarityThreshold: SimilarityThreshold,
+        ReplacementSimilarityThreshold: ReplacementSimilarityThreshold,
+        SimilarityCacheSeconds: SimilarityCacheSeconds);
+}
 
 public static class AppSettingsDefaults
 {
