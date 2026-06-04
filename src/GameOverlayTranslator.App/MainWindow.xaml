@@ -4,7 +4,6 @@
         xmlns:local="clr-namespace:GameOverlayTranslator.App"
         Title="중카 번역기 (Game OCR Translator)" Height="650" Width="820" MinHeight="620" MinWidth="800"
         Loaded="MainWindowLoaded"
-        PreviewKeyDown="OnPreviewKeyDown"
         Background="#F5F6F8">
     <Window.Resources>
         <!-- Modern Rounded Button Style -->
@@ -623,6 +622,16 @@
                             <TextBlock Text="API 사용량:" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#4B5563" />
                             <TextBlock x:Name="ApiUsageText" Grid.Column="1" Margin="8,0,0,0" Text="이번 세션 0건 / 0자" VerticalAlignment="Center" Foreground="#4B5563" />
                         </Grid>
+                        <Border Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="10" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="시작 전 준비" FontSize="12" FontWeight="Bold" Foreground="#374151" Margin="0,0,0,6" />
+                                <TextBlock x:Name="ReadyWindowText" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,4" />
+                                <TextBlock x:Name="ReadyRegionText" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,4" />
+                                <TextBlock x:Name="ReadyOcrText" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,4" />
+                                <TextBlock x:Name="ReadyTranslatorText" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,4" />
+                                <TextBlock x:Name="ReadyDictionaryText" TextWrapping="Wrap" FontSize="12" />
+                            </StackPanel>
+                        </Border>
                         <Button x:Name="StartStopButton" Height="40" Content="번역 시작" Click="ToggleSession" FontSize="14" FontWeight="Bold" Background="#2563EB" Foreground="White" BorderThickness="0" />
                     </StackPanel>
                 </Border>

@@ -49,6 +49,8 @@ public partial class MainWindow : Window
         public override string ToString() => Name;
     }
 
+    private sealed record ReadinessItem(TextBlock? Target, bool IsReady, string ReadyText, string MissingText);
+
     private static readonly IReadOnlyList<OcrLanguage> OcrLanguages = [new("zh-Hans", "중국어(간체)"), new("ja", "일본어")];
     private static readonly IReadOnlyList<TranslationLanguage> TargetLanguages = [new("ko", "한국어")];
     private static readonly IReadOnlyList<DisplayModeChoice> DisplayModes =
@@ -281,6 +283,7 @@ public partial class MainWindow : Window
             ?? FindKartWindow(windows)
             ?? windows.FirstOrDefault();
         SetStatus(windows.Count == 0 ? "선택 가능한 창이 없습니다." : "게임 창을 선택하세요.");
+        UpdateStartReadiness();
     }
 
     private void SaveApiKey(object sender, RoutedEventArgs e)
@@ -292,6 +295,7 @@ public partial class MainWindow : Window
         }
         apiKeyStore.Save(ApiKeyPasswordBox.Password);
         SetStatus("API 키를 보호 저장했습니다.");
+        UpdateStartReadiness();
     }
 
     private void DeleteApiKey(object sender, RoutedEventArgs e)
@@ -299,6 +303,7 @@ public partial class MainWindow : Window
         apiKeyStore.Delete();
         ApiKeyPasswordBox.Clear();
         SetStatus("저장된 API 키를 삭제했습니다.");
+        UpdateStartReadiness();
     }
 
     private void UpdateTranslatorPanelsVisibility(TranslationServiceType translatorType)
@@ -321,6 +326,7 @@ public partial class MainWindow : Window
                 settingsStore.Save(settings);
                 UpdateTranslatorPanelsVisibility(translatorType);
                 SetStatus($"번역 서비스가 {selectedItem.Content}로 변경되었습니다.");
+                UpdateStartReadiness();
             }
         }
     }
@@ -331,6 +337,7 @@ public partial class MainWindow : Window
         settings = settings with { GoogleWebAppUrl = url ?? string.Empty };
         settingsStore.Save(settings);
         SetStatus("Google Web App URL을 저장했습니다.");
+        UpdateStartReadiness();
     }
 
     private void OpenDeepLApiKeysPage(object sender, RoutedEventArgs e)
@@ -411,6 +418,8 @@ public partial class MainWindow : Window
         {
             ClearScreenExcludeRegionButton.IsEnabled = excludedRegion is not null;
         }
+
+        UpdateStartReadiness();
     }
 
     private void DisplayModeSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -450,6 +459,7 @@ public partial class MainWindow : Window
         {
             settings = settings with { OcrLanguageTag = ocrLanguage.Tag };
             settingsStore.Save(settings);
+            UpdateStartReadiness();
         }
     }
 
@@ -461,6 +471,7 @@ public partial class MainWindow : Window
             settings = settings with { OcrEngineType = choice.Engine };
             settingsStore.Save(settings);
             SetStatus($"OCR 엔진이 {choice.Name}으로 변경되었습니다.");
+            UpdateStartReadiness();
         }
     }
 
@@ -471,6 +482,7 @@ public partial class MainWindow : Window
         {
             settings = settings with { TargetLanguageCode = targetLanguage.Code };
             settingsStore.Save(settings);
+            UpdateStartReadiness();
         }
     }
 
@@ -548,6 +560,118 @@ public partial class MainWindow : Window
         UpdateTranslationModeUI();
     }
 
+    private bool UpdateStartReadiness()
+    {
+        if (StartStopButton is null)
+        {
+            return false;
+        }
+
+        var items = BuildReadinessItems();
+        foreach (var item in items)
+        {
+            if (item.Target is null)
+            {
+                continue;
+            }
+
+            item.Target.Text = $"{(item.IsReady ? "✓" : "•")} {(item.IsReady ? item.ReadyText : item.MissingText)}";
+            item.Target.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(item.IsReady ? "#047857" : "#B45309"));
+            item.Target.FontWeight = item.IsReady ? FontWeights.Normal : FontWeights.SemiBold;
+        }
+
+        var isReady = items.All(item => item.IsReady);
+        StartStopButton.IsEnabled = session.IsRunning || isReady;
+        StartStopButton.ToolTip = isReady
+            ? null
+            : string.Join(Environment.NewLine, items.Where(item => !item.IsReady).Select(item => item.MissingText));
+        return isReady;
+    }
+
+    private IReadOnlyList<ReadinessItem> BuildReadinessItems()
+    {
+        var selectedWindow = WindowComboBox?.SelectedItem as CapturableWindow;
+        var mode = settings.TranslationMode;
+        var hasRegion = SelectedRegion is not null;
+        var ocrLanguage = OcrLanguageComboBox?.SelectedItem as OcrLanguage;
+        var targetLanguage = TargetLanguageComboBox?.SelectedItem as TranslationLanguage;
+        var translatorReady = IsTranslatorReady(out var translatorMissingText);
+        var ocrReady = IsOcrReady(ocrLanguage, out var ocrReadyText, out var ocrMissingText);
+        var dictionaryReady = UserDictionaryStore.DefaultDictionary.Count > 0;
+
+        return
+        [
+            new ReadinessItem(
+                ReadyWindowText,
+                selectedWindow is not null,
+                $"게임 창 선택됨: {selectedWindow}",
+                "게임 창을 선택하세요."),
+            new ReadinessItem(
+                ReadyRegionText,
+                hasRegion,
+                $"{(mode == TranslationMode.Screen ? "전체화면 번역" : "채팅 번역")} 영역 선택됨",
+                $"{(mode == TranslationMode.Screen ? "전체화면 번역" : "채팅 번역")} 영역을 선택하세요."),
+            new ReadinessItem(
+                ReadyOcrText,
+                ocrReady && ocrLanguage is not null,
+                ocrReadyText,
+                ocrMissingText),
+            new ReadinessItem(
+                ReadyTranslatorText,
+                translatorReady && targetLanguage is not null,
+                $"번역 서비스 준비됨: {GetSelectedTranslatorName()} → {targetLanguage?.DisplayName ?? "한국어"}",
+                targetLanguage is null ? "번역 언어를 선택하세요." : translatorMissingText),
+            new ReadinessItem(
+                ReadyDictionaryText,
+                dictionaryReady,
+                $"기본 사전 준비됨: {UserDictionaryStore.DefaultDictionary.Count}개 항목",
+                "기본 사전을 불러오지 못했습니다.")
+        ];
+    }
+
+    private bool IsOcrReady(OcrLanguage? ocrLanguage, out string readyText, out string missingText)
+    {
+        if (ocrLanguage is null)
+        {
+            readyText = string.Empty;
+            missingText = "OCR 언어를 선택하세요.";
+            return false;
+        }
+
+        if (settings.OcrEngineType == OcrEngineType.PaddleOCR)
+        {
+            readyText = $"OCR 준비됨: PaddleOCR / {ocrLanguage.DisplayName}";
+            missingText = string.Empty;
+            return true;
+        }
+
+        var available = Windows.Media.Ocr.OcrEngine.TryCreateFromLanguage(new Windows.Globalization.Language(ocrLanguage.Tag)) is not null;
+        readyText = $"OCR 준비됨: Windows OCR / {ocrLanguage.DisplayName}";
+        missingText = $"{ocrLanguage.DisplayName} Windows OCR 언어 팩을 설치하세요.";
+        return available;
+    }
+
+    private bool IsTranslatorReady(out string missingText)
+    {
+        missingText = settings.TranslatorType switch
+        {
+            TranslationServiceType.DeepL when string.IsNullOrWhiteSpace(ApiKeyPasswordBox?.Password) => "DeepL API 키를 입력하고 저장하세요.",
+            TranslationServiceType.GoogleWebApp when !IsValidHttpUrl(GoogleWebAppUrlTextBox?.Text) => "Google Apps Script Web App URL을 입력하고 저장하세요.",
+            _ => string.Empty
+        };
+
+        return string.IsNullOrWhiteSpace(missingText);
+    }
+
+    private string GetSelectedTranslatorName() =>
+        TranslatorTypeComboBox?.SelectedItem is ComboBoxItem item
+            ? item.Content?.ToString() ?? settings.TranslatorType.ToString()
+            : settings.TranslatorType.ToString();
+
+    private static bool IsValidHttpUrl(string? url) =>
+        Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri)
+        && uri.Scheme is "http" or "https";
+
     private async Task<string> TranslateAndCopyChatAsync(string sourceText)
     {
         sourceText = sourceText.Trim();
@@ -576,6 +700,11 @@ public partial class MainWindow : Window
         if (session.IsRunning)
         {
             await StopSessionAsync();
+            return;
+        }
+        if (!UpdateStartReadiness())
+        {
+            SetStatus("시작 전 준비 항목을 완료하세요.", true);
             return;
         }
         if (WindowComboBox.SelectedItem is not CapturableWindow window)
@@ -638,7 +767,7 @@ public partial class MainWindow : Window
             settings = settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName };
             settingsStore.Save(settings);
         }
-        StartStopButton.Content = "번역 정지 (F8)";
+        StartStopButton.Content = "번역 정지";
     }
 
     private async Task StopSessionAsync()
@@ -649,8 +778,9 @@ public partial class MainWindow : Window
         sessionCancellation = null;
         activeSessionRegion = null;
         activeSessionMode = null;
-        StartStopButton.Content = "번역 시작 (F8)";
+        StartStopButton.Content = "번역 시작";
         overlayWindow?.ClearAll();
+        UpdateStartReadiness();
     }
 
     private void SessionUpdated(object? sender, SessionUpdate update) => Dispatcher.Invoke(() =>
@@ -727,24 +857,6 @@ public partial class MainWindow : Window
                 await Task.Delay(60, ct);
             }
         };
-
-    private async void OnPreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.F8)
-        {
-            ToggleSession(sender, new RoutedEventArgs());
-            e.Handled = true;
-        }
-        else if (e.Key == Key.F9)
-        {
-            if (session.IsRunning)
-            {
-                await StopSessionAsync();
-            }
-            SelectRegion(sender, new RoutedEventArgs());
-            e.Handled = true;
-        }
-    }
 
     private async void OnClosed(object? sender, EventArgs e)
     {
