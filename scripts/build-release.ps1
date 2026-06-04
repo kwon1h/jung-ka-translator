@@ -30,20 +30,20 @@ if ($LASTEXITCODE -ne 0) {
 
 & (Join-Path $PSScriptRoot 'clean.ps1') -KeepRelease
 
-$exeFiles = @(Get-ChildItem -LiteralPath $releaseDir -File -Filter '*.exe')
-if ($exeFiles.Count -ne 1) {
-    throw "Expected exactly one .exe in $releaseDir, found $($exeFiles.Count)."
-}
-
 $expectedExe = Join-Path $releaseDir 'GameOverlayTranslator.exe'
 if (-not (Test-Path -LiteralPath $expectedExe)) {
     throw "Expected release executable was not found: $expectedExe"
 }
 
-$unexpectedFiles = @(Get-ChildItem -LiteralPath $releaseDir -File | Where-Object { $_.Extension -in @('.csv', '.dll', '.pdb', '.json') })
-if ($unexpectedFiles.Count -gt 0) {
-    $names = ($unexpectedFiles | Select-Object -ExpandProperty Name) -join ', '
-    throw "Release directory contains unexpected companion files: $names"
+$unexpectedFiles = @(Get-ChildItem -LiteralPath $releaseDir -File | Where-Object { $_.FullName -ne $expectedExe })
+foreach ($unexpectedFile in $unexpectedFiles) {
+    Remove-Item -LiteralPath $unexpectedFile.FullName -Force
+}
+
+$releaseFiles = @(Get-ChildItem -LiteralPath $releaseDir -File)
+if ($releaseFiles.Count -ne 1 -or $releaseFiles[0].FullName -ne $expectedExe) {
+    $names = ($releaseFiles | Select-Object -ExpandProperty Name) -join ', '
+    throw "Expected only GameOverlayTranslator.exe in $releaseDir, found: $names"
 }
 
 Write-Host "Release build complete: $expectedExe"
