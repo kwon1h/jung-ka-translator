@@ -116,6 +116,7 @@ public partial class MainWindow : Window
     private readonly AppSettingsStore settingsStore = new();
     private static readonly HttpClient httpClient = new();
     private readonly TranslationSession session;
+    private readonly ITranslationService chatTranslationService;
     private AppSettings settings;
     private ResultWindow? resultWindow;
     private OverlayWindow? overlayWindow;
@@ -159,6 +160,7 @@ public partial class MainWindow : Window
             () => ApiKeyPasswordBox.Password,
             () => settings
         );
+        chatTranslationService = delegator;
         var cachingTranslationService = new CachingTranslationService(delegator, new ScreenTranslationCacheStore());
         session = new TranslationSession(new WindowCaptureService(), delegatingOcrEngine, cachingTranslationService);
         session.BeforeCaptureAsync = SetOverlayCaptureVisibilityAsync(false);
@@ -546,6 +548,29 @@ public partial class MainWindow : Window
         UpdateTranslationModeUI();
     }
 
+    private async Task<string> TranslateAndCopyChatAsync(string sourceText)
+    {
+        sourceText = sourceText.Trim();
+        if (string.IsNullOrWhiteSpace(sourceText))
+        {
+            throw new InvalidOperationException("전송할 채팅을 입력하세요.");
+        }
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var translated = await chatTranslationService.TranslateAsync(
+            new TranslationRequest(sourceText, "zh-CN", "ko"),
+            cts.Token);
+
+        var chatText = translated.TranslatedText.Trim();
+        if (string.IsNullOrWhiteSpace(chatText))
+        {
+            throw new InvalidOperationException("번역 결과가 비어 있어 전송하지 않았습니다.");
+        }
+
+        Clipboard.SetText(chatText, TextDataFormat.UnicodeText);
+        return chatText;
+    }
+
     private async void ToggleSession(object sender, RoutedEventArgs e)
     {
         if (session.IsRunning)
@@ -749,7 +774,7 @@ public partial class MainWindow : Window
             return resultWindow;
         }
 
-        resultWindow = new ResultWindow();
+        resultWindow = new ResultWindow(TranslateAndCopyChatAsync);
         resultWindow.ApplyMode(settings.DisplayMode);
         resultWindow.Closed += ResultWindowClosed;
         return resultWindow;

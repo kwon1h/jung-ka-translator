@@ -6,6 +6,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <DockPanel Margin="0,0,0,10">
             <CheckBox x:Name="ShowSourceSpeakerToggle" DockPanel.Dock="Right" Content="원문 유저명 표시"
@@ -46,6 +47,40 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </ScrollViewer>
+        </Border>
+        <Border Grid.Row="2" Background="#202A28" BorderBrush="#52645F" BorderThickness="1" Padding="10" Margin="0,10,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBox x:Name="ChatInputTextBox"
+                         MinHeight="54"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         Padding="8"
+                         PreviewKeyDown="ChatInputPreviewKeyDown" />
+                <Grid Grid.Row="1" Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="ChatSendStatusText"
+                               Text="Enter로 중국어 번역 후 클립보드에 복사합니다. 줄바꿈은 Shift+Enter입니다."
+                               Foreground="#B7C6C2"
+                               TextWrapping="Wrap"
+                               VerticalAlignment="Center"
+                               FontSize="12" />
+                    <Button x:Name="SendChatButton"
+                            Grid.Column="1"
+                            Width="150"
+                            Height="32"
+                            Margin="10,0,0,0"
+                            Content="번역해서 복사"
+                            Click="SendTranslatedChat" />
+                </Grid>
+            </Grid>
         </Border>
     </Grid>
 </Window>

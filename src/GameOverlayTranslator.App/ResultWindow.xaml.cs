@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Text;
 using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Services;
 
@@ -12,9 +14,11 @@ public partial class ResultWindow : Window
 {
     private const int MaxChatLines = 80;
     private readonly ObservableCollection<ChatResultItem> chatLines = [];
+    private readonly Func<string, Task<string>> translateAndCopyChatAsync;
 
-    public ResultWindow()
+    public ResultWindow(Func<string, Task<string>> translateAndCopyChatAsync)
     {
+        this.translateAndCopyChatAsync = translateAndCopyChatAsync;
         InitializeComponent();
         ChatItems.ItemsSource = chatLines;
     }
@@ -63,6 +67,60 @@ public partial class ResultWindow : Window
         {
             Opacity = e.NewValue;
         }
+    }
+
+    private async void SendTranslatedChat(object sender, RoutedEventArgs e)
+    {
+        await SendTranslatedChatAsync();
+    }
+
+    private async void ChatInputPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if ((e.Key == Key.Enter || e.Key == Key.Return) && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        {
+            e.Handled = true;
+            await SendTranslatedChatAsync();
+        }
+    }
+
+    private async Task SendTranslatedChatAsync()
+    {
+        var sourceText = ChatInputTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(sourceText))
+        {
+            SetChatSendStatus("번역할 채팅을 입력하세요.", true);
+            return;
+        }
+
+        SetChatSendInProgress(true);
+        SetChatSendStatus("채팅을 중국어로 번역해서 클립보드에 복사하는 중...");
+        try
+        {
+            var copiedText = await translateAndCopyChatAsync(sourceText);
+            ChatInputTextBox.Clear();
+            SetChatSendStatus($"복사 완료: {copiedText}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Failed to translate and copy chat from result window", ex);
+            SetChatSendStatus($"채팅 번역/복사 실패: {ex.Message}", true);
+        }
+        finally
+        {
+            SetChatSendInProgress(false);
+        }
+    }
+
+    private void SetChatSendInProgress(bool isInProgress)
+    {
+        ChatInputTextBox.IsEnabled = !isInProgress;
+        SendChatButton.IsEnabled = !isInProgress;
+    }
+
+    private void SetChatSendStatus(string status, bool isError = false)
+    {
+        ChatSendStatusText.Text = status;
+        ChatSendStatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isError ? "#FCA5A5" : "#B7C6C2"));
     }
 
     private void RemoveContainedPreviousLines(ChatResultItem next)

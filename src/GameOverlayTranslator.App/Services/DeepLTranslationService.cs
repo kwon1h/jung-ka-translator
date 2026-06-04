@@ -58,10 +58,10 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
         {
             parameters.Add(new("text", text));
         }
-        parameters.Add(new("target_lang", request.TargetLanguage.ToUpperInvariant()));
+        parameters.Add(new("target_lang", NormalizeLanguageCode(request.TargetLanguage)));
         if (!string.IsNullOrWhiteSpace(request.SourceLanguage))
         {
-            parameters.Add(new("source_lang", request.SourceLanguage.ToUpperInvariant()));
+            parameters.Add(new("source_lang", NormalizeLanguageCode(request.SourceLanguage)));
         }
         
         message.Content = new FormUrlEncodedContent(parameters);
@@ -88,12 +88,20 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
     private static IEnumerable<KeyValuePair<string, string>> BuildParameters(TranslationRequest request)
     {
         yield return new("text", request.Text);
-        yield return new("target_lang", request.TargetLanguage.ToUpperInvariant());
+        yield return new("target_lang", NormalizeLanguageCode(request.TargetLanguage));
         if (!string.IsNullOrWhiteSpace(request.SourceLanguage))
         {
-            yield return new("source_lang", request.SourceLanguage.ToUpperInvariant());
+            yield return new("source_lang", NormalizeLanguageCode(request.SourceLanguage));
         }
     }
+
+    private static string NormalizeLanguageCode(string languageCode) =>
+        languageCode.Trim().ToLowerInvariant() switch
+        {
+            "ko" => "KO",
+            "zh-cn" or "zh-hans" => "ZH-HANS",
+            _ => languageCode.Trim().ToUpperInvariant()
+        };
 
     private static string ReadError(string json)
     {
