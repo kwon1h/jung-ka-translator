@@ -381,6 +381,17 @@ public partial class MainWindow : Window
 
     private void UpdateTranslationModeUI()
     {
+        var screenMode = ScreenTranslationRadioButton.IsChecked == true;
+        DisplayModeComboBox.IsEnabled = !screenMode;
+        DisplayModeComboBox.ToolTip = screenMode ? "전체화면 번역은 선택 영역 오버레이로 표시됩니다." : null;
+        if (screenMode && settings.DisplayMode != TranslationDisplayMode.TransparentOverlay)
+        {
+            settings = settings with { DisplayMode = TranslationDisplayMode.TransparentOverlay };
+            settingsStore.Save(settings);
+            DisplayModeComboBox.SelectedItem = DisplayModes.First(choice => choice.Mode == TranslationDisplayMode.TransparentOverlay);
+            UpdateDisplayModePreview();
+        }
+
         SelectRegionButton.IsEnabled = true;
         if (ScreenTranslationRadioButton.IsChecked == true && selectedScreenRegion is { } screenRegion)
         {
@@ -413,6 +424,12 @@ public partial class MainWindow : Window
     {
         if (DisplayModeComboBox.SelectedItem is not DisplayModeChoice choice)
         {
+            return;
+        }
+
+        if (ScreenTranslationRadioButton.IsChecked == true && choice.Mode != TranslationDisplayMode.TransparentOverlay)
+        {
+            DisplayModeComboBox.SelectedItem = DisplayModes.First(mode => mode.Mode == TranslationDisplayMode.TransparentOverlay);
             return;
         }
 
