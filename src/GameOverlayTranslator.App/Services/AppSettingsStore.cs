@@ -58,7 +58,10 @@ public sealed record AppSettings(
     OcrEngineType OcrEngineType = OcrEngineType.Windows,
     string GoogleWebAppUrl = "",
     bool ShowOverlayInScreenShare = false,
-    int CaptureGeometryVersion = 2)
+    int CaptureGeometryVersion = 2,
+    IReadOnlyList<CaptureRegion>? LastChatRegions = null,
+    IReadOnlyList<CaptureRegion>? LastExcludedRegions = null,
+    double OverlayDurationSeconds = AppSettingsDefaults.DefaultOverlayDurationSeconds)
 {
     public FilterSettings ToFilterSettings() => new(
         EnableLengthFilter: EnableLengthFilter,
@@ -81,6 +84,7 @@ public static class AppSettingsDefaults
     public const double DefaultFontSize = 25;
     public const double DefaultStrokeThickness = 0.5;
     public const double MaxStrokeThickness = 1.0;
+    public const double DefaultOverlayDurationSeconds = 4;
 }
 
 public sealed class AppSettingsStore
@@ -108,6 +112,12 @@ public sealed class AppSettingsStore
                     var restoredChatRegion = legacyGeometry ? null : settings.LastChatRegion ?? settings.LastRegion;
                     var restoredScreenRegion = legacyGeometry ? null : settings.LastScreenRegion;
                     var restoredExcludedRegion = legacyGeometry ? null : settings.LastExcludedRegion ?? settings.LastScreenExcludedRegion;
+                    var restoredChatRegions = legacyGeometry
+                        ? null
+                        : ValidRegions(settings.LastChatRegions, restoredChatRegion);
+                    var restoredExcludedRegions = legacyGeometry
+                        ? null
+                        : ValidRegions(settings.LastExcludedRegions, restoredExcludedRegion);
                     // Normalize settings to ensure default values are used for missing/invalid properties
                     return settings with
                     {
@@ -116,6 +126,8 @@ public sealed class AppSettingsStore
                         LastScreenRegion = restoredScreenRegion,
                         LastExcludedRegion = restoredExcludedRegion,
                         LastScreenExcludedRegion = null,
+                        LastChatRegions = restoredChatRegions,
+                        LastExcludedRegions = restoredExcludedRegions,
                         FontFamily = string.IsNullOrWhiteSpace(settings.FontFamily) ? AppSettingsDefaults.PreferredFontFamily : settings.FontFamily,
                         FontSize = settings.FontSize < 12 || settings.FontSize > 48 ? AppSettingsDefaults.DefaultFontSize : settings.FontSize,
                         TextColor = string.IsNullOrWhiteSpace(settings.TextColor) ? "#FFFFFF" : settings.TextColor,
@@ -136,6 +148,9 @@ public sealed class AppSettingsStore
                         OcrEngineType = settings.OcrEngineType,
                         GoogleWebAppUrl = settings.GoogleWebAppUrl ?? string.Empty,
                         ShowOverlayInScreenShare = settings.ShowOverlayInScreenShare,
+                        OverlayDurationSeconds = settings.OverlayDurationSeconds is < 1 or > 30
+                            ? AppSettingsDefaults.DefaultOverlayDurationSeconds
+                            : settings.OverlayDurationSeconds,
                         CaptureGeometryVersion = CurrentCaptureGeometryVersion
                     };
                 }
@@ -147,6 +162,19 @@ public sealed class AppSettingsStore
             AppLog.Write("Settings load failed", ex);
             return new AppSettings(CaptureGeometryVersion: CurrentCaptureGeometryVersion);
         }
+    }
+
+    private static IReadOnlyList<CaptureRegion>? ValidRegions(
+        IReadOnlyList<CaptureRegion>? regions,
+        CaptureRegion? fallback)
+    {
+        var valid = regions?.Where(region => region.Width > 0 && region.Height > 0).ToArray();
+        if (valid is { Length: > 0 })
+        {
+            return valid;
+        }
+
+        return fallback is { Width: > 0, Height: > 0 } region ? [region] : null;
     }
 
     private static bool HasJsonProperty(string json, string propertyName)

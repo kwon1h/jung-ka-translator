@@ -99,9 +99,9 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     }
                 }
 
-                var frameForOcr = ApplyExcludedRegionMask(frame, options);
+                var frameForOcr = ApplyRegionMasks(frame, options);
                 var recognized = await ocrEngine.RecognizeAsync(frameForOcr, options.OcrLanguage, ct);
-                var recognizedForTranslation = ApplyExcludedRegions(
+                var recognizedForTranslation = ApplyRegionFilters(
                     recognized,
                     options,
                     frameForOcr.Bitmap.PixelWidth,
@@ -176,6 +176,18 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             return;
         }
 
+        if (options.SuppressEnglishOnlyScreenLines && recognized.Lines.All(line => IsEnglishOnly(line.Text)))
+        {
+            Publish(
+                "스킵",
+                ocrRawText: recognized.Text,
+                filterReason: "English-only OCR",
+                filterRule: "EnglishOnly",
+                screenItems: [],
+                diagnosticKind: DiagnosticKind.OcrSkipped);
+            return;
+        }
+
         var linePlans = new List<ScreenLinePlan>();
         var textsToTranslate = new List<string>();
         var textKeysToTranslate = new List<string>();
@@ -186,6 +198,11 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
         foreach (var line in recognized.Lines)
         {
+            if (options.SuppressEnglishOnlyScreenLines && IsEnglishOnly(line.Text))
+            {
+                continue;
+            }
+
             var segmentPlans = new List<ScreenSegmentPlan>();
             foreach (var segment in ScreenTranslationSegmenter.Split(line.Text, options.OcrLanguage))
             {
@@ -332,14 +349,19 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         }
     }
 
-    private static CapturedFrame ApplyExcludedRegionMask(CapturedFrame frame, SessionOptions options)
+    private static CapturedFrame ApplyRegionMasks(CapturedFrame frame, SessionOptions options)
     {
-        var excludedRects = BuildExcludedRects(
+        var includedRects = BuildRelativeRects(
+            options.IncludedRegions,
+            options.Region,
+            frame.Bitmap.PixelWidth,
+            frame.Bitmap.PixelHeight);
+        var excludedRects = BuildRelativeRects(
             options.ExcludedRegions,
             options.Region,
             frame.Bitmap.PixelWidth,
             frame.Bitmap.PixelHeight);
-        if (excludedRects.Count == 0)
+        if (includedRects.Count == 0 && excludedRects.Count == 0)
         {
             return frame;
         }
@@ -349,7 +371,20 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         var visual = new DrawingVisual();
         using (var context = visual.RenderOpen())
         {
-            context.DrawImage(frame.Bitmap, new Rect(0, 0, width, height));
+            if (includedRects.Count == 0)
+            {
+                context.DrawImage(frame.Bitmap, new Rect(0, 0, width, height));
+            }
+            else
+            {
+                context.DrawRectangle(Brushes.Black, null, new Rect(0, 0, width, height));
+                foreach (var includedRect in includedRects)
+                {
+                    context.PushClip(new RectangleGeometry(includedRect));
+                    context.DrawImage(frame.Bitmap, new Rect(0, 0, width, height));
+                    context.Pop();
+                }
+            }
             foreach (var excludedRect in excludedRects)
             {
                 context.DrawRectangle(Brushes.Black, null, excludedRect);
@@ -362,20 +397,22 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         return new CapturedFrame(masked);
     }
 
-    private static OcrResult ApplyExcludedRegions(
+    private static OcrResult ApplyRegionFilters(
         OcrResult recognized,
         SessionOptions options,
         int frameWidth,
         int frameHeight)
     {
-        var excludedRects = BuildExcludedRects(options.ExcludedRegions, options.Region, frameWidth, frameHeight);
-        if (excludedRects.Count == 0 || recognized.Lines.Count == 0)
+        var includedRects = BuildRelativeRects(options.IncludedRegions, options.Region, frameWidth, frameHeight);
+        var excludedRects = BuildRelativeRects(options.ExcludedRegions, options.Region, frameWidth, frameHeight);
+        if ((includedRects.Count == 0 && excludedRects.Count == 0) || recognized.Lines.Count == 0)
         {
             return recognized;
         }
 
         var includedLines = recognized.Lines
-            .Where(line => !IsInExcludedRegion(line.BoundingRect, excludedRects))
+            .Where(line => (includedRects.Count == 0 || IsInRegion(line.BoundingRect, includedRects))
+                           && !IsInRegion(line.BoundingRect, excludedRects))
             .ToList();
 
         if (includedLines.Count == recognized.Lines.Count)
@@ -385,7 +422,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
         var includedText = string.Join(Environment.NewLine, includedLines.Select(line => line.Text));
         var includedWords = recognized.Words
-            .Where(word => !IsInExcludedRegion(word.BoundingRect, excludedRects))
+            .Where(word => (includedRects.Count == 0 || IsInRegion(word.BoundingRect, includedRects))
+                           && !IsInRegion(word.BoundingRect, excludedRects))
             .ToList();
 
         return new OcrResult(includedText, includedLines)
@@ -394,7 +432,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         };
     }
 
-    private static IReadOnlyList<Rect> BuildExcludedRects(
+    private static IReadOnlyList<Rect> BuildRelativeRects(
         IReadOnlyList<CaptureRegion>? regions,
         CaptureRegion captureRegion,
         int frameWidth,
@@ -411,27 +449,27 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         }
 
         var captureRect = new Rect(captureRegion.X, captureRegion.Y, captureRegion.Width, captureRegion.Height);
-        var excludedRects = new List<Rect>();
+        var relativeRects = new List<Rect>();
         foreach (var region in regions.Where(region => region.Width > 0 && region.Height > 0))
         {
-            var excludedRect = new Rect(region.X, region.Y, region.Width, region.Height);
-            excludedRect.Intersect(captureRect);
-            if (excludedRect.IsEmpty || excludedRect.Width <= 0 || excludedRect.Height <= 0)
+            var clippedRect = new Rect(region.X, region.Y, region.Width, region.Height);
+            clippedRect.Intersect(captureRect);
+            if (clippedRect.IsEmpty || clippedRect.Width <= 0 || clippedRect.Height <= 0)
             {
                 continue;
             }
 
-            excludedRects.Add(new Rect(
-                (excludedRect.X - captureRect.X) / captureRect.Width * frameWidth,
-                (excludedRect.Y - captureRect.Y) / captureRect.Height * frameHeight,
-                excludedRect.Width / captureRect.Width * frameWidth,
-                excludedRect.Height / captureRect.Height * frameHeight));
+            relativeRects.Add(new Rect(
+                (clippedRect.X - captureRect.X) / captureRect.Width * frameWidth,
+                (clippedRect.Y - captureRect.Y) / captureRect.Height * frameHeight,
+                clippedRect.Width / captureRect.Width * frameWidth,
+                clippedRect.Height / captureRect.Height * frameHeight));
         }
 
-        return excludedRects;
+        return relativeRects;
     }
 
-    private static bool IsInExcludedRegion(Rect lineRect, IReadOnlyList<Rect> excludedRects)
+    private static bool IsInRegion(Rect lineRect, IReadOnlyList<Rect> regions)
     {
         if (lineRect.Width <= 0 || lineRect.Height <= 0)
         {
@@ -440,15 +478,15 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
         var lineArea = lineRect.Width * lineRect.Height;
         var center = new Point(lineRect.Left + lineRect.Width / 2, lineRect.Top + lineRect.Height / 2);
-        foreach (var excludedRect in excludedRects)
+        foreach (var region in regions)
         {
-            if (excludedRect.Contains(center))
+            if (region.Contains(center))
             {
                 return true;
             }
 
             var intersection = lineRect;
-            intersection.Intersect(excludedRect);
+            intersection.Intersect(region);
             if (!intersection.IsEmpty
                 && intersection.Width > 0
                 && intersection.Height > 0
@@ -487,6 +525,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
         foreach (var line in chatLines)
         {
+            var boundingRect = FindChatBoundingRect(line.SourceLine, recognized.Lines);
             if (exactLines.Contains(line.DeduplicationKey))
             {
                 Publish(
@@ -531,7 +570,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     replacesChatLine: decision.Action == ChatFilterAction.Replace,
                     filterReason: "User dictionary exact match",
                     filterRule: "Dictionary",
-                    diagnosticKind: DiagnosticKind.OcrSkipped);
+                    diagnosticKind: DiagnosticKind.OcrSkipped,
+                    boundingRect: boundingRect);
                 exactLines.Add(line.DeduplicationKey);
                 continue;
             }
@@ -574,7 +614,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     activeLine.SourceLine,
                     filterReason: quality.Reason,
                     filterRule: "QualityFilter",
-                    diagnosticKind: DiagnosticKind.OcrSkipped);
+                    diagnosticKind: DiagnosticKind.OcrSkipped,
+                    boundingRect: boundingRect);
                 continue;
             }
 
@@ -603,7 +644,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     replacesChatLine: decisionForLine.Action == ChatFilterAction.Replace,
                     filterReason: quality.Reason,
                     filterRule: "QualityFilter",
-                    diagnosticKind: DiagnosticKind.OcrSkipped);
+                    diagnosticKind: DiagnosticKind.OcrSkipped,
+                    boundingRect: boundingRect);
                 exactLines.Add(line.DeduplicationKey);
                 continue;
             }
@@ -629,7 +671,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     translationCharacterCount: usage.OutboundCharacterCount,
                     totalTranslationRequestCount: totals.TotalRequests,
                     totalTranslationCharacterCount: totals.TotalCharacters,
-                    diagnosticKind: DiagnosticKind.OcrTranslated);
+                    diagnosticKind: DiagnosticKind.OcrTranslated,
+                    boundingRect: boundingRect);
             }
             else
             {
@@ -643,7 +686,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     replacesChatLine: decisionForLine.Action == ChatFilterAction.Replace,
                     filterReason: "Cache hit or translation bypass",
                     filterRule: "CacheHit",
-                    diagnosticKind: DiagnosticKind.OcrSkipped);
+                    diagnosticKind: DiagnosticKind.OcrSkipped,
+                    boundingRect: boundingRect);
             }
             exactLines.Add(line.DeduplicationKey);
         }
@@ -672,8 +716,32 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         int translationCharacterCount = 0,
         int totalTranslationRequestCount = 0,
         int totalTranslationCharacterCount = 0,
-        DiagnosticKind diagnosticKind = DiagnosticKind.Other) =>
-        Updated?.Invoke(this, new SessionUpdate(status, source, translated, isError, speaker, isChatLine, chatLineId, replacesChatLine, ocrRawText, filterReason, filterRule, screenItems, translationRequestCount, translationCharacterCount, totalTranslationRequestCount, totalTranslationCharacterCount, diagnosticSourceText, diagnosticKind));
+        DiagnosticKind diagnosticKind = DiagnosticKind.Other,
+        Rect? boundingRect = null) =>
+        Updated?.Invoke(this, new SessionUpdate(
+            status, source, translated, isError, speaker, isChatLine, chatLineId, replacesChatLine,
+            ocrRawText, filterReason, filterRule, screenItems, translationRequestCount,
+            translationCharacterCount, totalTranslationRequestCount, totalTranslationCharacterCount,
+            diagnosticSourceText, diagnosticKind, boundingRect));
+
+    private static Rect? FindChatBoundingRect(string sourceLine, IReadOnlyList<OcrLineResult> ocrLines)
+    {
+        var normalizedSource = NormalizeForMatching(sourceLine);
+        return ocrLines
+            .FirstOrDefault(line =>
+            {
+                var normalizedLine = NormalizeForMatching(line.Text);
+                return normalizedLine.Contains(normalizedSource, StringComparison.Ordinal)
+                       || normalizedSource.Contains(normalizedLine, StringComparison.Ordinal);
+            })?.BoundingRect
+            ?? ocrLines.LastOrDefault()?.BoundingRect;
+    }
+
+    internal static bool IsEnglishOnly(string text)
+    {
+        var letters = text.Where(char.IsLetter).ToArray();
+        return letters.Length > 0 && letters.All(character => character is >= 'A' and <= 'Z' or >= 'a' and <= 'z');
+    }
 
     private static string Quote(string value) =>
         $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\r", string.Empty, StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}\"";

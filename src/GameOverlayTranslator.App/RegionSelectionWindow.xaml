@@ -3,13 +3,31 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="#22000000"
         ShowInTaskbar="False" Topmost="True" KeyDown="OnKeyDown">
-    <Canvas x:Name="SelectionCanvas" Background="Transparent" Cursor="Cross" Focusable="True"
-            PreviewMouseLeftButtonDown="BeginSelection"
-            PreviewMouseMove="ResizeSelection" PreviewMouseLeftButtonUp="CompleteSelection">
-        <Border Background="#CC172121" Padding="10" Canvas.Left="14" Canvas.Top="14" CornerRadius="4">
-            <TextBlock Text="번역 영역을 드래그하세요. Esc 취소" Foreground="#F7F6F0" />
+    <Grid>
+        <Canvas x:Name="SelectionCanvas" Background="Transparent" Cursor="Cross" Focusable="True"
+                PreviewMouseLeftButtonDown="BeginSelection"
+                PreviewMouseRightButtonDown="BeginSelection"
+                PreviewMouseMove="UpdateSelection"
+                PreviewMouseLeftButtonUp="CompleteSelection"
+                PreviewMouseRightButtonUp="CompleteSelection" />
+
+        <Border Background="#E6172121" Padding="12" Margin="14" CornerRadius="6"
+                HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False">
+            <StackPanel>
+                <TextBlock Text="번역 영역 편집" FontWeight="Bold" Foreground="#F7F6F0" />
+                <TextBlock Margin="0,4,0,0" Foreground="#D8E4E1"
+                           Text="좌클릭 드래그: 번역 영역 추가 · 우클릭 드래그: 제외 영역 추가" />
+                <TextBlock Foreground="#D8E4E1"
+                           Text="기존 영역: 내부 드래그로 이동 · 테두리 드래그로 크기 변경 · Delete로 삭제" />
+                <TextBlock Margin="0,4,0,0" Foreground="#93E8D5"
+                           Text="초록색 번역 · 빨간색 제외 · Enter 저장 · Esc 취소" />
+            </StackPanel>
         </Border>
-        <Rectangle x:Name="SelectionRectangle" Visibility="Collapsed" Stroke="#35C3A7"
-                   StrokeThickness="2" Fill="#3324A58D" />
-    </Canvas>
+
+        <StackPanel Margin="14" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+            <Button Content="전체 지우기" Padding="12,7" Margin="0,0,8,0" Click="ClearAllRegions" />
+            <Button Content="취소" Padding="12,7" Margin="0,0,8,0" Click="CancelEditing" />
+            <Button Content="저장" Padding="18,7" Click="SaveEditing" Background="#35C3A7" FontWeight="Bold" />
+        </StackPanel>
+    </Grid>
 </Window>

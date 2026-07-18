@@ -115,7 +115,9 @@ public sealed record SessionOptions(
     FilterSettings Filter,
     IReadOnlyList<UserDictEntry> UserDictionary,
     TranslationMode Mode = TranslationMode.Chat,
-    IReadOnlyList<CaptureRegion>? ExcludedRegions = null);
+    IReadOnlyList<CaptureRegion>? ExcludedRegions = null,
+    IReadOnlyList<CaptureRegion>? IncludedRegions = null,
+    bool SuppressEnglishOnlyScreenLines = false);
 
 public sealed record SessionUpdate(
     string Status,
@@ -135,4 +137,5 @@ public sealed record SessionUpdate(
     int TotalTranslationRequestCount = 0,
     int TotalTranslationCharacterCount = 0,
     string? DiagnosticSourceText = null,
-    DiagnosticKind DiagnosticKind = DiagnosticKind.Other);
+    DiagnosticKind DiagnosticKind = DiagnosticKind.Other,
+    Rect? BoundingRect = null);

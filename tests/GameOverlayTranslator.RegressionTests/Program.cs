@@ -43,7 +43,10 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Translation failure cooldown bypasses API", TestTranslationFailureCooldown),
     ("Screen segment splits by spaces", TestScreenSegmentSplitsBySpaces),
     ("Chinese ratio bypasses screen filter", TestChineseRatioBypassesScreenFilter),
-    ("Chinese ratio bypasses chat filter", TestChineseRatioBypassesChatFilter)
+    ("Chinese ratio bypasses chat filter", TestChineseRatioBypassesChatFilter),
+    ("English-only screen lines are hidden", TestEnglishOnlyScreenLinesAreHidden),
+    ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
+    ("Chat translation keeps OCR position", TestChatTranslationKeepsOcrPosition)
 };
 
 var cachePath = Path.Combine(
@@ -168,6 +171,7 @@ static Task TestOverlayDefaults()
     Assert(settings.TextColor == "#FFFFFF", "Default text color should be white.");
     Assert(settings.OutlineColor == "#000000", "Default outline should be black.");
     Assert(settings.StrokeThickness == AppSettingsDefaults.DefaultStrokeThickness, "Default outline thickness should be 0.5px.");
+    Assert(settings.OverlayDurationSeconds == 4, "Default overlay duration should be 4 seconds.");
     return Task.CompletedTask;
 }
 
@@ -713,6 +717,54 @@ static async Task TestChineseRatioBypassesChatFilter()
 
     Assert(translation.SingleRequests == 1, "Should bypass quality filter and request translation for Chinese chat line.");
     Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated), "Expected translated diagnostic.");
+}
+
+static async Task TestEnglishOnlyScreenLinesAreHidden()
+{
+    var translation = new CountingTranslationService();
+    var ocr = new OcrResult("RANKING", [new OcrLineResult("RANKING", new Rect(10, 10, 100, 20))]);
+    var session = new TranslationSession(new FakeCaptureService(200, 100), new FakeOcrEngine(ocr), translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Screen) with { SuppressEnglishOnlyScreenLines = true });
+
+    Assert(translation.BatchRequests == 0, "English-only screen text should not call translation.");
+    Assert(!updates.Any(update => update.ScreenItems is { Count: > 0 }), "English-only screen text should not be shown.");
+    Assert(updates.Any(update => update.FilterRule == "EnglishOnly" && update.ScreenItems is { Count: 0 }), "English-only OCR should clear an existing overlay.");
+}
+
+static async Task TestMultipleIncludeRegionsFilterOcrLines()
+{
+    var first = Chinese("8bd1");
+    var second = Chinese("8f66");
+    var ocr = new OcrResult($"{first}\n{second}",
+    [
+        new OcrLineResult(first, new Rect(10, 10, 40, 20)),
+        new OcrLineResult(second, new Rect(150, 10, 40, 20))
+    ]);
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(new FakeCaptureService(200, 100), new FakeOcrEngine(ocr), translation);
+
+    await RunSession(session, CreateOptions(TranslationMode.Screen) with
+    {
+        IncludedRegions = [new CaptureRegion(0, 0, 0.5, 1)]
+    });
+
+    Assert(translation.LastBatchTexts.SequenceEqual([first]), "Only OCR lines inside include regions should be translated.");
+}
+
+static async Task TestChatTranslationKeepsOcrPosition()
+{
+    var source = Chinese("8bd1");
+    var expected = new Rect(12, 34, 160, 24);
+    var ocr = new OcrResult($"racer: {source}", [new OcrLineResult($"racer: {source}", expected)]);
+    var session = new TranslationSession(new FakeCaptureService(200, 100), new FakeOcrEngine(ocr), new CountingTranslationService());
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat));
+
+    var translated = updates.First(update => update.IsChatLine && update.DiagnosticKind == DiagnosticKind.OcrTranslated);
+    Assert(translated.BoundingRect == expected, "Chat translation should retain its OCR bounding rectangle.");
 }
 
 sealed class FakeCaptureService(int width = 1, int height = 1) : ICaptureService

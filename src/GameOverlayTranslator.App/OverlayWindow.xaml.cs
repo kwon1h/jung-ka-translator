@@ -12,15 +12,17 @@ using GameOverlayTranslator.App.Services;
 
 namespace GameOverlayTranslator.App;
 
-public sealed record OverlayChatItem(string Id, string DisplayText);
+public sealed record OverlayChatItem(string Id, string DisplayText, double Left, double Top, double MinWidth);
 
 public partial class OverlayWindow : Window
 {
     private const int MaxOverlayLines = 6;
     private readonly ObservableCollection<OverlayChatItem> lines = [];
     private readonly ConcurrentDictionary<string, CancellationTokenSource> activeTimers = new();
+    private CancellationTokenSource? screenTimer;
 
     public TranslationMode CurrentMode { get; set; } = TranslationMode.Chat;
+    public TimeSpan DisplayDuration { get; set; } = TimeSpan.FromSeconds(AppSettingsDefaults.DefaultOverlayDurationSeconds);
 
     private Canvas activeCanvas = null!;
     private Canvas inactiveCanvas = null!;
@@ -109,6 +111,10 @@ public partial class OverlayWindow : Window
 
             if (update.ScreenItems.Count == 0)
             {
+                if (update.FilterRule == "EnglishOnly")
+                {
+                    ClearScreenItems();
+                }
                 return;
             }
 
@@ -156,7 +162,7 @@ public partial class OverlayWindow : Window
                         CornerRadius = new CornerRadius(4),
                         Child = textBlock,
                         MinWidth = wpfWidth,
-                        Height = wpfHeight,
+                        MinHeight = wpfHeight,
                         VerticalAlignment = VerticalAlignment.Center
                     };
 
@@ -173,6 +179,7 @@ public partial class OverlayWindow : Window
                 var temp = activeCanvas;
                 activeCanvas = inactiveCanvas;
                 inactiveCanvas = temp;
+                ResetScreenTimer();
             }
             catch (Exception ex)
             {
@@ -190,8 +197,20 @@ public partial class OverlayWindow : Window
             return;
         }
 
+        if (update.BoundingRect is not { } boundingRect)
+        {
+            return;
+        }
+
+        var chatHwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        var chatDpiScale = Math.Max(1, NativeMethods.GetDpiForWindow(chatHwnd) / 96d);
         var id = update.ChatLineId ?? Guid.NewGuid().ToString("N");
-        var item = new OverlayChatItem(id, $"{update.Speaker}: {update.TranslatedText}");
+        var item = new OverlayChatItem(
+            id,
+            $"{update.Speaker}: {update.TranslatedText}",
+            ClampToCanvas(boundingRect.Left / chatDpiScale, ActualWidth),
+            ClampToCanvas(boundingRect.Top / chatDpiScale, ActualHeight),
+            Math.Max(1, boundingRect.Width / chatDpiScale));
         var existing = lines.Select((line, index) => new { line, index }).FirstOrDefault(line => line.line.Id == id);
         
         if (existing is not null)
@@ -221,7 +240,6 @@ public partial class OverlayWindow : Window
             prevCts.Dispose();
         }
 
-        // Create new timer to remove this item after 5 seconds
         var cts = new CancellationTokenSource();
         activeTimers[id] = cts;
         _ = RemoveAfterDelayAsync(id, cts.Token);
@@ -231,7 +249,7 @@ public partial class OverlayWindow : Window
     {
         try
         {
-            await Task.Delay(5000, token);
+            await Task.Delay(DisplayDuration, token);
             if (!token.IsCancellationRequested)
             {
                 Dispatcher.Invoke(() =>
@@ -248,6 +266,40 @@ public partial class OverlayWindow : Window
         catch (TaskCanceledException)
         {
             // Expected cancellation
+        }
+    }
+
+    private void ResetScreenTimer()
+    {
+        screenTimer?.Cancel();
+        screenTimer?.Dispose();
+        screenTimer = new CancellationTokenSource();
+        _ = ClearScreenAfterDelayAsync(screenTimer.Token);
+    }
+
+    private void ClearScreenItems()
+    {
+        screenTimer?.Cancel();
+        screenTimer?.Dispose();
+        screenTimer = null;
+        ScreenOverlayCanvas1.Children.Clear();
+        ScreenOverlayCanvas2.Children.Clear();
+        ScreenOverlayCanvas1.Visibility = Visibility.Collapsed;
+        ScreenOverlayCanvas2.Visibility = Visibility.Collapsed;
+    }
+
+    private async Task ClearScreenAfterDelayAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(DisplayDuration, token);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                ClearScreenItems();
+            });
+        }
+        catch (TaskCanceledException)
+        {
         }
     }
 
@@ -312,10 +364,7 @@ public partial class OverlayWindow : Window
         Dispatcher.Invoke(() =>
         {
             lines.Clear();
-            ScreenOverlayCanvas1?.Children.Clear();
-            ScreenOverlayCanvas2?.Children.Clear();
-            if (ScreenOverlayCanvas1 is not null) ScreenOverlayCanvas1.Visibility = Visibility.Collapsed;
-            if (ScreenOverlayCanvas2 is not null) ScreenOverlayCanvas2.Visibility = Visibility.Collapsed;
+            ClearScreenItems();
             foreach (var cts in activeTimers.Values)
             {
                 cts.Cancel();

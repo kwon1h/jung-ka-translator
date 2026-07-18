@@ -122,24 +122,13 @@ public partial class MainWindow : Window
     private AppSettings settings;
     private ResultWindow? resultWindow;
     private OverlayWindow? overlayWindow;
-    private CaptureRegion? selectedChatRegion;
+    private List<CaptureRegion> selectedChatRegions = [];
     private CaptureRegion? selectedScreenRegion;
-    private CaptureRegion? SelectedRegion
-    {
-        get => ScreenTranslationRadioButton?.IsChecked == true ? selectedScreenRegion : selectedChatRegion;
-        set
-        {
-            if (ScreenTranslationRadioButton?.IsChecked == true)
-            {
-                selectedScreenRegion = value;
-            }
-            else
-            {
-                selectedChatRegion = value;
-            }
-        }
-    }
-    private CaptureRegion? excludedRegion;
+    private CaptureRegion? SelectedRegion =>
+        ScreenTranslationRadioButton?.IsChecked == true
+            ? selectedScreenRegion
+            : selectedChatRegions.Count > 0 ? selectedChatRegions[0] : null;
+    private List<CaptureRegion> excludedRegions = [];
     private CaptureRegion? activeSessionRegion;
     private TranslationMode? activeSessionMode;
     private CancellationTokenSource? sessionCancellation;
@@ -183,8 +172,8 @@ public partial class MainWindow : Window
         OverlayPresetComboBox.ItemsSource = OverlayPresets;
         OverlayPresetComboBox.SelectedItem = OverlayPresets.FirstOrDefault(preset => preset.Name == settings.OverlayPreset) ?? OverlayPresets[0];
         ApiKeyPasswordBox.Password = apiKeyStore.Load() ?? string.Empty;
-        RestoreRegions(settings.LastChatRegion, settings.LastScreenRegion);
-        RestoreExcludedRegion(settings.LastExcludedRegion);
+        RestoreRegions(settings.LastChatRegions, settings.LastChatRegion, settings.LastScreenRegion);
+        RestoreExcludedRegions(settings.LastExcludedRegions, settings.LastExcludedRegion);
         UpdateRegionButtonVisual();
         DisplayModeComboBox.SelectedItem = DisplayModes.First(mode => mode.Mode == settings.DisplayMode);
         ShowOverlayInScreenShareCheckBox.IsChecked = settings.ShowOverlayInScreenShare;
@@ -196,12 +185,15 @@ public partial class MainWindow : Window
             .Where(fontName => !fontName.StartsWith("HY", StringComparison.OrdinalIgnoreCase))
             .OrderBy(s => s)
             .ToList();
-        FontFamilyComboBox.ItemsSource = systemFonts;
         var preferredFont = systemFonts.FirstOrDefault(f => string.Equals(f, AppSettingsDefaults.PreferredFontFamily, StringComparison.OrdinalIgnoreCase));
         var savedFont = systemFonts.FirstOrDefault(f => string.Equals(f, settings.FontFamily, StringComparison.OrdinalIgnoreCase));
-        var selectedFont = string.Equals(settings.FontFamily, AppSettingsDefaults.LegacyFontFamily, StringComparison.OrdinalIgnoreCase) && preferredFont is not null
-            ? preferredFont
-            : savedFont ?? preferredFont ?? AppSettingsDefaults.LegacyFontFamily;
+        if (savedFont is null && !string.IsNullOrWhiteSpace(settings.FontFamily))
+        {
+            systemFonts.Insert(0, settings.FontFamily);
+            savedFont = settings.FontFamily;
+        }
+        FontFamilyComboBox.ItemsSource = systemFonts;
+        var selectedFont = savedFont ?? preferredFont ?? AppSettingsDefaults.LegacyFontFamily;
         FontFamilyComboBox.SelectedItem = selectedFont;
 
         // Initialize font size slider and label
@@ -223,6 +215,8 @@ public partial class MainWindow : Window
         StrokeThicknessLabel.Text = $"{settings.StrokeThickness:F1}px";
         OverlayOpacitySlider.Value = settings.OverlayOpacity;
         OverlayOpacityLabel.Text = $"{settings.OverlayOpacity:P0}";
+        OverlayDurationSlider.Value = settings.OverlayDurationSeconds;
+        OverlayDurationLabel.Text = $"{settings.OverlayDurationSeconds:0}초";
 
         // Populate and select background color swatches and opacity
         var (bgRgb, bgOpacity) = SplitArgbHex(settings.OverlayBackgroundColor);
@@ -367,11 +361,10 @@ public partial class MainWindow : Window
         if (!string.Equals(window.Title, settings.LastWindowTitle, StringComparison.CurrentCulture)
             || !string.Equals(window.ProcessName, settings.LastWindowProcessName, StringComparison.OrdinalIgnoreCase))
         {
-            selectedChatRegion = null;
+            selectedChatRegions.Clear();
             selectedScreenRegion = null;
-            excludedRegion = null;
+            excludedRegions.Clear();
             RegionText.Text = "선택되지 않음";
-            ScreenExcludeRegionText.Text = "선택되지 않음";
             UpdateRegionButtonVisual();
             UpdateTranslationModeUI();
         }
@@ -389,9 +382,13 @@ public partial class MainWindow : Window
     private void UpdateTranslationModeUI()
     {
         SelectRegionButton.IsEnabled = true;
-        if (SelectedRegion is { } r)
+        if (ScreenTranslationRadioButton.IsChecked == true && selectedScreenRegion is { } screenRegion)
         {
-            ShowRegion(r);
+            ShowRegion(screenRegion);
+        }
+        else if (ChatTranslationRadioButton.IsChecked == true && selectedChatRegions.Count > 0)
+        {
+            ShowRegionSummary();
         }
         else if (ScreenTranslationRadioButton.IsChecked == true)
         {
@@ -408,16 +405,6 @@ public partial class MainWindow : Window
         }
 
         UpdateRegionButtonVisual();
-
-        if (SelectScreenExcludeRegionButton != null)
-        {
-            SelectScreenExcludeRegionButton.IsEnabled = true;
-        }
-
-        if (ClearScreenExcludeRegionButton != null)
-        {
-            ClearScreenExcludeRegionButton.IsEnabled = excludedRegion is not null;
-        }
 
         UpdateStartReadiness();
     }
@@ -493,71 +480,45 @@ public partial class MainWindow : Window
             SetStatus("먼저 게임 창을 선택하세요.", true);
             return;
         }
-        var picker = new RegionSelectionWindow(window) { Owner = this };
-        if (picker.ShowDialog() == true && picker.Region is { } region)
+        var screenMode = ScreenTranslationRadioButton.IsChecked == true;
+        IReadOnlyList<CaptureRegion> included = screenMode
+            ? selectedScreenRegion is { } screenRegion ? [screenRegion] : []
+            : selectedChatRegions;
+        var picker = new RegionSelectionWindow(window, included, excludedRegions, allowMultipleIncluded: !screenMode) { Owner = this };
+        if (picker.ShowDialog() == true)
         {
-            SelectedRegion = region;
-            ShowRegion(region);
-            var mode = ScreenTranslationRadioButton.IsChecked == true ? TranslationMode.Screen : TranslationMode.Chat;
-            SaveSelection(window, region, mode);
-            SetStatus("번역 영역을 선택했습니다.");
+            if (screenMode)
+            {
+                selectedScreenRegion = picker.Regions.Count > 0 ? picker.Regions[0] : null;
+            }
+            else
+            {
+                selectedChatRegions = picker.Regions.ToList();
+            }
+            excludedRegions = picker.ExcludedRegions.ToList();
+            SaveSelections(window);
+            SetStatus($"영역 편집을 저장했습니다. 번역 {picker.Regions.Count}개 · 제외 {picker.ExcludedRegions.Count}개");
             UpdateTranslationModeUI();
-            UpdateRegionButtonVisual();
         }
     }
 
     private void ClearRegion(object sender, RoutedEventArgs e)
     {
-        SelectedRegion = null;
         if (ScreenTranslationRadioButton.IsChecked == true)
         {
+            selectedScreenRegion = null;
             settings = settings with { LastScreenRegion = null };
         }
         else
         {
-            settings = settings with { LastChatRegion = null, LastRegion = null };
+            selectedChatRegions.Clear();
+            settings = settings with { LastChatRegion = null, LastRegion = null, LastChatRegions = null };
         }
         settingsStore.Save(settings);
         UpdateTranslationModeUI();
         SetStatus(settings.TranslationMode == TranslationMode.Screen
             ? "전체화면 번역 영역을 전체 화면으로 변경했습니다."
             : "번역 영역을 해제했습니다.");
-    }
-
-    private void SelectScreenExcludeRegion(object sender, RoutedEventArgs e)
-    {
-        if (WindowComboBox.SelectedItem is not CapturableWindow window)
-        {
-            SetStatus("먼저 게임 창을 선택하세요.", true);
-            return;
-        }
-
-        var picker = new RegionSelectionWindow(window) { Owner = this };
-        if (picker.ShowDialog() == true && picker.Region is { } region)
-        {
-            excludedRegion = region;
-            ShowExcludedScreenRegion(region);
-            settings = settings with
-            {
-                LastWindowTitle = window.Title,
-                LastWindowProcessName = window.ProcessName,
-                LastExcludedRegion = region,
-                LastScreenExcludedRegion = null
-            };
-            settingsStore.Save(settings);
-            SetStatus("제외 영역을 선택했습니다.");
-            UpdateTranslationModeUI();
-        }
-    }
-
-    private void ClearScreenExcludeRegion(object sender, RoutedEventArgs e)
-    {
-        excludedRegion = null;
-        ScreenExcludeRegionText.Text = "선택되지 않음";
-        settings = settings with { LastExcludedRegion = null, LastScreenExcludedRegion = null };
-        settingsStore.Save(settings);
-        SetStatus("제외 영역을 해제했습니다.");
-        UpdateTranslationModeUI();
     }
 
     private bool UpdateStartReadiness()
@@ -721,12 +682,12 @@ public partial class MainWindow : Window
         }
         else
         {
-            if (SelectedRegion is not { } r)
+            if (selectedChatRegions.Count == 0)
             {
                 SetStatus("번역 영역을 먼저 선택하세요.", true);
                 return;
             }
-            region = r;
+            region = GetBoundingRegion(selectedChatRegions);
         }
 
         if (OcrLanguageComboBox.SelectedItem is not OcrLanguage ocrLanguage || TargetLanguageComboBox.SelectedItem is not TranslationLanguage targetLanguage)
@@ -755,12 +716,14 @@ public partial class MainWindow : Window
             filterSettings, 
             userDict,
             mode,
-            excludedRegion is not null ? [excludedRegion.Value] : null),
+            excludedRegions,
+            mode == TranslationMode.Chat ? selectedChatRegions : null,
+            mode == TranslationMode.Screen && settings.DisplayMode == TranslationDisplayMode.TransparentOverlay),
             sessionCancellation.Token);
 
         if (SelectedRegion is not null)
         {
-            SaveSelection(window, region, mode);
+            SaveSelections(window);
         }
         else
         {
@@ -909,6 +872,7 @@ public partial class MainWindow : Window
             overlayWindow.StrokeThicknessValue = settings.StrokeThickness;
             overlayWindow.OverlayBackgroundBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(settings.OverlayBackgroundColor));
             overlayWindow.Opacity = settings.OverlayOpacity;
+            overlayWindow.DisplayDuration = TimeSpan.FromSeconds(settings.OverlayDurationSeconds);
             overlayWindow.ExcludeFromCapture = !settings.ShowOverlayInScreenShare;
             overlayWindow.Show();
             overlayWindow.UpdateDisplayAffinity();
@@ -922,9 +886,14 @@ public partial class MainWindow : Window
         result.Activate();
     }
 
-    private void ResultWindowClosed(object? sender, EventArgs e)
+    private async void ResultWindowClosed(object? sender, EventArgs e)
     {
         resultWindow = null;
+        if (session.IsRunning && settings.DisplayMode == TranslationDisplayMode.Window)
+        {
+            await StopSessionAsync();
+            SetStatus("결과 창이 닫혀 번역을 중단했습니다.");
+        }
     }
 
     private CapturableWindow? FindSavedWindow(IReadOnlyList<CapturableWindow> windows)
@@ -941,11 +910,17 @@ public partial class MainWindow : Window
                    string.Equals(window.Title, settings.LastWindowTitle, StringComparison.CurrentCulture));
     }
 
-    private void RestoreRegions(CaptureRegion? chatRegion, CaptureRegion? screenRegion)
+    private void RestoreRegions(
+        IReadOnlyList<CaptureRegion>? chatRegions,
+        CaptureRegion? legacyChatRegion,
+        CaptureRegion? screenRegion)
     {
-        if (chatRegion is { Width: > 0, Height: > 0 } restoredChat)
+        selectedChatRegions = chatRegions?
+            .Where(region => region.Width > 0 && region.Height > 0)
+            .ToList() ?? [];
+        if (selectedChatRegions.Count == 0 && legacyChatRegion is { Width: > 0, Height: > 0 } restoredChat)
         {
-            selectedChatRegion = restoredChat;
+            selectedChatRegions.Add(restoredChat);
         }
         if (screenRegion is { Width: > 0, Height: > 0 } restoredScreen)
         {
@@ -953,15 +928,15 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RestoreExcludedRegion(CaptureRegion? region)
+    private void RestoreExcludedRegions(IReadOnlyList<CaptureRegion>? regions, CaptureRegion? legacyRegion)
     {
-        if (region is not { Width: > 0, Height: > 0 } restored)
+        excludedRegions = regions?
+            .Where(region => region.Width > 0 && region.Height > 0)
+            .ToList() ?? [];
+        if (excludedRegions.Count == 0 && legacyRegion is { Width: > 0, Height: > 0 } restored)
         {
-            return;
+            excludedRegions.Add(restored);
         }
-
-        excludedRegion = restored;
-        ShowExcludedScreenRegion(restored);
     }
 
     private void ShowRegion(CaptureRegion region)
@@ -969,17 +944,36 @@ public partial class MainWindow : Window
         RegionText.Text = $"{region.X:P0}, {region.Y:P0} / {region.Width:P0} x {region.Height:P0}";
     }
 
-    private void ShowExcludedScreenRegion(CaptureRegion region)
+    private void ShowRegionSummary()
     {
-        ScreenExcludeRegionText.Text = $"{region.X:P0}, {region.Y:P0} / {region.Width:P0} x {region.Height:P0}";
+        RegionText.Text = $"번역 {selectedChatRegions.Count}개 · 제외 {excludedRegions.Count}개";
     }
 
-    private void SaveSelection(CapturableWindow window, CaptureRegion region, TranslationMode mode)
+    private void SaveSelections(CapturableWindow window)
     {
-        settings = mode == TranslationMode.Screen
-            ? settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName, LastScreenRegion = region }
-            : settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName, LastRegion = region, LastChatRegion = region };
+        var firstChatRegion = selectedChatRegions.Count > 0 ? selectedChatRegions[0] : (CaptureRegion?)null;
+        settings = settings with
+        {
+            LastWindowTitle = window.Title,
+            LastWindowProcessName = window.ProcessName,
+            LastRegion = firstChatRegion,
+            LastChatRegion = firstChatRegion,
+            LastChatRegions = selectedChatRegions.Count > 0 ? selectedChatRegions.ToArray() : null,
+            LastScreenRegion = selectedScreenRegion,
+            LastExcludedRegion = excludedRegions.Count > 0 ? excludedRegions[0] : null,
+            LastExcludedRegions = excludedRegions.Count > 0 ? excludedRegions.ToArray() : null,
+            LastScreenExcludedRegion = null
+        };
         settingsStore.Save(settings);
+    }
+
+    private static CaptureRegion GetBoundingRegion(IReadOnlyList<CaptureRegion> regions)
+    {
+        var left = regions.Min(region => region.X);
+        var top = regions.Min(region => region.Y);
+        var right = regions.Max(region => region.X + region.Width);
+        var bottom = regions.Max(region => region.Y + region.Height);
+        return new CaptureRegion(left, top, right - left, bottom - top);
     }
 
     private CapturableWindow? FindKartWindow(IReadOnlyList<CapturableWindow> windows)
@@ -1290,6 +1284,23 @@ public partial class MainWindow : Window
         if (overlayWindow is not null)
         {
             overlayWindow.Opacity = opacity;
+        }
+    }
+
+    private void OverlayDurationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (settings == null || OverlayDurationLabel == null)
+        {
+            return;
+        }
+
+        var seconds = Math.Round(e.NewValue);
+        OverlayDurationLabel.Text = $"{seconds:0}초";
+        settings = settings with { OverlayDurationSeconds = seconds };
+        settingsStore.Save(settings);
+        if (overlayWindow is not null)
+        {
+            overlayWindow.DisplayDuration = TimeSpan.FromSeconds(seconds);
         }
     }
 
