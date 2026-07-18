@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using GameOverlayTranslator.App;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Services;
@@ -46,7 +47,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Chinese ratio bypasses chat filter", TestChineseRatioBypassesChatFilter),
     ("English-only screen lines are hidden", TestEnglishOnlyScreenLinesAreHidden),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
-    ("Chat translation keeps OCR position", TestChatTranslationKeepsOcrPosition)
+    ("Chat translation keeps OCR position", TestChatTranslationKeepsOcrPosition),
+    ("Overlay layout prevents background overlap", TestOverlayLayoutPreventsOverlap)
 };
 
 var cachePath = Path.Combine(
@@ -722,7 +724,11 @@ static async Task TestChineseRatioBypassesChatFilter()
 static async Task TestEnglishOnlyScreenLinesAreHidden()
 {
     var translation = new CountingTranslationService();
-    var ocr = new OcrResult("RANKING", [new OcrLineResult("RANKING", new Rect(10, 10, 100, 20))]);
+    var ocr = new OcrResult("RANKING\n123",
+    [
+        new OcrLineResult("RANKING", new Rect(10, 10, 100, 20)),
+        new OcrLineResult("123", new Rect(10, 32, 40, 20))
+    ]);
     var session = new TranslationSession(new FakeCaptureService(200, 100), new FakeOcrEngine(ocr), translation);
     var updates = Collect(session);
 
@@ -765,6 +771,20 @@ static async Task TestChatTranslationKeepsOcrPosition()
 
     var translated = updates.First(update => update.IsChatLine && update.DiagnosticKind == DiagnosticKind.OcrTranslated);
     Assert(translated.BoundingRect == expected, "Chat translation should retain its OCR bounding rectangle.");
+}
+
+static Task TestOverlayLayoutPreventsOverlap()
+{
+    var placed = OverlayLayout.AvoidOverlaps(
+    [
+        new Rect(10, 20, 200, 40),
+        new Rect(10, 35, 200, 40),
+        new Rect(300, 35, 100, 40)
+    ], new Size(500, 200));
+
+    Assert(!placed[0].IntersectsWith(placed[1]), "Vertically adjacent translations must not overlap.");
+    Assert(placed[2].Top == 35, "A horizontally separate translation should keep its OCR position.");
+    return Task.CompletedTask;
 }
 
 sealed class FakeCaptureService(int width = 1, int height = 1) : ICaptureService

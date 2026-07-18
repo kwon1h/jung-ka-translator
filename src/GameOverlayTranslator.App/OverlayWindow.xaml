@@ -21,7 +21,8 @@
                 <DataTemplate>
                     <Grid>
                         <Border Background="{Binding Path=OverlayBackgroundBrush, RelativeSource={RelativeSource AncestorType=Window}}" 
-                                CornerRadius="4" Padding="6,4" HorizontalAlignment="Left" MinWidth="{Binding MinWidth}">
+                                CornerRadius="4" Padding="6,4" HorizontalAlignment="Left"
+                                MinWidth="{Binding MinWidth}" MaxWidth="{Binding MaxWidth}">
                             <local:OutlinedTextBlock Text="{Binding DisplayText}" 
                                                      FontFamily="{Binding Path=FontFamily, RelativeSource={RelativeSource AncestorType=Window}}" 
                                                      FontSize="{Binding Path=FontSize, RelativeSource={RelativeSource AncestorType=Window}}" 

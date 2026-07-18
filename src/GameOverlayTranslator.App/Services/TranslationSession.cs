@@ -176,7 +176,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             return;
         }
 
-        if (options.SuppressEnglishOnlyScreenLines && recognized.Lines.All(line => IsEnglishOnly(line.Text)))
+        if (options.SuppressEnglishOnlyScreenLines && IsEnglishOnly(string.Join(" ", recognized.Lines.Select(line => line.Text))))
         {
             Publish(
                 "스킵",

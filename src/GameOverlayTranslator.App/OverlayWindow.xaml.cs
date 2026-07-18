@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,7 +13,15 @@ using GameOverlayTranslator.App.Services;
 
 namespace GameOverlayTranslator.App;
 
-public sealed record OverlayChatItem(string Id, string DisplayText, double Left, double Top, double MinWidth);
+public sealed record OverlayChatItem(
+    string Id,
+    string DisplayText,
+    double Left,
+    double AnchorTop,
+    double Top,
+    double MinWidth,
+    double MaxWidth,
+    double Height);
 
 public partial class OverlayWindow : Window
 {
@@ -128,47 +137,55 @@ public partial class OverlayWindow : Window
                 var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
                 var dpiScale = Math.Max(1, NativeMethods.GetDpiForWindow(hwnd) / 96d);
 
-                foreach (var screenItem in update.ScreenItems)
+                var borders = new List<Border>();
+                var desiredBoxes = new List<Rect>();
+                foreach (var cluster in BuildScreenClusters(update.ScreenItems, dpiScale))
                 {
-                    var wpfX = ClampToCanvas(screenItem.BoundingRect.Left / dpiScale, ActualWidth);
-                    var wpfY = ClampToCanvas(screenItem.BoundingRect.Top / dpiScale, ActualHeight);
-                    var wpfWidth = screenItem.BoundingRect.Width / dpiScale;
-                    var wpfHeight = screenItem.BoundingRect.Height / dpiScale;
-
-                    if (!double.IsFinite(wpfX) || !double.IsFinite(wpfY) || 
-                        !double.IsFinite(wpfWidth) || !double.IsFinite(wpfHeight) ||
-                        wpfWidth <= 0 || wpfHeight <= 0)
+                    var stack = new StackPanel();
+                    foreach (var renderItem in cluster.Items)
                     {
-                        continue;
+                        stack.Children.Add(new OutlinedTextBlock
+                        {
+                            Text = renderItem.Text,
+                            FontFamily = this.FontFamily,
+                            FontSize = this.FontSize,
+                            Fill = this.Foreground,
+                            Stroke = this.StrokeBrush,
+                            StrokeThickness = this.StrokeThicknessValue,
+                            FontWeight = FontWeights.Bold,
+                            HorizontalAlignment = HorizontalAlignment.Left
+                        });
                     }
 
-                    var textBlock = new OutlinedTextBlock
-                    {
-                        Text = screenItem.TranslatedText,
-                        FontFamily = this.FontFamily,
-                        FontSize = this.FontSize,
-                        Fill = this.Foreground,
-                        Stroke = this.StrokeBrush,
-                        StrokeThickness = this.StrokeThicknessValue,
-                        FontWeight = FontWeights.Bold,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        HorizontalAlignment = HorizontalAlignment.Left
-                    };
+                    var x = ClampToCanvas(cluster.Bounds.Left, ActualWidth);
+                    var y = ClampToCanvas(cluster.Bounds.Top, ActualHeight);
+                    var availableWidth = Math.Max(1, ActualWidth - x);
 
                     var border = new Border
                     {
                         Background = this.OverlayBackgroundBrush,
                         Padding = new Thickness(4, 2, 4, 2),
                         CornerRadius = new CornerRadius(4),
-                        Child = textBlock,
-                        MinWidth = wpfWidth,
-                        MinHeight = wpfHeight,
-                        VerticalAlignment = VerticalAlignment.Center
+                        Child = stack,
+                        MinWidth = Math.Min(cluster.Bounds.Width, availableWidth),
+                        MaxWidth = availableWidth
                     };
 
-                    Canvas.SetLeft(border, wpfX);
-                    Canvas.SetTop(border, wpfY);
+                    border.Measure(new Size(availableWidth, double.PositiveInfinity));
+                    var width = Math.Min(availableWidth, Math.Max(border.MinWidth, border.DesiredSize.Width));
+                    var height = Math.Max(cluster.Bounds.Height, border.DesiredSize.Height);
+                    border.Width = width;
+
+                    borders.Add(border);
+                    desiredBoxes.Add(new Rect(x, y, width, height));
                     inactiveCanvas.Children.Add(border);
+                }
+
+                var placedBoxes = OverlayLayout.AvoidOverlaps(desiredBoxes, new Size(ActualWidth, ActualHeight));
+                for (var index = 0; index < borders.Count; index++)
+                {
+                    Canvas.SetLeft(borders[index], placedBoxes[index].Left);
+                    Canvas.SetTop(borders[index], placedBoxes[index].Top);
                 }
 
                 // Swap visibility in one frame
@@ -205,12 +222,20 @@ public partial class OverlayWindow : Window
         var chatHwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         var chatDpiScale = Math.Max(1, NativeMethods.GetDpiForWindow(chatHwnd) / 96d);
         var id = update.ChatLineId ?? Guid.NewGuid().ToString("N");
+        var displayText = $"{update.Speaker}: {update.TranslatedText}";
+        var left = ClampToCanvas(boundingRect.Left / chatDpiScale, ActualWidth);
+        var anchorTop = ClampToCanvas(boundingRect.Top / chatDpiScale, ActualHeight);
+        var maxWidth = Math.Max(1, ActualWidth - left - 4);
+        var minWidth = Math.Min(Math.Max(1, boundingRect.Width / chatDpiScale), maxWidth);
         var item = new OverlayChatItem(
             id,
-            $"{update.Speaker}: {update.TranslatedText}",
-            ClampToCanvas(boundingRect.Left / chatDpiScale, ActualWidth),
-            ClampToCanvas(boundingRect.Top / chatDpiScale, ActualHeight),
-            Math.Max(1, boundingRect.Width / chatDpiScale));
+            displayText,
+            left,
+            anchorTop,
+            anchorTop,
+            minWidth,
+            maxWidth,
+            MeasureTextHeight(displayText, Math.Max(1, maxWidth - 12)) + 8);
         var existing = lines.Select((line, index) => new { line, index }).FirstOrDefault(line => line.line.Id == id);
         
         if (existing is not null)
@@ -243,6 +268,7 @@ public partial class OverlayWindow : Window
         var cts = new CancellationTokenSource();
         activeTimers[id] = cts;
         _ = RemoveAfterDelayAsync(id, cts.Token);
+        LayoutChatLines();
     }
 
     private async Task RemoveAfterDelayAsync(string id, CancellationToken token)
@@ -258,6 +284,7 @@ public partial class OverlayWindow : Window
                     if (existing != null)
                     {
                         lines.Remove(existing);
+                        LayoutChatLines();
                     }
                 });
                 activeTimers.TryRemove(id, out _);
@@ -266,6 +293,79 @@ public partial class OverlayWindow : Window
         catch (TaskCanceledException)
         {
             // Expected cancellation
+        }
+    }
+
+    private IReadOnlyList<ScreenCluster> BuildScreenClusters(
+        IReadOnlyList<ScreenTranslationItem> items,
+        double dpiScale)
+    {
+        var clusters = new List<ScreenCluster>();
+        foreach (var item in items
+                     .Select(item => new ScreenRenderItem(
+                         item.TranslatedText,
+                         new Rect(
+                             item.BoundingRect.X / dpiScale,
+                             item.BoundingRect.Y / dpiScale,
+                             item.BoundingRect.Width / dpiScale,
+                             item.BoundingRect.Height / dpiScale)))
+                     .Where(item => item.Bounds.Width > 0 && item.Bounds.Height > 0)
+                     .OrderBy(item => item.Bounds.Top)
+                     .ThenBy(item => item.Bounds.Left))
+        {
+            var cluster = clusters.LastOrDefault(candidate => AreNearby(candidate.Bounds, item.Bounds));
+            if (cluster is null)
+            {
+                clusters.Add(new ScreenCluster(item));
+            }
+            else
+            {
+                cluster.Add(item);
+            }
+        }
+        return clusters;
+    }
+
+    private bool AreNearby(Rect first, Rect second)
+    {
+        var horizontalGap = Math.Max(0, Math.Max(first.Left, second.Left) - Math.Min(first.Right, second.Right));
+        var verticalGap = Math.Max(0, Math.Max(first.Top, second.Top) - Math.Min(first.Bottom, second.Bottom));
+        return horizontalGap <= 20 && verticalGap <= Math.Max(8, FontSize * 0.8);
+    }
+
+    private double MeasureTextHeight(string text, double maxWidth)
+    {
+        var formatted = new FormattedText(
+            text,
+            CultureInfo.CurrentUICulture,
+            FlowDirection.LeftToRight,
+            new Typeface(FontFamily, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
+            FontSize,
+            Foreground,
+            VisualTreeHelper.GetDpi(this).PixelsPerDip)
+        {
+            MaxTextWidth = Math.Max(1, maxWidth)
+        };
+        return formatted.Height + StrokeThicknessValue * 2;
+    }
+
+    private void LayoutChatLines()
+    {
+        if (lines.Count == 0)
+        {
+            return;
+        }
+
+        var desired = lines
+            .Select(line => new Rect(line.Left, line.AnchorTop, line.MaxWidth, line.Height))
+            .ToArray();
+        var placed = OverlayLayout.AvoidOverlaps(desired, new Size(ActualWidth, ActualHeight));
+        for (var index = 0; index < lines.Count; index++)
+        {
+            if (Math.Abs(lines[index].Top - placed[index].Top) > 0.1)
+            {
+                lines[index] = lines[index] with { Top = placed[index].Top };
+            }
         }
     }
 
@@ -384,4 +484,56 @@ public partial class OverlayWindow : Window
     {
         Visibility = visible ? Visibility.Visible : Visibility.Hidden;
     }
+
+    private sealed record ScreenRenderItem(string Text, Rect Bounds);
+
+    private sealed class ScreenCluster(ScreenRenderItem first)
+    {
+        public List<ScreenRenderItem> Items { get; } = [first];
+        public Rect Bounds { get; private set; } = first.Bounds;
+
+        public void Add(ScreenRenderItem item)
+        {
+            Items.Add(item);
+            var bounds = Bounds;
+            bounds.Union(item.Bounds);
+            Bounds = bounds;
+        }
+    }
+}
+
+internal static class OverlayLayout
+{
+    private const double Gap = 2;
+
+    public static IReadOnlyList<Rect> AvoidOverlaps(IReadOnlyList<Rect> desired, Size bounds)
+    {
+        var result = new Rect[desired.Count];
+        var placed = new List<Rect>();
+        foreach (var entry in desired.Select((box, index) => (Box: box, Index: index)).OrderBy(entry => entry.Box.Top))
+        {
+            var width = Math.Min(Math.Max(1, entry.Box.Width), Math.Max(1, bounds.Width));
+            var height = Math.Min(Math.Max(1, entry.Box.Height), Math.Max(1, bounds.Height));
+            var left = Math.Clamp(entry.Box.Left, 0, Math.Max(0, bounds.Width - width));
+            var preferredTop = Math.Clamp(entry.Box.Top, 0, Math.Max(0, bounds.Height - height));
+            var candidates = new[] { preferredTop }
+                .Concat(placed.SelectMany(box => new[] { box.Bottom + Gap, box.Top - height - Gap }))
+                .Where(top => top >= 0 && top + height <= bounds.Height)
+                .Distinct()
+                .OrderBy(top => Math.Abs(top - preferredTop));
+
+            var top = candidates.FirstOrDefault(candidate =>
+                placed.All(box => !Overlaps(new Rect(left, candidate, width, height), box)));
+            var resolved = new Rect(left, top, width, height);
+            placed.Add(resolved);
+            result[entry.Index] = resolved;
+        }
+        return result;
+    }
+
+    private static bool Overlaps(Rect first, Rect second) =>
+        first.Left < second.Right + Gap
+        && first.Right + Gap > second.Left
+        && first.Top < second.Bottom + Gap
+        && first.Bottom + Gap > second.Top;
 }

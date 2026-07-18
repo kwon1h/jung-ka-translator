@@ -133,6 +133,7 @@ public partial class MainWindow : Window
     private TranslationMode? activeSessionMode;
     private CancellationTokenSource? sessionCancellation;
     private bool applyingOverlayPreset;
+    private bool restoringSettings = true;
 
     private readonly UserDictionaryStore userDictStore = new();
     private readonly System.Collections.ObjectModel.ObservableCollection<DiagnosticLogItem> diagnosticLogs = new();
@@ -242,6 +243,7 @@ public partial class MainWindow : Window
         ChatTranslationRadioButton.IsChecked = settings.TranslationMode == TranslationMode.Chat;
         ScreenTranslationRadioButton.IsChecked = settings.TranslationMode == TranslationMode.Screen;
         UpdateTranslationModeUI();
+        restoringSettings = false;
 
         RefreshWindows(this, new RoutedEventArgs());
         Closed += OnClosed;
@@ -445,7 +447,7 @@ public partial class MainWindow : Window
 
     private void ShowOverlayInScreenShareChanged(object sender, RoutedEventArgs e)
     {
-        if (settings == null) return;
+        if (settings == null || restoringSettings) return;
         settings = settings with { ShowOverlayInScreenShare = ShowOverlayInScreenShareCheckBox.IsChecked == true };
         settingsStore.Save(settings);
 
@@ -502,7 +504,7 @@ public partial class MainWindow : Window
             ? selectedScreenRegion is { } screenRegion ? [screenRegion] : []
             : selectedChatRegions;
         var picker = new RegionSelectionWindow(window, included, excludedRegions, allowMultipleIncluded: !screenMode) { Owner = this };
-        if (picker.ShowDialog() == true)
+        if (ShowRegionDialog(picker) == true)
         {
             if (screenMode)
             {
@@ -564,6 +566,21 @@ public partial class MainWindow : Window
             ? null
             : string.Join(Environment.NewLine, items.Where(item => !item.IsReady).Select(item => item.MissingText));
         return isReady;
+    }
+
+    private bool? ShowRegionDialog(RegionSelectionWindow picker)
+    {
+        picker.Owner = null;
+        Hide();
+        try
+        {
+            return picker.ShowDialog();
+        }
+        finally
+        {
+            Show();
+            Activate();
+        }
     }
 
     private IReadOnlyList<ReadinessItem> BuildReadinessItems()
@@ -1072,7 +1089,7 @@ public partial class MainWindow : Window
 
     private void FontFamilySelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        if (settings == null) return;
+        if (settings == null || restoringSettings) return;
         if (FontFamilyComboBox.SelectedItem is string fontFamilyName)
         {
             settings = settings with { FontFamily = fontFamilyName, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
@@ -1087,7 +1104,7 @@ public partial class MainWindow : Window
 
     private void FontSizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (settings == null || FontSizeLabel == null) return;
+        if (settings == null || restoringSettings || FontSizeLabel == null) return;
         double fontSize = Math.Round(e.NewValue);
         FontSizeLabel.Text = $"{fontSize}pt";
         settings = settings with { FontSize = fontSize, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
@@ -1101,7 +1118,7 @@ public partial class MainWindow : Window
 
     private void TextColorSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        if (settings == null) return;
+        if (settings == null || restoringSettings) return;
         if (TextColorListBox.SelectedItem is ColorChoice color)
         {
             settings = settings with { TextColor = color.Hex, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
@@ -1116,7 +1133,7 @@ public partial class MainWindow : Window
 
     private void OutlineColorSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        if (settings == null) return;
+        if (settings == null || restoringSettings) return;
         if (OutlineColorListBox.SelectedItem is ColorChoice color)
         {
             settings = settings with { OutlineColor = color.Hex, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
@@ -1131,7 +1148,7 @@ public partial class MainWindow : Window
 
     private void StrokeThicknessSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (settings == null || StrokeThicknessLabel == null) return;
+        if (settings == null || restoringSettings || StrokeThicknessLabel == null) return;
         double thickness = Math.Round(e.NewValue, 1);
         StrokeThicknessLabel.Text = $"{thickness:F1}px";
         settings = settings with { StrokeThickness = thickness, OverlayPreset = applyingOverlayPreset ? settings.OverlayPreset : "사용자 지정" };
@@ -1145,7 +1162,7 @@ public partial class MainWindow : Window
 
     private void BackgroundColorSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        if (settings == null || BackgroundColorsListBox.SelectedItem is not ColorChoice color) return;
+        if (settings == null || restoringSettings || BackgroundColorsListBox.SelectedItem is not ColorChoice color) return;
 
         var (_, currentOpacity) = SplitArgbHex(settings.OverlayBackgroundColor);
         var mergedHex = GetMergedHexColor(color.Hex, currentOpacity);
@@ -1161,7 +1178,7 @@ public partial class MainWindow : Window
 
     private void BackgroundOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (settings == null || BackgroundOpacityLabel == null) return;
+        if (settings == null || restoringSettings || BackgroundOpacityLabel == null) return;
 
         var opacity = Math.Round(e.NewValue, 2);
         BackgroundOpacityLabel.Text = $"{opacity:P0}";
@@ -1231,7 +1248,7 @@ public partial class MainWindow : Window
 
     private void OverlayPresetSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        if (settings == null || OverlayPresetComboBox?.SelectedItem is not OverlayPreset preset)
+        if (settings == null || restoringSettings || applyingOverlayPreset || OverlayPresetComboBox?.SelectedItem is not OverlayPreset preset)
         {
             return;
         }
@@ -1289,7 +1306,7 @@ public partial class MainWindow : Window
 
     private void OverlayOpacitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (settings == null || OverlayOpacityLabel == null)
+        if (settings == null || restoringSettings || OverlayOpacityLabel == null)
         {
             return;
         }
@@ -1306,7 +1323,7 @@ public partial class MainWindow : Window
 
     private void OverlayDurationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (settings == null || OverlayDurationLabel == null)
+        if (settings == null || restoringSettings || OverlayDurationLabel == null)
         {
             return;
         }
@@ -1374,7 +1391,7 @@ public partial class MainWindow : Window
 
         var picker = new RegionSelectionWindow(window) { Owner = this };
         SetStatus("사전에 추가할 원문 글자 영역을 드래그하세요.");
-        if (picker.ShowDialog() != true || picker.Region is not { } region)
+        if (ShowRegionDialog(picker) != true || picker.Region is not { } region)
         {
             SetStatus("사전 OCR 영역 선택을 취소했습니다.");
             return;
