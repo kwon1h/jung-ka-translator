@@ -48,6 +48,9 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("English-only screen lines are hidden", TestEnglishOnlyScreenLinesAreHidden),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
     ("Chat translation keeps OCR position", TestChatTranslationKeepsOcrPosition),
+    ("Chat overlay uses rendered width for collisions", TestChatOverlayUsesRenderedWidth),
+    ("Chat overlay separates actual collisions", TestChatOverlaySeparatesActualCollisions),
+    ("Crowded overlay keeps preferred position", TestCrowdedOverlayKeepsPreferredPosition),
     ("Overlay layout prevents background overlap", TestOverlayLayoutPreventsOverlap)
 };
 
@@ -771,6 +774,43 @@ static async Task TestChatTranslationKeepsOcrPosition()
 
     var translated = updates.First(update => update.IsChatLine && update.DiagnosticKind == DiagnosticKind.OcrTranslated);
     Assert(translated.BoundingRect == expected, "Chat translation should retain its OCR bounding rectangle.");
+}
+
+static Task TestChatOverlayUsesRenderedWidth()
+{
+    var placed = OverlayLayout.AvoidChatOverlaps(
+    [
+        new OverlayChatItem("first", "first", 10, 80, 80, 80, 480, 80, 30),
+        new OverlayChatItem("second", "second", 160, 80, 80, 80, 330, 80, 30)
+    ], new Size(500, 200));
+
+    Assert(placed[0].Top == 80, "First chat translation should keep its OCR top.");
+    Assert(placed[1].Top == 80, "Horizontally separate rendered chat boxes should keep the same OCR top.");
+    return Task.CompletedTask;
+}
+
+static Task TestChatOverlaySeparatesActualCollisions()
+{
+    var placed = OverlayLayout.AvoidChatOverlaps(
+    [
+        new OverlayChatItem("first", "first", 10, 80, 80, 80, 480, 100, 30),
+        new OverlayChatItem("second", "second", 60, 80, 80, 80, 430, 100, 30)
+    ], new Size(500, 200));
+
+    Assert(!placed[0].IntersectsWith(placed[1]), "Actually overlapping chat translations should be separated.");
+    return Task.CompletedTask;
+}
+
+static Task TestCrowdedOverlayKeepsPreferredPosition()
+{
+    var placed = OverlayLayout.AvoidOverlaps(
+    [
+        new Rect(0, 30, 100, 70),
+        new Rect(0, 30, 100, 70)
+    ], new Size(100, 100));
+
+    Assert(placed[1].Top == 30, "A crowded overlay should fall back to its OCR top instead of jumping to zero.");
+    return Task.CompletedTask;
 }
 
 static Task TestOverlayLayoutPreventsOverlap()

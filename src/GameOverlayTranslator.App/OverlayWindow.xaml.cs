@@ -21,6 +21,7 @@ public sealed record OverlayChatItem(
     double Top,
     double MinWidth,
     double MaxWidth,
+    double RenderedWidth,
     double Height);
 
 public partial class OverlayWindow : Window
@@ -227,6 +228,7 @@ public partial class OverlayWindow : Window
         var anchorTop = ClampToCanvas(boundingRect.Top / chatDpiScale, ActualHeight);
         var maxWidth = Math.Max(1, ActualWidth - left - 4);
         var minWidth = Math.Min(Math.Max(1, boundingRect.Width / chatDpiScale), maxWidth);
+        var boxSize = MeasureChatBox(displayText, minWidth, maxWidth);
         var item = new OverlayChatItem(
             id,
             displayText,
@@ -235,7 +237,8 @@ public partial class OverlayWindow : Window
             anchorTop,
             minWidth,
             maxWidth,
-            MeasureTextHeight(displayText, Math.Max(1, maxWidth - 12)) + 8);
+            boxSize.Width,
+            boxSize.Height);
         var existing = lines.Select((line, index) => new { line, index }).FirstOrDefault(line => line.line.Id == id);
         
         if (existing is not null)
@@ -333,8 +336,11 @@ public partial class OverlayWindow : Window
         return horizontalGap <= 20 && verticalGap <= Math.Max(8, FontSize * 0.8);
     }
 
-    private double MeasureTextHeight(string text, double maxWidth)
+    private Size MeasureChatBox(string text, double minWidth, double maxWidth)
     {
+        const double horizontalPadding = 12;
+        const double verticalPadding = 8;
+        var textMaxWidth = Math.Max(1, maxWidth - horizontalPadding);
         var formatted = new FormattedText(
             text,
             CultureInfo.CurrentUICulture,
@@ -344,9 +350,15 @@ public partial class OverlayWindow : Window
             Foreground,
             VisualTreeHelper.GetDpi(this).PixelsPerDip)
         {
-            MaxTextWidth = Math.Max(1, maxWidth)
+            MaxTextWidth = textMaxWidth,
+            Trimming = TextTrimming.CharacterEllipsis
         };
-        return formatted.Height + StrokeThicknessValue * 2;
+        var strokeOffset = StrokeThicknessValue * 2;
+        var renderedWidth = Math.Clamp(
+            formatted.Width + strokeOffset + horizontalPadding,
+            minWidth,
+            maxWidth);
+        return new Size(renderedWidth, formatted.Height + strokeOffset + verticalPadding);
     }
 
     private void LayoutChatLines()
@@ -356,10 +368,7 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        var desired = lines
-            .Select(line => new Rect(line.Left, line.AnchorTop, line.MaxWidth, line.Height))
-            .ToArray();
-        var placed = OverlayLayout.AvoidOverlaps(desired, new Size(ActualWidth, ActualHeight));
+        var placed = OverlayLayout.AvoidChatOverlaps(lines, new Size(ActualWidth, ActualHeight));
         for (var index = 0; index < lines.Count; index++)
         {
             if (Math.Abs(lines[index].Top - placed[index].Top) > 0.1)
@@ -506,6 +515,13 @@ internal static class OverlayLayout
 {
     private const double Gap = 2;
 
+    public static IReadOnlyList<Rect> AvoidChatOverlaps(
+        IEnumerable<OverlayChatItem> items,
+        Size bounds) =>
+        AvoidOverlaps(
+            items.Select(line => new Rect(line.Left, line.AnchorTop, line.RenderedWidth, line.Height)).ToArray(),
+            bounds);
+
     public static IReadOnlyList<Rect> AvoidOverlaps(IReadOnlyList<Rect> desired, Size bounds)
     {
         var result = new Rect[desired.Count];
@@ -522,8 +538,10 @@ internal static class OverlayLayout
                 .Distinct()
                 .OrderBy(top => Math.Abs(top - preferredTop));
 
-            var top = candidates.FirstOrDefault(candidate =>
-                placed.All(box => !Overlaps(new Rect(left, candidate, width, height), box)));
+            var top = candidates
+                .Where(candidate => placed.All(box => !Overlaps(new Rect(left, candidate, width, height), box)))
+                .DefaultIfEmpty(preferredTop)
+                .First();
             var resolved = new Rect(left, top, width, height);
             placed.Add(resolved);
             result[entry.Index] = resolved;

@@ -5,7 +5,7 @@
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
         BorderThickness="0" ShowInTaskbar="False" Topmost="True" ShowActivated="False">
     <Grid>
-        <ItemsControl x:Name="OverlayItems" Margin="4" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <ItemsControl x:Name="OverlayItems" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                     <Canvas />
@@ -22,7 +22,7 @@
                     <Grid>
                         <Border Background="{Binding Path=OverlayBackgroundBrush, RelativeSource={RelativeSource AncestorType=Window}}" 
                                 CornerRadius="4" Padding="6,4" HorizontalAlignment="Left"
-                                MinWidth="{Binding MinWidth}" MaxWidth="{Binding MaxWidth}">
+                                Width="{Binding RenderedWidth}" MinWidth="{Binding MinWidth}" MaxWidth="{Binding MaxWidth}">
                             <local:OutlinedTextBlock Text="{Binding DisplayText}" 
                                                      FontFamily="{Binding Path=FontFamily, RelativeSource={RelativeSource AncestorType=Window}}" 
                                                      FontSize="{Binding Path=FontSize, RelativeSource={RelativeSource AncestorType=Window}}" 
