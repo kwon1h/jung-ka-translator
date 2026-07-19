@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Net.Http;
@@ -266,7 +267,7 @@ public partial class MainWindow : Window
         OverlayOpacitySlider.Value = settings.OverlayOpacity;
         OverlayOpacityLabel.Text = $"{settings.OverlayOpacity:P0}";
         OverlayDurationSlider.Value = settings.OverlayDurationSeconds;
-        OverlayDurationLabel.Text = $"{settings.OverlayDurationSeconds:0}초";
+        OverlayDurationLabel.Text = FormatOverlayDuration(settings.OverlayDurationSeconds);
 
         // Populate and select background color swatches and opacity
         var (bgRgb, bgOpacity) = SplitArgbHex(settings.OverlayBackgroundColor);
@@ -368,6 +369,117 @@ public partial class MainWindow : Window
     }
 
     private void OpenDiagnostics(object sender, RoutedEventArgs e) => MainTabControl.SelectedItem = DiagnosticsTabItem;
+
+    private static string FormatOverlayDuration(double seconds) =>
+        seconds % 1 == 0 ? $"{seconds:0}초" : $"{seconds:0.0}초";
+
+    private static Border? GetSettingsContentBorder(Expander expander)
+    {
+        expander.ApplyTemplate();
+        return expander.Template.FindName("ContentBorder", expander) as Border;
+    }
+
+    private void SettingsExpanderExpanded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Expander expander || GetSettingsContentBorder(expander) is not Border contentBorder)
+        {
+            return;
+        }
+
+        contentBorder.BeginAnimation(FrameworkElement.HeightProperty, null);
+        contentBorder.BeginAnimation(UIElement.OpacityProperty, null);
+        if (contentBorder.RenderTransform is TranslateTransform translate)
+        {
+            translate.BeginAnimation(TranslateTransform.YProperty, null);
+        }
+
+        contentBorder.Visibility = Visibility.Visible;
+        contentBorder.Height = double.NaN;
+        contentBorder.Measure(new Size(Math.Max(1, expander.ActualWidth), double.PositiveInfinity));
+        var targetHeight = contentBorder.DesiredSize.Height;
+        contentBorder.Height = 0;
+        contentBorder.Opacity = 0;
+        if (contentBorder.RenderTransform is TranslateTransform contentTranslate)
+        {
+            contentTranslate.Y = -6;
+        }
+
+        var expandAnimation = new DoubleAnimation(0, targetHeight, TimeSpan.FromMilliseconds(240))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        expandAnimation.Completed += (_, _) =>
+        {
+            if (!expander.IsExpanded)
+            {
+                return;
+            }
+
+            contentBorder.BeginAnimation(FrameworkElement.HeightProperty, null);
+            contentBorder.Height = double.NaN;
+            contentBorder.BeginAnimation(UIElement.OpacityProperty, null);
+            contentBorder.Opacity = 1;
+            if (contentBorder.RenderTransform is TranslateTransform completedTranslate)
+            {
+                completedTranslate.BeginAnimation(TranslateTransform.YProperty, null);
+                completedTranslate.Y = 0;
+            }
+        };
+
+        contentBorder.BeginAnimation(FrameworkElement.HeightProperty, expandAnimation);
+        contentBorder.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)));
+        if (contentBorder.RenderTransform is TranslateTransform translateIn)
+        {
+            translateIn.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-6, 0, TimeSpan.FromMilliseconds(220))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            });
+        }
+    }
+
+    private void SettingsExpanderCollapsed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Expander expander || GetSettingsContentBorder(expander) is not Border contentBorder || contentBorder.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        var currentHeight = contentBorder.ActualHeight;
+        contentBorder.BeginAnimation(FrameworkElement.HeightProperty, null);
+        contentBorder.Height = currentHeight;
+        var collapseAnimation = new DoubleAnimation(currentHeight, 0, TimeSpan.FromMilliseconds(180))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+        };
+        collapseAnimation.Completed += (_, _) =>
+        {
+            if (expander.IsExpanded)
+            {
+                return;
+            }
+
+            contentBorder.BeginAnimation(FrameworkElement.HeightProperty, null);
+            contentBorder.Height = 0;
+            contentBorder.Visibility = Visibility.Collapsed;
+            contentBorder.BeginAnimation(UIElement.OpacityProperty, null);
+            contentBorder.Opacity = 0;
+            if (contentBorder.RenderTransform is TranslateTransform completedTranslate)
+            {
+                completedTranslate.BeginAnimation(TranslateTransform.YProperty, null);
+                completedTranslate.Y = -6;
+            }
+        };
+
+        contentBorder.BeginAnimation(FrameworkElement.HeightProperty, collapseAnimation);
+        contentBorder.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(contentBorder.Opacity, 0, TimeSpan.FromMilliseconds(140)));
+        if (contentBorder.RenderTransform is TranslateTransform translateOut)
+        {
+            translateOut.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(translateOut.Y, -6, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+            });
+        }
+    }
 
     private void RefreshWindows(object sender, RoutedEventArgs e)
     {
@@ -2126,8 +2238,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var seconds = Math.Round(e.NewValue);
-        OverlayDurationLabel.Text = $"{seconds:0}초";
+        var seconds = Math.Clamp(Math.Round(e.NewValue, 1), 0.1, 5);
+        OverlayDurationLabel.Text = FormatOverlayDuration(seconds);
         settings = settings with { OverlayDurationSeconds = seconds };
         settingsStore.Save(settings);
         if (overlayWindow is not null)

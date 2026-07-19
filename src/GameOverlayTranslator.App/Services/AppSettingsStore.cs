@@ -148,9 +148,9 @@ public sealed class AppSettingsStore
                         OcrEngineType = settings.OcrEngineType,
                         GoogleWebAppUrl = settings.GoogleWebAppUrl ?? string.Empty,
                         ShowOverlayInScreenShare = settings.ShowOverlayInScreenShare,
-                        OverlayDurationSeconds = settings.OverlayDurationSeconds is < 1 or > 30
+                        OverlayDurationSeconds = settings.OverlayDurationSeconds is < 0.1 or > 5
                             ? AppSettingsDefaults.DefaultOverlayDurationSeconds
-                            : settings.OverlayDurationSeconds,
+                            : Math.Round(settings.OverlayDurationSeconds, 1),
                         CaptureGeometryVersion = CurrentCaptureGeometryVersion
                     };
                 }
