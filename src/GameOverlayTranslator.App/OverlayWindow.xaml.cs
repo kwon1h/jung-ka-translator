@@ -4,7 +4,6 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Collections.Concurrent;
 using System.Globalization;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using GameOverlayTranslator.App.Domain;
@@ -22,14 +21,17 @@ public sealed record OverlayChatItem(
     double MinWidth,
     double MaxWidth,
     double RenderedWidth,
-    double Height);
+    double Height)
+{
+    public double RenderedFontSize { get; init; }
+}
 
 public partial class OverlayWindow : Window
 {
-    private const int MaxOverlayLines = 6;
     private readonly ObservableCollection<OverlayChatItem> lines = [];
     private readonly ConcurrentDictionary<string, CancellationTokenSource> activeTimers = new();
     private CancellationTokenSource? screenTimer;
+    private bool chatSnapshotMode;
 
     public TranslationMode CurrentMode { get; set; } = TranslationMode.Chat;
     public TimeSpan DisplayDuration { get; set; } = TimeSpan.FromSeconds(AppSettingsDefaults.DefaultOverlayDurationSeconds);
@@ -210,6 +212,33 @@ public partial class OverlayWindow : Window
         ScreenOverlayCanvas1.Visibility = Visibility.Collapsed;
         ScreenOverlayCanvas2.Visibility = Visibility.Collapsed;
 
+        if (update.ChatItems is { } chatItems)
+        {
+            if (!chatSnapshotMode)
+            {
+                ClearChatItems();
+                chatSnapshotMode = true;
+            }
+
+            var currentIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var chatItem in chatItems)
+            {
+                if (chatItem.BoundingRect is { } itemBounds
+                    && !string.IsNullOrWhiteSpace(chatItem.TranslatedText))
+                {
+                    currentIds.Add(chatItem.Id);
+                    ApplyChatItem(chatItem.Id, chatItem.Speaker, chatItem.TranslatedText, itemBounds);
+                }
+            }
+            RemoveStaleItemsOverlappingCurrentRows(currentIds);
+            return;
+        }
+
+        if (chatSnapshotMode)
+        {
+            return;
+        }
+
         if (!update.IsChatLine || string.IsNullOrWhiteSpace(update.TranslatedText))
         {
             return;
@@ -220,15 +249,23 @@ public partial class OverlayWindow : Window
             return;
         }
 
+        ApplyChatItem(
+            update.ChatLineId ?? Guid.NewGuid().ToString("N"),
+            update.Speaker,
+            update.TranslatedText,
+            boundingRect);
+    }
+
+    private void ApplyChatItem(string id, string? speaker, string translatedText, Rect boundingRect)
+    {
         var chatHwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         var chatDpiScale = Math.Max(1, NativeMethods.GetDpiForWindow(chatHwnd) / 96d);
-        var id = update.ChatLineId ?? Guid.NewGuid().ToString("N");
-        var displayText = $"{update.Speaker}: {update.TranslatedText}";
+        var displayText = $"{speaker}: {translatedText}";
         var left = ClampToCanvas(boundingRect.Left / chatDpiScale, ActualWidth);
         var anchorTop = ClampToCanvas(boundingRect.Top / chatDpiScale, ActualHeight);
         var maxWidth = Math.Max(1, ActualWidth - left - 4);
         var minWidth = Math.Min(Math.Max(1, boundingRect.Width / chatDpiScale), maxWidth);
-        var boxSize = MeasureChatBox(displayText, minWidth, maxWidth);
+        var boxSize = MeasureChatBox(displayText, minWidth, maxWidth, Math.Max(1, boundingRect.Height / chatDpiScale));
         var item = new OverlayChatItem(
             id,
             displayText,
@@ -238,7 +275,10 @@ public partial class OverlayWindow : Window
             minWidth,
             maxWidth,
             boxSize.Width,
-            boxSize.Height);
+            boxSize.Height)
+        {
+            RenderedFontSize = boxSize.FontSize
+        };
         var existing = lines.Select((line, index) => new { line, index }).FirstOrDefault(line => line.line.Id == id);
         
         if (existing is not null)
@@ -247,18 +287,7 @@ public partial class OverlayWindow : Window
         }
         else
         {
-            RemoveContainedPreviousLines(item);
             lines.Add(item);
-            while (lines.Count > MaxOverlayLines)
-            {
-                var oldItem = lines[0];
-                lines.RemoveAt(0);
-                if (activeTimers.TryRemove(oldItem.Id, out var oldCts))
-                {
-                    oldCts.Cancel();
-                    oldCts.Dispose();
-                }
-            }
         }
 
         // Cancel existing timer for this item if it was updated
@@ -270,28 +299,62 @@ public partial class OverlayWindow : Window
 
         var cts = new CancellationTokenSource();
         activeTimers[id] = cts;
-        _ = RemoveAfterDelayAsync(id, cts.Token);
+        _ = RemoveAfterDelayAsync(id, cts);
         LayoutChatLines();
     }
 
-    private async Task RemoveAfterDelayAsync(string id, CancellationToken token)
+    private void RemoveStaleItemsOverlappingCurrentRows(IReadOnlySet<string> currentIds)
+    {
+        var staleIds = OverlayLayout.FindStaleItemsOverlappingCurrentRows(lines, currentIds);
+        if (staleIds.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var staleId in staleIds)
+        {
+            var staleItem = lines.FirstOrDefault(line => line.Id == staleId);
+            if (staleItem is not null)
+            {
+                lines.Remove(staleItem);
+            }
+
+            if (activeTimers.TryRemove(staleId, out var staleTimer))
+            {
+                staleTimer.Cancel();
+                staleTimer.Dispose();
+            }
+        }
+
+        LayoutChatLines();
+    }
+
+    private async Task RemoveAfterDelayAsync(string id, CancellationTokenSource timer)
     {
         try
         {
-            await Task.Delay(DisplayDuration, token);
-            if (!token.IsCancellationRequested)
+            await Task.Delay(DisplayDuration, timer.Token);
+            await Dispatcher.InvokeAsync(() =>
             {
-                Dispatcher.Invoke(() =>
+                if (timer.IsCancellationRequested
+                    || !activeTimers.TryGetValue(id, out var currentTimer)
+                    || !ReferenceEquals(currentTimer, timer))
                 {
-                    var existing = lines.FirstOrDefault(l => l.Id == id);
-                    if (existing != null)
-                    {
-                        lines.Remove(existing);
-                        LayoutChatLines();
-                    }
-                });
-                activeTimers.TryRemove(id, out _);
-            }
+                    return;
+                }
+
+                var existing = lines.FirstOrDefault(line => line.Id == id);
+                if (existing is not null)
+                {
+                    lines.Remove(existing);
+                    LayoutChatLines();
+                }
+
+                if (activeTimers.TryRemove(id, out var completedTimer))
+                {
+                    completedTimer.Dispose();
+                }
+            });
         }
         catch (TaskCanceledException)
         {
@@ -336,29 +399,45 @@ public partial class OverlayWindow : Window
         return horizontalGap <= 20 && verticalGap <= Math.Max(8, FontSize * 0.8);
     }
 
-    private Size MeasureChatBox(string text, double minWidth, double maxWidth)
+    private ChatBoxMetrics MeasureChatBox(string text, double minWidth, double maxWidth, double sourceHeight)
     {
         const double horizontalPadding = 12;
-        const double verticalPadding = 8;
-        var textMaxWidth = Math.Max(1, maxWidth - horizontalPadding);
+        var strokeOffset = StrokeThicknessValue * 2;
+        var textMaxWidth = Math.Max(1, maxWidth - horizontalPadding - strokeOffset);
+        var textMaxHeight = Math.Max(1, sourceHeight - strokeOffset);
+        var typeface = new Typeface(FontFamily, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+        var measured = new FormattedText(
+            text,
+            CultureInfo.CurrentUICulture,
+            FlowDirection.LeftToRight,
+            typeface,
+            FontSize,
+            Foreground,
+            VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        var scale = Math.Min(
+            1,
+            Math.Min(
+                textMaxWidth / Math.Max(1, measured.Width),
+                textMaxHeight / Math.Max(1, measured.Height)));
+        var fittedFontSize = Math.Clamp(FontSize * scale, Math.Min(9, FontSize), FontSize);
         var formatted = new FormattedText(
             text,
             CultureInfo.CurrentUICulture,
             FlowDirection.LeftToRight,
-            new Typeface(FontFamily, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
-            FontSize,
+            typeface,
+            fittedFontSize,
             Foreground,
             VisualTreeHelper.GetDpi(this).PixelsPerDip)
         {
             MaxTextWidth = textMaxWidth,
-            Trimming = TextTrimming.CharacterEllipsis
+            Trimming = TextTrimming.CharacterEllipsis,
+            MaxLineCount = 1
         };
-        var strokeOffset = StrokeThicknessValue * 2;
         var renderedWidth = Math.Clamp(
             formatted.Width + strokeOffset + horizontalPadding,
             minWidth,
             maxWidth);
-        return new Size(renderedWidth, formatted.Height + strokeOffset + verticalPadding);
+        return new ChatBoxMetrics(renderedWidth, sourceHeight, fittedFontSize);
     }
 
     private void LayoutChatLines()
@@ -368,7 +447,7 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        var placed = OverlayLayout.AvoidChatOverlaps(lines, new Size(ActualWidth, ActualHeight));
+        var placed = OverlayLayout.PlaceChatAtOcrRows(lines);
         for (var index = 0; index < lines.Count; index++)
         {
             if (Math.Abs(lines[index].Top - placed[index].Top) > 0.1)
@@ -412,47 +491,6 @@ public partial class OverlayWindow : Window
         }
     }
 
-    private void RemoveContainedPreviousLines(OverlayChatItem next)
-    {
-        var nextText = NormalizeContainment(next.DisplayText);
-        if (nextText.Length < 2)
-        {
-            return;
-        }
-
-        for (var index = lines.Count - 1; index >= 0; index--)
-        {
-            var previous = lines[index];
-            var previousText = NormalizeContainment(previous.DisplayText);
-            if (previousText.Length >= 2
-                && nextText.Length > previousText.Length
-                && nextText.Contains(previousText, StringComparison.Ordinal))
-            {
-                if (activeTimers.TryRemove(previous.Id, out var cts))
-                {
-                    cts.Cancel();
-                    cts.Dispose();
-                }
-
-                lines.RemoveAt(index);
-            }
-        }
-    }
-
-    private static string NormalizeContainment(string value)
-    {
-        var builder = new StringBuilder(value.Length);
-        foreach (var character in value)
-        {
-            if (char.IsLetterOrDigit(character))
-            {
-                builder.Append(char.ToLowerInvariant(character));
-            }
-        }
-
-        return builder.ToString();
-    }
-
     private static double ClampToCanvas(double value, double canvasLength)
     {
         if (!double.IsFinite(value))
@@ -472,15 +510,21 @@ public partial class OverlayWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            lines.Clear();
+            ClearChatItems();
+            chatSnapshotMode = false;
             ClearScreenItems();
-            foreach (var cts in activeTimers.Values)
-            {
-                cts.Cancel();
-                cts.Dispose();
-            }
-            activeTimers.Clear();
         });
+    }
+
+    private void ClearChatItems()
+    {
+        lines.Clear();
+        foreach (var cts in activeTimers.Values)
+        {
+            cts.Cancel();
+            cts.Dispose();
+        }
+        activeTimers.Clear();
     }
 
     protected override void OnClosed(EventArgs e)
@@ -495,6 +539,8 @@ public partial class OverlayWindow : Window
     }
 
     private sealed record ScreenRenderItem(string Text, Rect Bounds);
+
+    private sealed record ChatBoxMetrics(double Width, double Height, double FontSize);
 
     private sealed class ScreenCluster(ScreenRenderItem first)
     {
@@ -515,12 +561,38 @@ internal static class OverlayLayout
 {
     private const double Gap = 2;
 
-    public static IReadOnlyList<Rect> AvoidChatOverlaps(
+    public static IReadOnlyList<Rect> PlaceChatAtOcrRows(IEnumerable<OverlayChatItem> items) =>
+        items.Select(line => new Rect(line.Left, line.AnchorTop, line.RenderedWidth, line.Height)).ToArray();
+
+    public static IReadOnlyList<string> FindStaleItemsOverlappingCurrentRows(
         IEnumerable<OverlayChatItem> items,
-        Size bounds) =>
-        AvoidOverlaps(
-            items.Select(line => new Rect(line.Left, line.AnchorTop, line.RenderedWidth, line.Height)).ToArray(),
-            bounds);
+        IReadOnlySet<string> currentIds)
+    {
+        if (currentIds.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var materialized = items.ToList();
+        var currentBounds = materialized
+            .Where(item => currentIds.Contains(item.Id))
+            .Select(ToBounds)
+            .ToArray();
+        return materialized
+            .Where(item => !currentIds.Contains(item.Id)
+                           && currentBounds.Any(current => HasPositiveIntersection(ToBounds(item), current)))
+            .Select(item => item.Id)
+            .ToArray();
+    }
+
+    private static Rect ToBounds(OverlayChatItem item) =>
+        new(item.Left, item.AnchorTop, item.RenderedWidth, item.Height);
+
+    private static bool HasPositiveIntersection(Rect left, Rect right)
+    {
+        left.Intersect(right);
+        return !left.IsEmpty && left.Width > 0 && left.Height > 0;
+    }
 
     public static IReadOnlyList<Rect> AvoidOverlaps(IReadOnlyList<Rect> desired, Size bounds)
     {

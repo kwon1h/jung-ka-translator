@@ -21,11 +21,13 @@
                 <DataTemplate>
                     <Grid>
                         <Border Background="{Binding Path=OverlayBackgroundBrush, RelativeSource={RelativeSource AncestorType=Window}}" 
-                                CornerRadius="4" Padding="6,4" HorizontalAlignment="Left"
-                                Width="{Binding RenderedWidth}" MinWidth="{Binding MinWidth}" MaxWidth="{Binding MaxWidth}">
+                                CornerRadius="3" Padding="6,0" HorizontalAlignment="Left" ClipToBounds="True"
+                                Width="{Binding RenderedWidth}" Height="{Binding Height}"
+                                MinWidth="{Binding MinWidth}" MaxWidth="{Binding MaxWidth}">
                             <local:OutlinedTextBlock Text="{Binding DisplayText}" 
                                                      FontFamily="{Binding Path=FontFamily, RelativeSource={RelativeSource AncestorType=Window}}" 
-                                                     FontSize="{Binding Path=FontSize, RelativeSource={RelativeSource AncestorType=Window}}" 
+                                                     FontSize="{Binding RenderedFontSize}"
+                                                     MaxLineCount="1"
                                                      Fill="{Binding Path=Foreground, RelativeSource={RelativeSource AncestorType=Window}}" 
                                                      Stroke="{Binding Path=StrokeBrush, RelativeSource={RelativeSource AncestorType=Window}}" 
                                                      StrokeThickness="{Binding Path=StrokeThicknessValue, RelativeSource={RelativeSource AncestorType=Window}}" 

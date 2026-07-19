@@ -5,6 +5,7 @@ using System.Windows.Media.Imaging;
 using GameOverlayTranslator.App;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
+using GameOverlayTranslator.App.Platform;
 using GameOverlayTranslator.App.Services;
 
 var tests = new List<(string Name, Func<Task> Run)>
@@ -47,11 +48,21 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Chinese ratio bypasses chat filter", TestChineseRatioBypassesChatFilter),
     ("English-only screen lines are hidden", TestEnglishOnlyScreenLinesAreHidden),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
+    ("Foreground capture accepts only target window", TestForegroundCaptureAcceptsOnlyTargetWindow),
+    ("Deferred capture resumes without error", TestDeferredCaptureResumesWithoutError),
     ("Chat translation keeps OCR position", TestChatTranslationKeepsOcrPosition),
+    ("Chat snapshot replays translation at current position", TestChatSnapshotReplaysTranslationAtCurrentPosition),
+    ("Similar OCR chat reuses translation at moved position", TestSimilarOcrChatReusesTranslationAtMovedPosition),
+    ("Similar aliases keep both snapshot occurrences", TestSimilarAliasesKeepBothSnapshotOccurrences),
+    ("Chat replacement preserves snapshot identity", TestChatReplacementPreservesSnapshotIdentity),
+    ("Chat batch failure keeps cached snapshot rows", TestChatBatchFailureKeepsCachedSnapshotRows),
+    ("Duplicate chat positions remain in snapshot", TestDuplicateChatPositionsRemainInSnapshot),
+    ("Concatenated chat divides OCR position", TestConcatenatedChatDividesOcrPosition),
     ("Chat translation ignores duplicate names outside chat rows", TestChatTranslationIgnoresDuplicateNamesOutsideChatRows),
     ("Chat translation does not use a speaker-only fallback position", TestChatTranslationDoesNotUseSpeakerOnlyFallbackPosition),
-    ("Chat overlay uses rendered width for collisions", TestChatOverlayUsesRenderedWidth),
-    ("Chat overlay separates actual collisions", TestChatOverlaySeparatesActualCollisions),
+    ("Chat overlay keeps OCR row positions", TestChatOverlayKeepsOcrRowPositions),
+    ("Chat overlay does not move dense rows", TestChatOverlayDoesNotMoveDenseRows),
+    ("Chat snapshot removes only overlapping stale rows", TestChatSnapshotRemovesOnlyOverlappingStaleRows),
     ("Crowded overlay keeps preferred position", TestCrowdedOverlayKeepsPreferredPosition),
     ("Overlay layout prevents background overlap", TestOverlayLayoutPreventsOverlap)
 };
@@ -131,9 +142,9 @@ static async Task TestConcatenatedChatDoesNotTranslateEmbeddedSpeaker()
 
     await RunSession(session, CreateOptions(TranslationMode.Chat));
 
-    Assert(translation.SingleRequests == 2, $"Expected two chat translation requests, got {translation.SingleRequests}.");
-    Assert(translation.LastSingleTexts.SequenceEqual([firstMessage, secondMessage]), "Translation requests should contain messages only.");
-    Assert(translation.LastSingleTexts.All(text => !text.Contains("sToRy", StringComparison.Ordinal)), "Embedded speaker must not be sent for translation.");
+    Assert(translation.BatchRequests == 1, $"Expected one batched chat translation request, got {translation.BatchRequests}.");
+    Assert(translation.LastBatchTexts.SequenceEqual([firstMessage, secondMessage]), "Translation requests should contain messages only.");
+    Assert(translation.LastBatchTexts.All(text => !text.Contains("sToRy", StringComparison.Ordinal)), "Embedded speaker must not be sent for translation.");
 
     var translated = Diagnostics(updates)
         .Where(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated)
@@ -221,7 +232,7 @@ static async Task TestExactDictionarySkipsTranslation()
 
     await RunSession(session, CreateOptions(TranslationMode.Chat, [new UserDictEntry("hello", "annyeong", UserDictionaryStore.UserCategory)]));
 
-    Assert(translation.SingleRequests == 0, "Dictionary chat should not call API.");
+    Assert(translation.BatchRequests == 0, "Dictionary chat should not call API.");
     Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrSkipped && update.FilterRule == "Dictionary"), "Expected dictionary skip diagnostic.");
 }
 
@@ -246,7 +257,7 @@ static async Task TestRejectedChatDoesNotPoisonExactDuplicateCache()
 
     await RunSession(session, CreateOptions(TranslationMode.Chat));
 
-    Assert(translation.SingleRequests == 0, "Rejected chat should not call API.");
+    Assert(translation.BatchRequests == 0, "Rejected chat should not call API.");
     Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrSkipped && update.FilterRule is "NoText" or "QualityFilter"), "Expected quality or no-text skip.");
     Assert(updates.All(update => update.FilterRule != "Duplicate"), "Rejected chat must not become a duplicate skip.");
 }
@@ -418,9 +429,9 @@ static async Task TestChatExcludeRegionSkipsOcrLines()
             ExcludedRegions = [new CaptureRegion(0, 0.4, 0.25, 0.4)]
         });
 
-    Assert(translation.SingleRequests == 1, "Expected one chat request for non-excluded text.");
-    Assert(translation.LastSingleTexts.Count == 1, "Excluded chat line should not be sent for translation.");
-    Assert(translation.LastSingleTexts[0] == translated, "Only the non-excluded chat message should be translated.");
+    Assert(translation.BatchRequests == 1, "Expected one chat request for non-excluded text.");
+    Assert(translation.LastBatchTexts.Count == 1, "Excluded chat line should not be sent for translation.");
+    Assert(translation.LastBatchTexts[0] == translated, "Only the non-excluded chat message should be translated.");
 }
 
 static async Task TestChatSmallExcludedEdgeOverlapKeepsOcrLine()
@@ -438,8 +449,8 @@ static async Task TestChatSmallExcludedEdgeOverlapKeepsOcrLine()
             ExcludedRegions = [new CaptureRegion(0, 0, 0.02, 1)]
         });
 
-    Assert(translation.SingleRequests == 1, "A small edge overlap should not remove the chat OCR line.");
-    Assert(translation.LastSingleTexts[0] == translated, "The chat message should still be translated.");
+    Assert(translation.BatchRequests == 1, "A small edge overlap should not remove the chat OCR line.");
+    Assert(translation.LastBatchTexts[0] == translated, "The chat message should still be translated.");
 }
 
 static async Task TestScreenSelectedRegionAppliesWindowRelativeExclude()
@@ -533,7 +544,7 @@ static async Task TestDuplicateChatPublishesSkip()
 
     await RunSession(session, CreateOptions(TranslationMode.Chat), 110);
 
-    Assert(translation.SingleRequests == 1, "First chat line should be translated once.");
+    Assert(translation.BatchRequests == 1, "First chat line should be translated once.");
     Assert(Diagnostics(updates).Any(update => update.DiagnosticKind == DiagnosticKind.OcrSkipped && update.FilterRule == "Duplicate"), "Repeated chat should publish duplicate skip.");
 }
 
@@ -722,7 +733,7 @@ static async Task TestChineseRatioBypassesChatFilter()
 
     await RunSession(session, CreateOptions(TranslationMode.Chat));
 
-    Assert(translation.SingleRequests == 1, "Should bypass quality filter and request translation for Chinese chat line.");
+    Assert(translation.BatchRequests == 1, "Should bypass quality filter and request translation for Chinese chat line.");
     Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated), "Expected translated diagnostic.");
 }
 
@@ -778,6 +789,234 @@ static async Task TestChatTranslationKeepsOcrPosition()
     Assert(translated.BoundingRect == expected, "Chat translation should retain its OCR bounding rectangle.");
 }
 
+static Task TestForegroundCaptureAcceptsOnlyTargetWindow()
+{
+    Assert(WindowCaptureService.IsTargetForeground((nint)42, (nint)42), "The selected game should be capturable while it is foreground.");
+    Assert(!WindowCaptureService.IsTargetForeground((nint)42, (nint)84), "A covering foreground window must defer desktop capture.");
+    Assert(!WindowCaptureService.IsTargetForeground(nint.Zero, nint.Zero), "A missing target window must never be considered foreground.");
+    return Task.CompletedTask;
+}
+
+static async Task TestDeferredCaptureResumesWithoutError()
+{
+    var source = Chinese("8bd1");
+    var capture = new DeferredThenCaptureService();
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(
+        capture,
+        new FakeOcrEngine(new OcrResult(source, [new OcrLineResult(source, new Rect(0, 0, 20, 20))])),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Screen), 100);
+
+    var deferredIndex = updates.FindIndex(update => update.FilterRule == "CaptureDeferred");
+    var translatedIndex = updates.FindIndex(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated);
+    Assert(deferredIndex >= 0, "A covered game should publish a deferred capture status.");
+    Assert(!updates[deferredIndex].IsError, "Deferred capture must not put the UI into an error state.");
+    Assert(translatedIndex > deferredIndex, "Translation should resume automatically after the game becomes foreground.");
+    Assert(capture.CallCount >= 2, "The session should retry capture on the next polling interval.");
+    Assert(translation.BatchRequests == 1, "Only the successful capture should reach translation.");
+}
+
+static async Task TestChatSnapshotReplaysTranslationAtCurrentPosition()
+{
+    var message = Chinese("5feb 4f7f 7528 5929 4f7f");
+    var sourceLine = $"racer: {message}";
+    var firstPosition = new Rect(12, 34, 160, 24);
+    var currentPosition = new Rect(16, 94, 168, 24);
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(
+        new FakeCaptureService(240, 160),
+        new SequencedOcrEngine(
+            new OcrResult(sourceLine, [new OcrLineResult(sourceLine, firstPosition)]),
+            new OcrResult(sourceLine, [new OcrLineResult(sourceLine, currentPosition)])),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat), 110);
+
+    var snapshots = updates
+        .Where(update => update.ChatItems is { Count: 1 })
+        .Select(update => update.ChatItems![0])
+        .ToList();
+    Assert(translation.BatchRequests == 1, "A visible repeated chat line should call the API only once.");
+    Assert(snapshots.Any(item => item.BoundingRect == firstPosition), "The first chat snapshot should use the first OCR position.");
+    Assert(snapshots.Any(item => item.BoundingRect == currentPosition), "A replayed chat snapshot should use the current OCR position.");
+    Assert(snapshots.All(item => item.TranslatedText == $"translated:{message}"), "Replayed snapshots should retain the translated text.");
+}
+
+static async Task TestSimilarOcrChatReusesTranslationAtMovedPosition()
+{
+    var message = Chinese("5feb 4f7f 7528 5929 4f7f");
+    var jitteredMessage = $"{message}\uFF01";
+    var firstSourceLine = $"racer: {message}";
+    var jitteredSourceLine = $"racer: {jitteredMessage}";
+    var firstPosition = new Rect(12, 30, 180, 24);
+    var movedPosition = new Rect(18, 104, 184, 24);
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(
+        new FakeCaptureService(240, 180),
+        new SequencedOcrEngine(
+            new OcrResult(firstSourceLine, [new OcrLineResult(firstSourceLine, firstPosition)]),
+            new OcrResult(jitteredSourceLine, [new OcrLineResult(jitteredSourceLine, movedPosition)])),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat), 110);
+
+    var snapshots = updates
+        .Where(update => update.ChatItems is { Count: 1 })
+        .Select(update => update.ChatItems![0])
+        .ToList();
+    Assert(translation.BatchRequests == 1, "A similar OCR form should reuse the existing translation without another API request.");
+    Assert(snapshots.Any(item => item.BoundingRect == firstPosition), "The original OCR form should publish its first position.");
+    Assert(snapshots.Any(item => item.BoundingRect == movedPosition), "The similar OCR form should refresh the snapshot at its moved position.");
+    Assert(snapshots.Where(item => item.BoundingRect == movedPosition)
+        .All(item => item.TranslatedText == $"translated:{message}"), "The moved similar form should reuse the remembered translation.");
+    Assert(
+        snapshots.First(item => item.BoundingRect == firstPosition).Id
+        == snapshots.First(item => item.BoundingRect == movedPosition).Id,
+        "OCR jitter should retain the stable logical snapshot id while moving the overlay.");
+}
+
+static async Task TestSimilarAliasesKeepBothSnapshotOccurrences()
+{
+    var message = Chinese("5feb 4f7f 7528 5929 4f7f");
+    var jitteredMessage = $"{message}\uFF01";
+    var sourceLine = $"racer: {message}";
+    var jitteredSourceLine = $"racer: {jitteredMessage}";
+    var firstPosition = new Rect(12, 30, 180, 24);
+    var secondPosition = new Rect(12, 94, 184, 24);
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(
+        new FakeCaptureService(240, 180),
+        new SequencedOcrEngine(
+            new OcrResult(sourceLine, [new OcrLineResult(sourceLine, firstPosition)]),
+            new OcrResult($"{sourceLine}\n{jitteredSourceLine}",
+            [
+                new OcrLineResult(sourceLine, firstPosition),
+                new OcrLineResult(jitteredSourceLine, secondPosition)
+            ])),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat), 110);
+
+    var snapshot = updates.Last(update => update.ChatItems is { Count: 2 }).ChatItems!;
+    Assert(translation.BatchRequests == 1, "Similar OCR aliases should reuse the original translation request.");
+    Assert(snapshot.Select(item => item.BoundingRect).SequenceEqual([firstPosition, secondPosition]), "Both similar OCR occurrences should retain their current positions.");
+    Assert(snapshot[1].Id == $"{snapshot[0].Id}:1", "Aliases sharing one logical snapshot must receive unique base and base:1 ids.");
+}
+
+static async Task TestChatReplacementPreservesSnapshotIdentity()
+{
+    var originalMessage = Chinese("4f60 597d 4e16 754c 6d4b 8bd5 6587 672c 7532 4e59 4e19");
+    var correctedMessage = originalMessage + Chinese("5929 4f7f");
+    var originalLine = $"racer: {originalMessage}";
+    var correctedLine = $"racer: {correctedMessage}";
+    var firstPosition = new Rect(10, 24, 220, 24);
+    var correctedPosition = new Rect(10, 84, 230, 24);
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(
+        new FakeCaptureService(280, 160),
+        new SequencedOcrEngine(
+            new OcrResult(originalLine, [new OcrLineResult(originalLine, firstPosition)]),
+            new OcrResult(correctedLine, [new OcrLineResult(correctedLine, correctedPosition)])),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat), 110);
+
+    var snapshots = updates
+        .Where(update => update.ChatItems is { Count: 1 })
+        .Select(update => update.ChatItems![0])
+        .ToList();
+    var original = snapshots.First(item => item.BoundingRect == firstPosition);
+    var replacement = snapshots.First(item => item.BoundingRect == correctedPosition);
+    Assert(translation.BatchRequests == 2, "A longer corrected chat should be translated as a replacement.");
+    Assert(original.Id == replacement.Id, "A replacement must preserve the logical snapshot id so the old overlay is updated in place.");
+    Assert(updates.Any(update => update.IsChatLine && update.ReplacesChatLine), "The corrected chat should publish a replacement update.");
+}
+
+static async Task TestChatBatchFailureKeepsCachedSnapshotRows()
+{
+    var cachedMessage = Chinese("5feb 4f7f 7528 5929 4f7f");
+    var newMessage = Chinese("4f60 597d 4e16 754c");
+    var cachedLine = $"alpha: {cachedMessage}";
+    var newLine = $"beta: {newMessage}";
+    var firstPosition = new Rect(10, 20, 180, 24);
+    var movedPosition = new Rect(10, 70, 180, 24);
+    var newPosition = new Rect(10, 110, 180, 24);
+    var translation = new SucceedOnceThenFailBatchTranslationService();
+    var session = new TranslationSession(
+        new FakeCaptureService(240, 180),
+        new SequencedOcrEngine(
+            new OcrResult(cachedLine, [new OcrLineResult(cachedLine, firstPosition)]),
+            new OcrResult($"{cachedLine}\n{newLine}",
+            [
+                new OcrLineResult(cachedLine, movedPosition),
+                new OcrLineResult(newLine, newPosition)
+            ])),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat), 110);
+
+    Assert(translation.BatchRequests >= 2, "The second poll should exercise the failing batch path.");
+    Assert(updates.Any(update => update.IsError), "The batch failure should still be surfaced as an error update.");
+    Assert(
+        updates.Any(update => update.ChatItems is { Count: 1 }
+                              && update.ChatItems[0].BoundingRect == movedPosition
+                              && update.ChatItems[0].TranslatedText == $"translated:{cachedMessage}"),
+        "A failed batch must publish the previously cached visible row at its current OCR position.");
+}
+
+static async Task TestDuplicateChatPositionsRemainInSnapshot()
+{
+    var message = Chinese("4f60 597d 4e16 754c");
+    var sourceLine = $"racer: {message}";
+    var firstPosition = new Rect(10, 20, 180, 24);
+    var secondPosition = new Rect(10, 120, 180, 24);
+    var ocr = new OcrResult($"{sourceLine}\n{sourceLine}",
+    [
+        new OcrLineResult(sourceLine, firstPosition),
+        new OcrLineResult(sourceLine, secondPosition)
+    ]);
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(new FakeCaptureService(240, 180), new FakeOcrEngine(ocr), translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat));
+
+    var snapshot = updates.Last(update => update.ChatItems is { Count: 2 }).ChatItems!;
+    Assert(translation.BatchRequests == 1, "Duplicate visible occurrences should share one translation request.");
+    Assert(snapshot.Select(item => item.BoundingRect).SequenceEqual([firstPosition, secondPosition]), "Both OCR occurrences should remain in the poll snapshot.");
+    Assert(snapshot.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() == 2, "Each visible occurrence should have a distinct snapshot id.");
+}
+
+static async Task TestConcatenatedChatDividesOcrPosition()
+{
+    var firstMessage = Chinese("4f60 597d 4e16 754c");
+    var secondMessage = Chinese("5feb 4f7f 7528 5929 4f7f");
+    var sourceLine = $"alpha: {firstMessage}beta: {secondMessage}";
+    var sourcePosition = new Rect(10, 100, 240, 40);
+    var session = new TranslationSession(
+        new FakeCaptureService(300, 200),
+        new FakeOcrEngine(new OcrResult(sourceLine, [new OcrLineResult(sourceLine, sourcePosition)])),
+        new CountingTranslationService());
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat));
+
+    var translated = updates
+        .Where(update => update.IsChatLine && update.DiagnosticKind == DiagnosticKind.OcrTranslated)
+        .ToList();
+    Assert(translated.Count == 2, "The concatenated OCR row should produce two translated chat lines.");
+    Assert(translated[0].BoundingRect == new Rect(10, 100, 240, 20), "The first parsed chat should use the upper half of the OCR row.");
+    Assert(translated[1].BoundingRect == new Rect(10, 120, 240, 20), "The second parsed chat should use the lower half of the OCR row.");
+}
+
 static async Task TestChatTranslationIgnoresDuplicateNamesOutsideChatRows()
 {
     var message = Chinese("5feb 4f7f 7528 5929 4f7f");
@@ -813,28 +1052,47 @@ static async Task TestChatTranslationDoesNotUseSpeakerOnlyFallbackPosition()
     Assert(translated.BoundingRect is null, "A speaker-only OCR row must not be used as a fallback translation position.");
 }
 
-static Task TestChatOverlayUsesRenderedWidth()
+static Task TestChatOverlayKeepsOcrRowPositions()
 {
-    var placed = OverlayLayout.AvoidChatOverlaps(
+    var placed = OverlayLayout.PlaceChatAtOcrRows(
     [
         new OverlayChatItem("first", "first", 10, 80, 80, 80, 480, 80, 30),
         new OverlayChatItem("second", "second", 160, 80, 80, 80, 330, 80, 30)
-    ], new Size(500, 200));
+    ]);
 
     Assert(placed[0].Top == 80, "First chat translation should keep its OCR top.");
     Assert(placed[1].Top == 80, "Horizontally separate rendered chat boxes should keep the same OCR top.");
     return Task.CompletedTask;
 }
 
-static Task TestChatOverlaySeparatesActualCollisions()
+static Task TestChatOverlayDoesNotMoveDenseRows()
 {
-    var placed = OverlayLayout.AvoidChatOverlaps(
+    var placed = OverlayLayout.PlaceChatAtOcrRows(
     [
         new OverlayChatItem("first", "first", 10, 80, 80, 80, 480, 100, 30),
         new OverlayChatItem("second", "second", 60, 80, 80, 80, 430, 100, 30)
-    ], new Size(500, 200));
+    ]);
 
-    Assert(!placed[0].IntersectsWith(placed[1]), "Actually overlapping chat translations should be separated.");
+    Assert(placed[0].Top == 80 && placed[1].Top == 80, "Dense chat translations must stay on their OCR rows instead of being shifted.");
+    return Task.CompletedTask;
+}
+
+static Task TestChatSnapshotRemovesOnlyOverlappingStaleRows()
+{
+    var current = new OverlayChatItem("current", "current", 10, 20, 20, 80, 180, 120, 24);
+    var overlappingStale = new OverlayChatItem("stale-overlap", "stale", 20, 24, 24, 80, 180, 120, 24);
+    var distantStale = new OverlayChatItem("stale-distant", "stale", 10, 100, 100, 80, 180, 120, 24);
+    var items = new[] { overlappingStale, distantStale, current };
+
+    var staleIds = OverlayLayout.FindStaleItemsOverlappingCurrentRows(
+        items,
+        new HashSet<string>([current.Id], StringComparer.Ordinal));
+    Assert(staleIds.SequenceEqual([overlappingStale.Id]), "Only a stale item overlapping a current OCR row should be removed immediately.");
+
+    var emptySnapshotRemovals = OverlayLayout.FindStaleItemsOverlappingCurrentRows(
+        items,
+        new HashSet<string>(StringComparer.Ordinal));
+    Assert(emptySnapshotRemovals.Count == 0, "An empty current snapshot should retain all stale items for their display-duration TTL.");
     return Task.CompletedTask;
 }
 
@@ -869,6 +1127,23 @@ sealed class FakeCaptureService(int width = 1, int height = 1) : ICaptureService
     public Task<CapturedFrame> CaptureAsync(CaptureTarget target, CaptureRegion region, CancellationToken ct)
     {
         var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        return Task.FromResult(new CapturedFrame(bitmap));
+    }
+}
+
+sealed class DeferredThenCaptureService : ICaptureService
+{
+    public int CallCount { get; private set; }
+
+    public Task<CapturedFrame> CaptureAsync(CaptureTarget target, CaptureRegion region, CancellationToken ct)
+    {
+        CallCount++;
+        if (CallCount == 1)
+        {
+            throw new CaptureDeferredException("Waiting for the game window");
+        }
+
+        var bitmap = new RenderTargetBitmap(1, 1, 96, 96, PixelFormats.Pbgra32);
         return Task.FromResult(new CapturedFrame(bitmap));
     }
 }
@@ -912,6 +1187,26 @@ sealed class CountingTranslationService : ITranslationService
         BatchRequests++;
         LastBatchTexts = request.Texts.ToList();
         return Task.FromResult(new BatchTranslationResult(request.Texts.Select(text => $"translated:{text}").ToList()));
+    }
+}
+
+sealed class SucceedOnceThenFailBatchTranslationService : ITranslationService
+{
+    public int BatchRequests { get; private set; }
+
+    public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct) =>
+        Task.FromResult(new TranslationResult(request.Text, $"translated:{request.Text}", null));
+
+    public Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
+    {
+        BatchRequests++;
+        if (BatchRequests > 1)
+        {
+            throw new InvalidOperationException("Batch API Error Mock");
+        }
+
+        return Task.FromResult(new BatchTranslationResult(
+            request.Texts.Select(text => $"translated:{text}").ToList()));
     }
 }
 

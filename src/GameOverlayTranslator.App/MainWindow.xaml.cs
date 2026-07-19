@@ -204,7 +204,7 @@ public partial class MainWindow : Window
         );
         chatTranslationService = delegator;
         var cachingTranslationService = new CachingTranslationService(delegator, new ScreenTranslationCacheStore());
-        session = new TranslationSession(new WindowCaptureService(), delegatingOcrEngine, cachingTranslationService);
+        session = new TranslationSession(new WindowCaptureService(requireTargetForeground: true), delegatingOcrEngine, cachingTranslationService);
         session.BeforeCaptureAsync = SetOverlayCaptureVisibilityAsync(false);
         session.AfterCaptureAsync = SetOverlayCaptureVisibilityAsync(true);
         session.Updated += SessionUpdated;

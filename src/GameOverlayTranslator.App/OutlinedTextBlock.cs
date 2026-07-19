@@ -18,6 +18,13 @@ public sealed class OutlinedTextBlock : Control
     public static readonly DependencyProperty StrokeThicknessProperty =
         DependencyProperty.Register(nameof(StrokeThickness), typeof(double), typeof(OutlinedTextBlock), new FrameworkPropertyMetadata(3.0, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty MaxLineCountProperty =
+        DependencyProperty.Register(
+            nameof(MaxLineCount),
+            typeof(int),
+            typeof(OutlinedTextBlock),
+            new FrameworkPropertyMetadata(0, FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsRender));
+
     public string Text
     {
         get => (string)GetValue(TextProperty);
@@ -42,6 +49,12 @@ public sealed class OutlinedTextBlock : Control
         set => SetValue(StrokeThicknessProperty, value);
     }
 
+    public int MaxLineCount
+    {
+        get => (int)GetValue(MaxLineCountProperty);
+        set => SetValue(MaxLineCountProperty, value);
+    }
+
     protected override Size MeasureOverride(Size constraint)
     {
         if (string.IsNullOrWhiteSpace(Text))
@@ -63,6 +76,10 @@ public sealed class OutlinedTextBlock : Control
         {
             text.MaxTextWidth = Math.Max(1, constraint.Width);
             text.Trimming = TextTrimming.CharacterEllipsis;
+        }
+        if (MaxLineCount > 0)
+        {
+            text.MaxLineCount = MaxLineCount;
         }
         
         double offset = StrokeThickness * 2;
@@ -86,6 +103,10 @@ public sealed class OutlinedTextBlock : Control
         {
             text.MaxTextWidth = Math.Max(1, ActualWidth);
             text.Trimming = TextTrimming.CharacterEllipsis;
+        }
+        if (MaxLineCount > 0)
+        {
+            text.MaxLineCount = MaxLineCount;
         }
 
         var geometry = text.BuildGeometry(new Point(0, 0));

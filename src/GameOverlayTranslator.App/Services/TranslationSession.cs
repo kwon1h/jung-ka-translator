@@ -61,8 +61,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
     private async Task RunAsync(SessionOptions options, CancellationToken ct)
     {
-        var exactLines = new HashSet<string>(StringComparer.Ordinal);
         var recentChat = new RecentChatFilter();
+        var chatTranslationMemory = new Dictionary<string, ChatTranslationMemoryEntry>(StringComparer.Ordinal);
         var screenTranslationMemory = new ScreenTranslationMemory();
         var totalTranslationRequests = 0;
         var totalTranslationCharacters = 0;
@@ -128,8 +128,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                 await HandleChatTranslationAsync(
                     options,
                     recognizedForTranslation,
-                    exactLines,
                     recentChat,
+                    chatTranslationMemory,
                     dictExactEntries,
                     dictRegexes,
                     usage =>
@@ -139,6 +139,13 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         return (totalTranslationRequests, totalTranslationCharacters);
                     },
                     ct);
+            }
+            catch (CaptureDeferredException ex)
+            {
+                Publish(
+                    ex.Message,
+                    filterReason: "Target window is not foreground",
+                    filterRule: "CaptureDeferred");
             }
             catch (CaptureException ex)
             {
@@ -502,8 +509,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
     private async Task HandleChatTranslationAsync(
         SessionOptions options,
         OcrResult recognized,
-        HashSet<string> exactLines,
         RecentChatFilter recentChat,
+        Dictionary<string, ChatTranslationMemoryEntry> chatTranslationMemory,
         IReadOnlyList<(UserDictEntry Entry, string NormalizedSource)> dictExactEntries,
         IReadOnlyList<(UserDictEntry Entry, Regex Regex)> dictRegexes,
         Func<TranslationUsage, (int TotalRequests, int TotalCharacters)> addUsage,
@@ -518,20 +525,27 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                 ocrRawText: recognized.Text,
                 filterReason: string.IsNullOrWhiteSpace(recognized.Text) ? "No OCR text" : "Cannot parse speaker/message",
                 filterRule: string.IsNullOrWhiteSpace(recognized.Text) ? "NoText" : "QualityFilter",
-                diagnosticKind: DiagnosticKind.OcrSkipped);
+                diagnosticKind: DiagnosticKind.OcrSkipped,
+                chatItems: Array.Empty<ChatTranslationItem>());
             return;
         }
 
-        foreach (var (line, boundingRect) in positionedChatLines)
+        var pollLines = GroupChatOccurrences(positionedChatLines);
+        var pendingTranslations = new List<PendingChatTranslation>();
+        var pendingAliases = new List<PendingChatAlias>();
+
+        foreach (var pollLine in pollLines)
         {
-            if (exactLines.Contains(line.DeduplicationKey))
+            var line = pollLine.Line;
+            if (chatTranslationMemory.ContainsKey(line.DeduplicationKey))
             {
                 Publish(
                     "스킵",
                     source: line.SourceLine,
                     filterReason: "Same line in session",
                     filterRule: "Duplicate",
-                    diagnosticKind: DiagnosticKind.OcrSkipped);
+                    diagnosticKind: DiagnosticKind.OcrSkipped,
+                    boundingRect: pollLine.PrimaryBoundingRect);
                 continue;
             }
 
@@ -549,12 +563,17 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                 var decision = recentChat.Evaluate(new ChatLine(activeLine.Speaker, exactEntry.Target), options.Filter);
                 if (decision.Action == ChatFilterAction.Skip)
                 {
+                    if (!TryAliasRememberedChatTranslation(chatTranslationMemory, pollLine, activeLine, decision.Id))
+                    {
+                        pendingAliases.Add(new PendingChatAlias(pollLine, activeLine, decision.Id));
+                    }
                     Publish(
                         "스킵",
                         line.SourceLine,
                         filterReason: $"Similarity {decision.SimilarityScore:F2}",
                         filterRule: "Duplicate",
-                        diagnosticKind: DiagnosticKind.OcrSkipped);
+                        diagnosticKind: DiagnosticKind.OcrSkipped,
+                        boundingRect: pollLine.PrimaryBoundingRect);
                     continue;
                 }
 
@@ -569,8 +588,17 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     filterReason: "User dictionary exact match",
                     filterRule: "Dictionary",
                     diagnosticKind: DiagnosticKind.OcrSkipped,
-                    boundingRect: boundingRect);
-                exactLines.Add(line.DeduplicationKey);
+                    boundingRect: pollLine.PrimaryBoundingRect);
+                RememberChatTranslation(
+                    chatTranslationMemory,
+                    line.DeduplicationKey,
+                    new ChatTranslationMemoryEntry(
+                        decision.Id,
+                        Guid.NewGuid().ToString("N"),
+                        line.SourceLine,
+                        activeLine.Speaker,
+                        exactEntry.Target),
+                    decision.Action == ChatFilterAction.Replace);
                 continue;
             }
 
@@ -584,7 +612,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     line.SourceLine,
                     filterReason: initialQuality.Reason,
                     filterRule: "QualityFilter",
-                    diagnosticKind: DiagnosticKind.OcrSkipped);
+                    diagnosticKind: DiagnosticKind.OcrSkipped,
+                    boundingRect: pollLine.PrimaryBoundingRect);
                 continue;
             }
 
@@ -613,19 +642,24 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     filterReason: quality.Reason,
                     filterRule: "QualityFilter",
                     diagnosticKind: DiagnosticKind.OcrSkipped,
-                    boundingRect: boundingRect);
+                    boundingRect: pollLine.PrimaryBoundingRect);
                 continue;
             }
 
             var decisionForLine = recentChat.Evaluate(activeLine, options.Filter);
             if (decisionForLine.Action == ChatFilterAction.Skip)
             {
+                if (!TryAliasRememberedChatTranslation(chatTranslationMemory, pollLine, activeLine, decisionForLine.Id))
+                {
+                    pendingAliases.Add(new PendingChatAlias(pollLine, activeLine, decisionForLine.Id));
+                }
                 Publish(
                     "스킵",
                     activeLine.SourceLine,
                     filterReason: $"Similarity {decisionForLine.SimilarityScore:F2}",
                     filterRule: "Duplicate",
-                    diagnosticKind: DiagnosticKind.OcrSkipped);
+                    diagnosticKind: DiagnosticKind.OcrSkipped,
+                    boundingRect: pollLine.PrimaryBoundingRect);
                 continue;
             }
 
@@ -643,52 +677,224 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     filterReason: quality.Reason,
                     filterRule: "QualityFilter",
                     diagnosticKind: DiagnosticKind.OcrSkipped,
-                    boundingRect: boundingRect);
-                exactLines.Add(line.DeduplicationKey);
+                    boundingRect: pollLine.PrimaryBoundingRect);
+                RememberChatTranslation(
+                    chatTranslationMemory,
+                    line.DeduplicationKey,
+                    new ChatTranslationMemoryEntry(
+                        decisionForLine.Id,
+                        Guid.NewGuid().ToString("N"),
+                        line.SourceLine,
+                        activeLine.Speaker,
+                        activeLine.Message),
+                    decisionForLine.Action == ChatFilterAction.Replace);
                 continue;
             }
 
-            var translated = await translationService.TranslateAsync(new TranslationRequest(activeLine.Message, options.TargetLanguage.Code), ct);
-            var usage = translated.Usage ?? TranslationUsage.Outbound(1, activeLine.Message.Length);
-            if (usage.OutboundRequestCount > 0 || usage.OutboundCharacterCount > 0)
+            pendingTranslations.Add(new PendingChatTranslation(pollLine, activeLine, decisionForLine, replaced));
+        }
+
+        if (pendingTranslations.Count > 0)
+        {
+            var textsToTranslate = pendingTranslations.Select(pending => pending.ActiveLine.Message).ToList();
+            var batchCharacters = textsToTranslate.Sum(text => text.Length);
+            BatchTranslationResult batchResult;
+            try
             {
-                var totals = addUsage(usage);
-                AppLog.Write($"TranslationRequest mode=chat count={usage.OutboundRequestCount} chars={usage.OutboundCharacterCount} speaker={Quote(activeLine.Speaker)} message={Quote(activeLine.Message)}");
+                batchResult = await translationService.TranslateBatchAsync(
+                    new BatchTranslationRequest(textsToTranslate, options.TargetLanguage.Code),
+                    ct);
+            }
+            catch
+            {
                 Publish(
                     "번역",
-                    activeLine.SourceLine,
-                    translated.TranslatedText,
-                    speaker: activeLine.Speaker,
-                    isChatLine: true,
-                    chatLineId: decisionForLine.Id,
-                    replacesChatLine: decisionForLine.Action == ChatFilterAction.Replace,
-                    filterReason: replaced ? "User dictionary replacement then translated" : "Translated",
-                    filterRule: "Translated",
-                    diagnosticSourceText: activeLine.Message,
-                    translationRequestCount: usage.OutboundRequestCount,
-                    translationCharacterCount: usage.OutboundCharacterCount,
-                    totalTranslationRequestCount: totals.TotalRequests,
-                    totalTranslationCharacterCount: totals.TotalCharacters,
-                    diagnosticKind: DiagnosticKind.OcrTranslated,
-                    boundingRect: boundingRect);
+                    ocrRawText: recognized.Text,
+                    chatItems: BuildChatSnapshot(pollLines, chatTranslationMemory));
+                throw;
             }
-            else
+            var usage = batchResult.Usage ?? TranslationUsage.Outbound(1, batchCharacters);
+            var hasOutboundUsage = usage.OutboundRequestCount > 0 || usage.OutboundCharacterCount > 0;
+            var totals = hasOutboundUsage ? addUsage(usage) : (TotalRequests: 0, TotalCharacters: 0);
+
+            if (hasOutboundUsage)
             {
-                Publish(
-                    "스킵",
-                    activeLine.SourceLine,
-                    translated.TranslatedText,
-                    speaker: activeLine.Speaker,
-                    isChatLine: true,
-                    chatLineId: decisionForLine.Id,
-                    replacesChatLine: decisionForLine.Action == ChatFilterAction.Replace,
-                    filterReason: "Cache hit or translation bypass",
-                    filterRule: "CacheHit",
-                    diagnosticKind: DiagnosticKind.OcrSkipped,
-                    boundingRect: boundingRect);
+                AppLog.Write($"TranslationRequest mode=chat count={usage.OutboundRequestCount} chars={usage.OutboundCharacterCount} lines={pendingTranslations.Count}");
             }
-            exactLines.Add(line.DeduplicationKey);
+
+            for (var index = 0; index < pendingTranslations.Count; index++)
+            {
+                var pending = pendingTranslations[index];
+                var translatedText = index < batchResult.TranslatedTexts.Count
+                    ? batchResult.TranslatedTexts[index]
+                    : pending.ActiveLine.Message;
+                var decision = pending.Decision;
+                RememberChatTranslation(
+                    chatTranslationMemory,
+                    pending.PollLine.Line.DeduplicationKey,
+                    new ChatTranslationMemoryEntry(
+                        decision.Id,
+                        Guid.NewGuid().ToString("N"),
+                        pending.PollLine.Line.SourceLine,
+                        pending.ActiveLine.Speaker,
+                        translatedText),
+                    decision.Action == ChatFilterAction.Replace);
+
+                if (hasOutboundUsage)
+                {
+                    Publish(
+                        "번역",
+                        pending.ActiveLine.SourceLine,
+                        translatedText,
+                        speaker: pending.ActiveLine.Speaker,
+                        isChatLine: true,
+                        chatLineId: decision.Id,
+                        replacesChatLine: decision.Action == ChatFilterAction.Replace,
+                        filterReason: pending.DictionaryReplaced ? "User dictionary replacement then translated" : "Translated",
+                        filterRule: "Translated",
+                        diagnosticSourceText: pending.ActiveLine.Message,
+                        translationRequestCount: index == 0 ? usage.OutboundRequestCount : 0,
+                        translationCharacterCount: index == 0 ? usage.OutboundCharacterCount : 0,
+                        totalTranslationRequestCount: totals.TotalRequests,
+                        totalTranslationCharacterCount: totals.TotalCharacters,
+                        diagnosticKind: DiagnosticKind.OcrTranslated,
+                        boundingRect: pending.PollLine.PrimaryBoundingRect);
+                }
+                else
+                {
+                    Publish(
+                        "스킵",
+                        pending.ActiveLine.SourceLine,
+                        translatedText,
+                        speaker: pending.ActiveLine.Speaker,
+                        isChatLine: true,
+                        chatLineId: decision.Id,
+                        replacesChatLine: decision.Action == ChatFilterAction.Replace,
+                        filterReason: "Cache hit or translation bypass",
+                        filterRule: "CacheHit",
+                        diagnosticKind: DiagnosticKind.OcrSkipped,
+                        boundingRect: pending.PollLine.PrimaryBoundingRect);
+                }
+            }
         }
+
+        foreach (var pendingAlias in pendingAliases)
+        {
+            _ = TryAliasRememberedChatTranslation(
+                chatTranslationMemory,
+                pendingAlias.PollLine,
+                pendingAlias.ActiveLine,
+                pendingAlias.ChatLineId);
+        }
+
+        Publish(
+            "번역",
+            ocrRawText: recognized.Text,
+            chatItems: BuildChatSnapshot(pollLines, chatTranslationMemory));
+    }
+
+    private static IReadOnlyList<ChatPollLine> GroupChatOccurrences(
+        IReadOnlyList<(ChatLine Line, Rect? BoundingRect)> positionedChatLines)
+    {
+        var ordered = new List<ChatPollLine>();
+        var byKey = new Dictionary<string, ChatPollLine>(StringComparer.Ordinal);
+        foreach (var (line, boundingRect) in positionedChatLines)
+        {
+            if (!byKey.TryGetValue(line.DeduplicationKey, out var pollLine))
+            {
+                pollLine = new ChatPollLine(line);
+                byKey[line.DeduplicationKey] = pollLine;
+                ordered.Add(pollLine);
+            }
+
+            pollLine.BoundingRects.Add(boundingRect);
+        }
+
+        return ordered;
+    }
+
+    private static IReadOnlyList<ChatTranslationItem> BuildChatSnapshot(
+        IReadOnlyList<ChatPollLine> pollLines,
+        IReadOnlyDictionary<string, ChatTranslationMemoryEntry> memory)
+    {
+        var snapshot = new List<ChatTranslationItem>();
+        var occurrenceCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var pollLine in pollLines)
+        {
+            if (!memory.TryGetValue(pollLine.Line.DeduplicationKey, out var remembered))
+            {
+                continue;
+            }
+
+            for (var occurrenceIndex = 0; occurrenceIndex < pollLine.BoundingRects.Count; occurrenceIndex++)
+            {
+                occurrenceCounts.TryGetValue(remembered.SnapshotId, out var snapshotOccurrence);
+                occurrenceCounts[remembered.SnapshotId] = snapshotOccurrence + 1;
+                snapshot.Add(new ChatTranslationItem(
+                    snapshotOccurrence == 0
+                        ? remembered.SnapshotId
+                        : $"{remembered.SnapshotId}:{snapshotOccurrence}",
+                    remembered.SourceText,
+                    remembered.TranslatedText,
+                    remembered.Speaker,
+                    pollLine.BoundingRects[occurrenceIndex]));
+            }
+        }
+
+        return snapshot;
+    }
+
+    private static void RememberChatTranslation(
+        Dictionary<string, ChatTranslationMemoryEntry> memory,
+        string deduplicationKey,
+        ChatTranslationMemoryEntry entry,
+        bool replacesChatLine)
+    {
+        if (replacesChatLine)
+        {
+            var replacedSnapshotId = memory.Values
+                .FirstOrDefault(existing => string.Equals(existing.ChatLineId, entry.ChatLineId, StringComparison.Ordinal))
+                ?.SnapshotId;
+            if (!string.IsNullOrWhiteSpace(replacedSnapshotId))
+            {
+                entry = entry with { SnapshotId = replacedSnapshotId };
+            }
+
+            var replacedKeys = memory
+                .Where(pair => pair.Key != deduplicationKey
+                               && string.Equals(pair.Value.ChatLineId, entry.ChatLineId, StringComparison.Ordinal))
+                .Select(pair => pair.Key)
+                .ToList();
+            foreach (var replacedKey in replacedKeys)
+            {
+                memory.Remove(replacedKey);
+            }
+        }
+
+        memory[deduplicationKey] = entry;
+    }
+
+    private static bool TryAliasRememberedChatTranslation(
+        Dictionary<string, ChatTranslationMemoryEntry> memory,
+        ChatPollLine pollLine,
+        ChatLine activeLine,
+        string chatLineId)
+    {
+        var remembered = memory.Values.FirstOrDefault(entry =>
+            string.Equals(entry.ChatLineId, chatLineId, StringComparison.Ordinal));
+        if (remembered is null)
+        {
+            return false;
+        }
+
+        memory[pollLine.Line.DeduplicationKey] = new ChatTranslationMemoryEntry(
+            chatLineId,
+            remembered.SnapshotId,
+            pollLine.Line.SourceLine,
+            activeLine.Speaker,
+            remembered.TranslatedText);
+        AppLog.Write($"ChatTranslationMemory alias chatLineId={chatLineId} source={Quote(pollLine.Line.SourceLine)}");
+        return true;
     }
 
     private static string JoinTranslatedSegments(IReadOnlyList<ScreenSegmentPlan> segments) =>
@@ -715,12 +921,13 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         int totalTranslationRequestCount = 0,
         int totalTranslationCharacterCount = 0,
         DiagnosticKind diagnosticKind = DiagnosticKind.Other,
-        Rect? boundingRect = null) =>
+        Rect? boundingRect = null,
+        IReadOnlyList<ChatTranslationItem>? chatItems = null) =>
         Updated?.Invoke(this, new SessionUpdate(
             status, source, translated, isError, speaker, isChatLine, chatLineId, replacesChatLine,
             ocrRawText, filterReason, filterRule, screenItems, translationRequestCount,
             translationCharacterCount, totalTranslationRequestCount, totalTranslationCharacterCount,
-            diagnosticSourceText, diagnosticKind, boundingRect));
+            diagnosticSourceText, diagnosticKind, boundingRect, chatItems));
 
     private static Rect? FindChatBoundingRect(string sourceLine, IReadOnlyList<OcrLineResult> ocrLines)
     {
@@ -739,11 +946,26 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         OcrResult recognized,
         OcrLanguage language)
     {
-        var positioned = recognized.Lines
-            .SelectMany(ocrLine => ChatLineParser
-                .Parse(NormalizeOcrTextForChat(ocrLine.Text, language))
-                .Select(line => (Line: line, BoundingRect: (Rect?)ocrLine.BoundingRect)))
-            .ToList();
+        var positioned = new List<(ChatLine Line, Rect? BoundingRect)>();
+        foreach (var ocrLine in recognized.Lines)
+        {
+            var parsedLines = ChatLineParser.Parse(NormalizeOcrTextForChat(ocrLine.Text, language));
+            for (var index = 0; index < parsedLines.Count; index++)
+            {
+                var boundingRect = ocrLine.BoundingRect;
+                if (parsedLines.Count > 1 && boundingRect.Height > 0)
+                {
+                    var itemHeight = boundingRect.Height / parsedLines.Count;
+                    boundingRect = new Rect(
+                        boundingRect.Left,
+                        boundingRect.Top + itemHeight * index,
+                        boundingRect.Width,
+                        itemHeight);
+                }
+
+                positioned.Add((parsedLines[index], boundingRect));
+            }
+        }
 
         if (positioned.Count > 0)
         {
@@ -836,6 +1058,31 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.None);
         return string.Join("\n", lines.Select(line => NormalizeTextForTranslation(line, language)));
     }
+
+    private sealed class ChatPollLine(ChatLine line)
+    {
+        public ChatLine Line { get; } = line;
+        public List<Rect?> BoundingRects { get; } = [];
+        public Rect? PrimaryBoundingRect => BoundingRects.FirstOrDefault(rect => rect.HasValue);
+    }
+
+    private sealed record ChatTranslationMemoryEntry(
+        string ChatLineId,
+        string SnapshotId,
+        string SourceText,
+        string Speaker,
+        string TranslatedText);
+
+    private sealed record PendingChatTranslation(
+        ChatPollLine PollLine,
+        ChatLine ActiveLine,
+        ChatFilterDecision Decision,
+        bool DictionaryReplaced);
+
+    private sealed record PendingChatAlias(
+        ChatPollLine PollLine,
+        ChatLine ActiveLine,
+        string ChatLineId);
 
     private sealed record ScreenLinePlan(OcrLineResult OcrLine, IReadOnlyList<ScreenSegmentPlan> Segments);
 

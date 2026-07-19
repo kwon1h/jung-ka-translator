@@ -6,7 +6,7 @@ using GameOverlayTranslator.App.Domain;
 
 namespace GameOverlayTranslator.App.Platform;
 
-public sealed class WindowCaptureService : ICaptureService
+public sealed class WindowCaptureService(bool requireTargetForeground = false) : ICaptureService
 {
     public Task<CapturedFrame> CaptureAsync(CaptureTarget target, CaptureRegion region, CancellationToken ct)
     {
@@ -20,6 +20,11 @@ public sealed class WindowCaptureService : ICaptureService
         if (NativeMethods.IsIconic(target.Window.Handle))
         {
             throw new CaptureException("최소화된 창은 캡처할 수 없습니다.");
+        }
+
+        if (requireTargetForeground && !IsTargetForeground(target.Window.Handle, NativeMethods.GetForegroundWindow()))
+        {
+            throw new CaptureDeferredException("게임 창이 활성화되면 번역을 자동으로 재개합니다.");
         }
 
         if (!WindowGeometry.TryGetClientScreenRect(target.Window.Handle, out var rect))
@@ -51,6 +56,11 @@ public sealed class WindowCaptureService : ICaptureService
             NativeMethods.ReleaseDC(nint.Zero, screenDc);
         }
     }
+
+    internal static bool IsTargetForeground(nint targetHandle, nint foregroundHandle) =>
+        targetHandle != nint.Zero && targetHandle == foregroundHandle;
 }
 
 public sealed class CaptureException(string message) : Exception(message);
+
+public sealed class CaptureDeferredException(string message) : Exception(message);

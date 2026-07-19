@@ -106,6 +106,13 @@ public sealed record UserDictEntry(string Source, string Target, string Category
 
 public sealed record ScreenTranslationItem(string SourceText, string TranslatedText, Rect BoundingRect);
 
+public sealed record ChatTranslationItem(
+    string Id,
+    string SourceText,
+    string TranslatedText,
+    string Speaker,
+    Rect? BoundingRect);
+
 public sealed record SessionOptions(
     CaptureTarget Target,
     CaptureRegion Region,
@@ -138,4 +145,5 @@ public sealed record SessionUpdate(
     int TotalTranslationCharacterCount = 0,
     string? DiagnosticSourceText = null,
     DiagnosticKind DiagnosticKind = DiagnosticKind.Other,
-    Rect? BoundingRect = null);
+    Rect? BoundingRect = null,
+    IReadOnlyList<ChatTranslationItem>? ChatItems = null);
