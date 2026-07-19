@@ -509,10 +509,9 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         Func<TranslationUsage, (int TotalRequests, int TotalCharacters)> addUsage,
         CancellationToken ct)
     {
-        var normalizedOcrText = NormalizeOcrTextForChat(recognized.Text, options.OcrLanguage);
-        var chatLines = ChatLineParser.Parse(normalizedOcrText);
-        AppLog.Write($"OCR chat poll raw={Quote(recognized.Text)} parsedLines={chatLines.Count}");
-        if (chatLines.Count == 0)
+        var positionedChatLines = ParsePositionedChatLines(recognized, options.OcrLanguage);
+        AppLog.Write($"OCR chat poll raw={Quote(recognized.Text)} parsedLines={positionedChatLines.Count}");
+        if (positionedChatLines.Count == 0)
         {
             Publish(
                 "스킵",
@@ -523,9 +522,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             return;
         }
 
-        foreach (var line in chatLines)
+        foreach (var (line, boundingRect) in positionedChatLines)
         {
-            var boundingRect = FindChatBoundingRect(line.SourceLine, recognized.Lines);
             if (exactLines.Contains(line.DeduplicationKey))
             {
                 Publish(
@@ -728,13 +726,34 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
     {
         var normalizedSource = NormalizeForMatching(sourceLine);
         return ocrLines
-            .FirstOrDefault(line =>
-            {
-                var normalizedLine = NormalizeForMatching(line.Text);
-                return normalizedLine.Contains(normalizedSource, StringComparison.Ordinal)
-                       || normalizedSource.Contains(normalizedLine, StringComparison.Ordinal);
-            })?.BoundingRect
-            ?? ocrLines.LastOrDefault()?.BoundingRect;
+            .Select(line => (Line: line, Normalized: NormalizeForMatching(line.Text)))
+            .Where(candidate => candidate.Normalized.Length > 0
+                                && candidate.Normalized.Contains(normalizedSource, StringComparison.Ordinal))
+            .OrderByDescending(candidate => string.Equals(candidate.Normalized, normalizedSource, StringComparison.Ordinal))
+            .ThenBy(candidate => candidate.Normalized.Length)
+            .Select(candidate => (Rect?)candidate.Line.BoundingRect)
+            .FirstOrDefault();
+    }
+
+    private static IReadOnlyList<(ChatLine Line, Rect? BoundingRect)> ParsePositionedChatLines(
+        OcrResult recognized,
+        OcrLanguage language)
+    {
+        var positioned = recognized.Lines
+            .SelectMany(ocrLine => ChatLineParser
+                .Parse(NormalizeOcrTextForChat(ocrLine.Text, language))
+                .Select(line => (Line: line, BoundingRect: (Rect?)ocrLine.BoundingRect)))
+            .ToList();
+
+        if (positioned.Count > 0)
+        {
+            return positioned;
+        }
+
+        var normalizedOcrText = NormalizeOcrTextForChat(recognized.Text, language);
+        return ChatLineParser.Parse(normalizedOcrText)
+            .Select(line => (Line: line, BoundingRect: FindChatBoundingRect(line.SourceLine, recognized.Lines)))
+            .ToList();
     }
 
     internal static bool IsEnglishOnly(string text)

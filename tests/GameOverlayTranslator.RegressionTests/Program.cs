@@ -48,6 +48,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("English-only screen lines are hidden", TestEnglishOnlyScreenLinesAreHidden),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
     ("Chat translation keeps OCR position", TestChatTranslationKeepsOcrPosition),
+    ("Chat translation ignores duplicate names outside chat rows", TestChatTranslationIgnoresDuplicateNamesOutsideChatRows),
+    ("Chat translation does not use a speaker-only fallback position", TestChatTranslationDoesNotUseSpeakerOnlyFallbackPosition),
     ("Chat overlay uses rendered width for collisions", TestChatOverlayUsesRenderedWidth),
     ("Chat overlay separates actual collisions", TestChatOverlaySeparatesActualCollisions),
     ("Crowded overlay keeps preferred position", TestCrowdedOverlayKeepsPreferredPosition),
@@ -774,6 +776,41 @@ static async Task TestChatTranslationKeepsOcrPosition()
 
     var translated = updates.First(update => update.IsChatLine && update.DiagnosticKind == DiagnosticKind.OcrTranslated);
     Assert(translated.BoundingRect == expected, "Chat translation should retain its OCR bounding rectangle.");
+}
+
+static async Task TestChatTranslationIgnoresDuplicateNamesOutsideChatRows()
+{
+    var message = Chinese("5feb 4f7f 7528 5929 4f7f");
+    var expected = new Rect(24, 312, 260, 24);
+    var ocr = new OcrResult($"zuyeong\n{message}\n[\u961f\u4f0d]zuyeong: {message}",
+    [
+        new OcrLineResult("zuyeong", new Rect(160, 38, 80, 20)),
+        new OcrLineResult(message, new Rect(900, 270, 140, 24)),
+        new OcrLineResult($"[\u961f\u4f0d]zuyeong: {message}", expected)
+    ]);
+    var session = new TranslationSession(new FakeCaptureService(1200, 700), new FakeOcrEngine(ocr), new CountingTranslationService());
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat));
+
+    var translated = updates.First(update => update.IsChatLine && update.DiagnosticKind == DiagnosticKind.OcrTranslated);
+    Assert(translated.BoundingRect == expected, "Chat translation should use the parsed chat row, not a matching player name or speech bubble.");
+}
+
+static async Task TestChatTranslationDoesNotUseSpeakerOnlyFallbackPosition()
+{
+    var message = Chinese("5feb 4f7f 7528 5929 4f7f");
+    var ocr = new OcrResult($"zuyeong: {message}",
+    [
+        new OcrLineResult("zuyeong", new Rect(160, 38, 80, 20))
+    ]);
+    var session = new TranslationSession(new FakeCaptureService(1200, 700), new FakeOcrEngine(ocr), new CountingTranslationService());
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat));
+
+    var translated = updates.First(update => update.IsChatLine && update.DiagnosticKind == DiagnosticKind.OcrTranslated);
+    Assert(translated.BoundingRect is null, "A speaker-only OCR row must not be used as a fallback translation position.");
 }
 
 static Task TestChatOverlayUsesRenderedWidth()
