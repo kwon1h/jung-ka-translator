@@ -38,6 +38,21 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern bool IsWindow(nint hwnd);
 
+    [DllImport("user32.dll")]
+    internal static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    internal static extern bool SetForegroundWindow(nint hwnd);
+
+    [DllImport("user32.dll")]
+    internal static extern bool BringWindowToTop(nint hwnd);
+
+    [DllImport("user32.dll")]
+    internal static extern bool AttachThreadInput(uint sourceThreadId, uint targetThreadId, bool attach);
+
+    [DllImport("kernel32.dll")]
+    internal static extern uint GetCurrentThreadId();
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     internal static extern int GetWindowText(nint hwnd, StringBuilder text, int maxLength);
 

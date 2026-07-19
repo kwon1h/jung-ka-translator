@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using GameOverlayTranslator.App.Contracts;
@@ -134,6 +135,10 @@ public partial class MainWindow : Window
     private CancellationTokenSource? sessionCancellation;
     private bool applyingOverlayPreset;
     private bool restoringSettings = true;
+    private bool refreshingWindowList;
+    private bool capturingPreview;
+    private CancellationTokenSource? previewCancellation;
+    private nint previewWindowHandle;
 
     private readonly UserDictionaryStore userDictStore = new();
     private readonly System.Collections.ObjectModel.ObservableCollection<DiagnosticLogItem> diagnosticLogs = new();
@@ -262,9 +267,20 @@ public partial class MainWindow : Window
         UpdateTranslatorPanelsVisibility(settings.TranslatorType);
     }
 
-    private void MainWindowLoaded(object sender, RoutedEventArgs e)
+    private async void MainWindowLoaded(object sender, RoutedEventArgs e)
     {
         UpdateTranslationModeUI();
+        await RefreshGamePreviewAsync();
+    }
+
+    private void MainWindowActivated(object? sender, EventArgs e) => Topmost = true;
+
+    private void MainWindowDeactivated(object? sender, EventArgs e)
+    {
+        if (!capturingPreview)
+        {
+            Topmost = false;
+        }
     }
 
     private void RefreshWindows(object sender, RoutedEventArgs e)
@@ -272,14 +288,26 @@ public partial class MainWindow : Window
         var selectedHandle = (WindowComboBox.SelectedItem as CapturableWindow)?.Handle;
         var ownHandle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         var windows = windowSource.ListWindows().Where(window => window.Handle != ownHandle).ToList();
-        WindowComboBox.ItemsSource = windows;
-        WindowComboBox.SelectedItem =
-            windows.FirstOrDefault(window => window.Handle == selectedHandle)
-            ?? FindSavedWindow(windows)
-            ?? FindKartWindow(windows)
-            ?? windows.FirstOrDefault();
+        refreshingWindowList = true;
+        try
+        {
+            WindowComboBox.ItemsSource = windows;
+            WindowComboBox.SelectedItem =
+                windows.FirstOrDefault(window => window.Handle == selectedHandle)
+                ?? FindSavedWindow(windows)
+                ?? FindKartWindow(windows)
+                ?? windows.FirstOrDefault();
+        }
+        finally
+        {
+            refreshingWindowList = false;
+        }
         SetStatus(windows.Count == 0 ? "선택 가능한 창이 없습니다." : "게임 창을 선택하세요.");
         UpdateStartReadiness();
+        if (IsLoaded)
+        {
+            _ = RefreshGamePreviewAsync();
+        }
     }
 
     private void SaveApiKey(object sender, RoutedEventArgs e)
@@ -355,13 +383,15 @@ public partial class MainWindow : Window
 
     private void WindowSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        if (WindowComboBox.SelectedItem is not CapturableWindow window || settings.LastWindowTitle is null)
+        if (WindowComboBox.SelectedItem is not CapturableWindow window)
         {
+            ClearGamePreview("게임 창을 선택하면 실제 화면 미리보기가 표시됩니다.");
             return;
         }
 
-        if (!string.Equals(window.Title, settings.LastWindowTitle, StringComparison.CurrentCulture)
-            || !string.Equals(window.ProcessName, settings.LastWindowProcessName, StringComparison.OrdinalIgnoreCase))
+        if (settings.LastWindowTitle is not null
+            && (!string.Equals(window.Title, settings.LastWindowTitle, StringComparison.CurrentCulture)
+                || !string.Equals(window.ProcessName, settings.LastWindowProcessName, StringComparison.OrdinalIgnoreCase)))
         {
             selectedChatRegions.Clear();
             selectedScreenRegion = null;
@@ -369,6 +399,11 @@ public partial class MainWindow : Window
             RegionText.Text = "선택되지 않음";
             UpdateRegionButtonVisual();
             UpdateTranslationModeUI();
+        }
+
+        if (IsLoaded && !refreshingWindowList)
+        {
+            _ = RefreshGamePreviewAsync(window);
         }
     }
 
@@ -420,6 +455,7 @@ public partial class MainWindow : Window
         UpdateRegionButtonVisual();
 
         UpdateStartReadiness();
+        RenderPreviewRegions();
     }
 
     private void DisplayModeSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -518,6 +554,7 @@ public partial class MainWindow : Window
             SaveSelections(window);
             SetStatus($"영역 편집을 저장했습니다. 번역 {picker.Regions.Count}개 · 제외 {picker.ExcludedRegions.Count}개");
             UpdateTranslationModeUI();
+            _ = RefreshGamePreviewAsync(window);
         }
     }
 
@@ -765,6 +802,10 @@ public partial class MainWindow : Window
             settingsStore.Save(settings);
         }
         StartStopButton.Content = "번역 정지";
+        if (settings.DisplayMode == TranslationDisplayMode.TransparentOverlay)
+        {
+            WindowState = WindowState.Minimized;
+        }
     }
 
     private async Task StopSessionAsync()
@@ -857,6 +898,9 @@ public partial class MainWindow : Window
 
     private async void OnClosed(object? sender, EventArgs e)
     {
+        previewCancellation?.Cancel();
+        previewCancellation?.Dispose();
+        previewCancellation = null;
         await StopSessionAsync();
         if (resultWindow is not null)
         {
@@ -983,6 +1027,229 @@ public partial class MainWindow : Window
         RegionText.Text = $"번역 {selectedChatRegions.Count}개 · 제외 {excludedRegions.Count}개";
     }
 
+    private async Task RefreshGamePreviewAsync(CapturableWindow? window = null)
+    {
+        if (!IsLoaded || session.IsRunning)
+        {
+            RenderPreviewRegions();
+            return;
+        }
+
+        window ??= WindowComboBox.SelectedItem as CapturableWindow;
+        if (window is null)
+        {
+            ClearGamePreview("게임 창을 선택하면 실제 화면 미리보기가 표시됩니다.");
+            return;
+        }
+
+        previewCancellation?.Cancel();
+        previewCancellation?.Dispose();
+        var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        previewCancellation = cancellation;
+        var token = cancellation.Token;
+        var moveMainWindow = IsVisible && WindowState != WindowState.Minimized;
+        var originalState = WindowState;
+        var originalBounds = originalState == WindowState.Normal
+            ? new Rect(Left, Top, ActualWidth, ActualHeight)
+            : RestoreBounds;
+        capturingPreview = true;
+
+        PreviewPlaceholderText.Text = "게임 화면을 불러오는 중입니다…";
+        PreviewPlaceholderBorder.Visibility = Visibility.Visible;
+        PreviewTimestampText.Text = "미리보기 갱신 중";
+
+        try
+        {
+            if (moveMainWindow)
+            {
+                if (WindowState == WindowState.Maximized)
+                {
+                    WindowState = WindowState.Normal;
+                }
+                Left = SystemParameters.VirtualScreenLeft - Math.Max(ActualWidth, Width) - 100;
+                Top = SystemParameters.VirtualScreenTop;
+                UpdateLayout();
+            }
+            await Task.Delay(140, token);
+
+            var frame = await dictionaryCaptureService.CaptureAsync(
+                new CaptureTarget(window),
+                FullWindowRegion,
+                token);
+            token.ThrowIfCancellationRequested();
+
+            GamePreviewImage.Source = frame.Bitmap;
+            PreviewSurface.Width = Math.Max(1, frame.Bitmap.PixelWidth);
+            PreviewSurface.Height = Math.Max(1, frame.Bitmap.PixelHeight);
+            previewWindowHandle = window.Handle;
+            PreviewPlaceholderBorder.Visibility = Visibility.Collapsed;
+            PreviewTimestampText.Text = $"마지막 갱신 {DateTime.Now:HH:mm:ss}";
+            RenderPreviewRegions();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Game preview capture failed", ex);
+            if (previewWindowHandle != window.Handle)
+            {
+                GamePreviewImage.Source = null;
+                PreviewRegionCanvas.Children.Clear();
+            }
+            PreviewPlaceholderText.Text = $"미리보기를 표시할 수 없습니다.\n{ex.Message}\n게임 창을 화면에 표시한 뒤 새로고침하세요.";
+            PreviewPlaceholderBorder.Visibility = Visibility.Visible;
+            PreviewTimestampText.Text = "미리보기 갱신 실패";
+        }
+        finally
+        {
+            if (moveMainWindow)
+            {
+                Left = originalBounds.Left;
+                Top = originalBounds.Top;
+                Width = originalBounds.Width;
+                Height = originalBounds.Height;
+                WindowState = originalState;
+                Topmost = true;
+                ActivateMainWindow();
+            }
+            capturingPreview = false;
+            if (ReferenceEquals(previewCancellation, cancellation))
+            {
+                previewCancellation.Dispose();
+                previewCancellation = null;
+            }
+        }
+    }
+
+    private void ActivateMainWindow()
+    {
+        var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        var foregroundHandle = NativeMethods.GetForegroundWindow();
+        var currentThreadId = NativeMethods.GetCurrentThreadId();
+        var foregroundThreadId = foregroundHandle == nint.Zero
+            ? 0
+            : NativeMethods.GetWindowThreadProcessId(foregroundHandle, out _);
+        var attached = foregroundThreadId != 0
+            && foregroundThreadId != currentThreadId
+            && NativeMethods.AttachThreadInput(currentThreadId, foregroundThreadId, true);
+        try
+        {
+            NativeMethods.BringWindowToTop(handle);
+            NativeMethods.SetForegroundWindow(handle);
+            Activate();
+            Focus();
+        }
+        finally
+        {
+            if (attached)
+            {
+                NativeMethods.AttachThreadInput(currentThreadId, foregroundThreadId, false);
+            }
+        }
+    }
+
+    private void ClearGamePreview(string message)
+    {
+        previewCancellation?.Cancel();
+        GamePreviewImage.Source = null;
+        PreviewRegionCanvas.Children.Clear();
+        previewWindowHandle = nint.Zero;
+        PreviewPlaceholderText.Text = message;
+        PreviewPlaceholderBorder.Visibility = Visibility.Visible;
+        PreviewTimestampText.Text = "미리보기 대기";
+    }
+
+    private void RenderPreviewRegions()
+    {
+        PreviewRegionCanvas.Children.Clear();
+        if (GamePreviewImage.Source is null || PreviewSurface.Width <= 0 || PreviewSurface.Height <= 0)
+        {
+            return;
+        }
+
+        IReadOnlyList<CaptureRegion> included = ScreenTranslationRadioButton.IsChecked == true
+            ? selectedScreenRegion is { } screenRegion ? [screenRegion] : []
+            : selectedChatRegions;
+
+        var includeIndex = 1;
+        foreach (var region in included)
+        {
+            AddPreviewRegion(region, false, $"번역 {includeIndex++}");
+        }
+
+        var excludeIndex = 1;
+        foreach (var region in excludedRegions)
+        {
+            AddPreviewRegion(region, true, $"제외 {excludeIndex++}");
+        }
+
+        if (ScreenTranslationRadioButton.IsChecked == true && selectedScreenRegion is null)
+        {
+            var outline = new Rectangle
+            {
+                Width = Math.Max(1, PreviewSurface.Width - 6),
+                Height = Math.Max(1, PreviewSurface.Height - 6),
+                Stroke = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#35C3A7")),
+                StrokeThickness = 5,
+                StrokeDashArray = [8, 5]
+            };
+            Canvas.SetLeft(outline, 3);
+            Canvas.SetTop(outline, 3);
+            PreviewRegionCanvas.Children.Add(outline);
+            AddPreviewLabel("전체 화면", 14, 14, "#CC047857");
+        }
+    }
+
+    private void AddPreviewRegion(CaptureRegion region, bool excluded, string label)
+    {
+        var normalizedLeft = Math.Clamp(region.X, 0, 1);
+        var normalizedTop = Math.Clamp(region.Y, 0, 1);
+        var left = normalizedLeft * PreviewSurface.Width;
+        var top = normalizedTop * PreviewSurface.Height;
+        var width = Math.Clamp(region.Width, 0, 1 - normalizedLeft) * PreviewSurface.Width;
+        var height = Math.Clamp(region.Height, 0, 1 - normalizedTop) * PreviewSurface.Height;
+        if (width < 1 || height < 1)
+        {
+            return;
+        }
+
+        var stroke = excluded ? "#EF4444" : "#35C3A7";
+        var fill = excluded ? "#33EF4444" : "#3335C3A7";
+        var rectangle = new Rectangle
+        {
+            Width = width,
+            Height = height,
+            Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(fill)),
+            Stroke = new SolidColorBrush((Color)ColorConverter.ConvertFromString(stroke)),
+            StrokeThickness = 5
+        };
+        Canvas.SetLeft(rectangle, left);
+        Canvas.SetTop(rectangle, top);
+        PreviewRegionCanvas.Children.Add(rectangle);
+        AddPreviewLabel(label, left + 7, top + 7, excluded ? "#CCB91C1C" : "#CC047857");
+    }
+
+    private void AddPreviewLabel(string text, double left, double top, string background)
+    {
+        var label = new Border
+        {
+            Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(background)),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(8, 4, 8, 4),
+            Child = new TextBlock
+            {
+                Text = text,
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.Bold,
+                FontSize = 15
+            }
+        };
+        Canvas.SetLeft(label, left);
+        Canvas.SetTop(label, top);
+        PreviewRegionCanvas.Children.Add(label);
+    }
+
     private void SaveSelections(CapturableWindow window)
     {
         var firstChatRegion = selectedChatRegions.Count > 0 ? selectedChatRegions[0] : (CaptureRegion?)null;
@@ -1035,21 +1302,7 @@ public partial class MainWindow : Window
 
     private void UpdateDisplayModePreview()
     {
-        if (DisplayModeComboBox.SelectedItem is not DisplayModeChoice choice)
-        {
-            return;
-        }
-
-        if (choice.Mode == TranslationDisplayMode.Window)
-        {
-            ResultWindowPreviewGrid.Visibility = Visibility.Visible;
-            OverlayPreviewGrid.Visibility = Visibility.Collapsed;
-        }
-        else if (choice.Mode == TranslationDisplayMode.TransparentOverlay)
-        {
-            ResultWindowPreviewGrid.Visibility = Visibility.Collapsed;
-            OverlayPreviewGrid.Visibility = Visibility.Visible;
-        }
+        RenderPreviewRegions();
     }
 
     private void UpdateFontPreview()
