@@ -347,6 +347,36 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Expander">
                         <Border Background="White" BorderBrush="#E1E7EF" BorderThickness="1" CornerRadius="9">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="ExpansionStates">
+                                    <VisualStateGroup.Transitions>
+                                        <VisualTransition From="Collapsed" To="Expanded" GeneratedDuration="0:0:0.24">
+                                            <VisualTransition.GeneratedEasingFunction>
+                                                <CubicEase EasingMode="EaseOut" />
+                                            </VisualTransition.GeneratedEasingFunction>
+                                        </VisualTransition>
+                                        <VisualTransition From="Expanded" To="Collapsed" GeneratedDuration="0:0:0.18">
+                                            <VisualTransition.GeneratedEasingFunction>
+                                                <CubicEase EasingMode="EaseIn" />
+                                            </VisualTransition.GeneratedEasingFunction>
+                                        </VisualTransition>
+                                    </VisualStateGroup.Transitions>
+                                    <VisualState x:Name="Expanded">
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="ContentScale" Storyboard.TargetProperty="ScaleY" To="1" Duration="0:0:0" />
+                                            <DoubleAnimation Storyboard.TargetName="ContentBorder" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0" />
+                                            <DoubleAnimation Storyboard.TargetName="ContentTranslate" Storyboard.TargetProperty="Y" To="0" Duration="0:0:0" />
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Collapsed">
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="ContentScale" Storyboard.TargetProperty="ScaleY" To="0" Duration="0:0:0" />
+                                            <DoubleAnimation Storyboard.TargetName="ContentBorder" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0" />
+                                            <DoubleAnimation Storyboard.TargetName="ContentTranslate" Storyboard.TargetProperty="Y" To="-6" Duration="0:0:0" />
+                                        </Storyboard>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
                             <StackPanel>
                                 <ToggleButton x:Name="HeaderToggle" Content="{TemplateBinding Header}" ContentTemplate="{TemplateBinding HeaderTemplate}" IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" Background="Transparent" BorderThickness="0" Padding="14,10" HorizontalContentAlignment="Stretch">
                                     <ToggleButton.Template>
@@ -368,16 +398,28 @@
                                         </ControlTemplate>
                                     </ToggleButton.Template>
                                 </ToggleButton>
-                                <Border x:Name="ContentBorder" Visibility="Collapsed" BorderBrush="#EEF1F5" BorderThickness="0,1,0,0" Padding="14">
-                                    <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                                        <ContentPresenter ContentSource="Content" />
-                                    </ScrollViewer>
+                                <Border x:Name="ContentBorder"
+                                        BorderBrush="#EEF1F5"
+                                        BorderThickness="0,1,0,0"
+                                        ClipToBounds="True"
+                                        IsEnabled="False"
+                                        IsHitTestVisible="False"
+                                        Opacity="0"
+                                        RenderTransformOrigin="0.5,0">
+                                    <Border.LayoutTransform>
+                                        <ScaleTransform x:Name="ContentScale" ScaleY="0" />
+                                    </Border.LayoutTransform>
+                                    <Border.RenderTransform>
+                                        <TranslateTransform x:Name="ContentTranslate" Y="-6" />
+                                    </Border.RenderTransform>
+                                    <ContentPresenter ContentSource="Content" Margin="14" />
                                 </Border>
                             </StackPanel>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsExpanded" Value="True">
-                                <Setter TargetName="ContentBorder" Property="Visibility" Value="Visible" />
+                                <Setter TargetName="ContentBorder" Property="IsEnabled" Value="True" />
+                                <Setter TargetName="ContentBorder" Property="IsHitTestVisible" Value="True" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -481,11 +523,18 @@
                         <TextBlock Text="번역" Margin="0,7,0,0" HorizontalAlignment="Center" FontSize="13" />
                     </StackPanel>
                 </TabItem.Header>
-                <Grid Margin="26,22,26,18" MaxWidth="1540" HorizontalAlignment="Stretch">
+                <ScrollViewer x:Name="TranslationPageScrollViewer"
+                              Margin="26,22,26,18"
+                              CanContentScroll="False"
+                              HorizontalContentAlignment="Stretch"
+                              HorizontalScrollBarVisibility="Disabled"
+                              PanningMode="VerticalOnly"
+                              VerticalScrollBarVisibility="Auto">
+                <Grid MaxWidth="1540" HorizontalAlignment="Stretch">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="16" />
-                        <RowDefinition Height="*" />
+                        <RowDefinition Height="560" />
                         <RowDefinition Height="14" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
@@ -839,32 +888,9 @@
                             </Border>
                         </Expander>
 
-                        <Expander Style="{StaticResource SettingsExpanderStyle}" Margin="0,8,0,0" IsExpanded="False">
-                            <Expander.Header>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE71C;" FontFamily="Segoe Fluent Icons" Foreground="#5E6B7C" FontSize="16" Margin="0,0,13,0" />
-                                    <TextBlock Text="고급 필터" FontWeight="SemiBold" Foreground="#273142" />
-                                    <TextBlock Text="  특수문자 필터, 숫자 영역 필터, 중복 제거 등" Foreground="#8A94A5" FontSize="11" Margin="12,1,0,0" />
-                                </StackPanel>
-                            </Expander.Header>
-                            <Border Background="Transparent" BorderThickness="0" Padding="0">
-                                <Grid>
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="14" /><ColumnDefinition Width="*" /><ColumnDefinition Width="14" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                    <Border Background="#F8FAFD" BorderBrush="#E7EBF1" BorderThickness="1" CornerRadius="8" Padding="12">
-                                        <StackPanel><TextBlock Text="노이즈 제거" FontWeight="SemiBold" /><TextBlock Text="반복 기호와 OCR 잡음을 자동으로 제외합니다." Foreground="#7B8797" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" /></StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="2" Background="#F8FAFD" BorderBrush="#E7EBF1" BorderThickness="1" CornerRadius="8" Padding="12">
-                                        <StackPanel><TextBlock Text="중복 방지" FontWeight="SemiBold" /><TextBlock Text="이미 처리한 문장과 화면 조각을 다시 요청하지 않습니다." Foreground="#7B8797" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" /></StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="4" Background="#F8FAFD" BorderBrush="#E7EBF1" BorderThickness="1" CornerRadius="8" Padding="12">
-                                        <StackPanel><TextBlock Text="영문 화면 숨김" FontWeight="SemiBold" /><TextBlock Text="전체가 영어인 OCR 결과는 오버레이에 표시하지 않습니다." Foreground="#7B8797" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" /></StackPanel>
-                                    </Border>
-                                </Grid>
-                            </Border>
-                        </Expander>
-
                     </StackPanel>
                 </Grid>
+                </ScrollViewer>
             </TabItem>
 
             <TabItem x:Name="DictionaryTabItem" Style="{StaticResource NavTabItemStyle}" AutomationProperties.Name="사전">
