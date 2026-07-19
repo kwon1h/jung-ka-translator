@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
@@ -15,6 +16,37 @@ namespace GameOverlayTranslator.App;
 
 public partial class MainWindow : Window
 {
+    private const double PreviewMinimumRegionSize = 10;
+    private const double PreviewResizeMargin = 12;
+
+    private enum PreviewEditPurpose
+    {
+        None,
+        Translation,
+        DictionaryOcr
+    }
+
+    private enum PreviewDragMode
+    {
+        None,
+        CreateInclude,
+        CreateExclude,
+        Move,
+        Resize
+    }
+
+    [Flags]
+    private enum PreviewResizeEdges
+    {
+        None = 0,
+        Left = 1,
+        Right = 2,
+        Top = 4,
+        Bottom = 8
+    }
+
+    private sealed record PreviewRegionItem(Rectangle Shape, bool IsExcluded);
+
     private sealed record DisplayModeChoice(TranslationDisplayMode Mode, string Name)
     {
         public override string ToString() => Name;
@@ -56,8 +88,8 @@ public partial class MainWindow : Window
     private static readonly IReadOnlyList<TranslationLanguage> TargetLanguages = [new("ko", "한국어")];
     private static readonly IReadOnlyList<DisplayModeChoice> DisplayModes =
     [
-        new(TranslationDisplayMode.Window, "별도 결과 창"),
-        new(TranslationDisplayMode.TransparentOverlay, "선택 영역 오버레이")
+        new(TranslationDisplayMode.Window, "별도 창"),
+        new(TranslationDisplayMode.TransparentOverlay, "화면 오버레이")
     ];
 
     private static readonly IReadOnlyList<ColorChoice> TextColors =
@@ -139,6 +171,17 @@ public partial class MainWindow : Window
     private bool capturingPreview;
     private CancellationTokenSource? previewCancellation;
     private nint previewWindowHandle;
+    private HwndSource? mainWindowSource;
+    private readonly List<PreviewRegionItem> previewEditItems = [];
+    private PreviewEditPurpose previewEditPurpose;
+    private PreviewRegionItem? selectedPreviewEditItem;
+    private PreviewDragMode previewDragMode;
+    private PreviewResizeEdges previewResizeEdges;
+    private Point previewDragStart;
+    private Rect previewDragStartRect;
+    private object? dictionaryReturnTab;
+    private bool previewEditorNoActivateApplied;
+    private nint suspendedPreviewWindowHandle;
 
     private readonly UserDictionaryStore userDictStore = new();
     private readonly System.Collections.ObjectModel.ObservableCollection<DiagnosticLogItem> diagnosticLogs = new();
@@ -150,6 +193,7 @@ public partial class MainWindow : Window
     {
         settings = settingsStore.Load();
         InitializeComponent();
+        SourceInitialized += MainWindowSourceInitialized;
         delegatingOcrEngine = new DelegatingOcrEngine(() => settings.OcrEngineType, windowsOcrEngine, paddleOcrEngine);
         dictionaryOcrEngine = delegatingOcrEngine;
         var delegator = new TranslationServiceDelegator(
@@ -271,6 +315,10 @@ public partial class MainWindow : Window
     {
         UpdateTranslationModeUI();
         await RefreshGamePreviewAsync();
+        if (UpdateStartReadiness())
+        {
+            SetStatus("번역 준비 완료");
+        }
     }
 
     private void MainWindowActivated(object? sender, EventArgs e) => Topmost = true;
@@ -282,6 +330,44 @@ public partial class MainWindow : Window
             Topmost = false;
         }
     }
+
+    private void MainWindowSourceInitialized(object? sender, EventArgs e)
+    {
+        mainWindowSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+        mainWindowSource?.AddHook(MainWindowMessageHook);
+    }
+
+    private nint MainWindowMessageHook(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
+    {
+        const int WmMouseActivate = 0x0021;
+        const int MouseActivateNoActivate = 3;
+        var gameOwnsForeground = previewWindowHandle != nint.Zero
+            && NativeMethods.GetForegroundWindow() == previewWindowHandle;
+        if (message == WmMouseActivate
+            && (previewEditPurpose != PreviewEditPurpose.None || gameOwnsForeground))
+        {
+            handled = true;
+            return new nint(MouseActivateNoActivate);
+        }
+        return nint.Zero;
+    }
+
+    private void MinimizeWindow(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void ToggleMaximizeWindow(object sender, RoutedEventArgs e) =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    private void CloseWindow(object sender, RoutedEventArgs e) => Close();
+
+    private void MainWindowStateChanged(object? sender, EventArgs e)
+    {
+        if (MaximizeWindowButton is not null)
+        {
+            MaximizeWindowButton.Content = WindowState == WindowState.Maximized ? "\uE923" : "\uE922";
+        }
+    }
+
+    private void OpenDiagnostics(object sender, RoutedEventArgs e) => MainTabControl.SelectedItem = DiagnosticsTabItem;
 
     private void RefreshWindows(object sender, RoutedEventArgs e)
     {
@@ -528,38 +614,53 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SelectRegion(object sender, RoutedEventArgs e)
+    private async void SelectRegion(object sender, RoutedEventArgs e)
     {
         if (WindowComboBox.SelectedItem is not CapturableWindow window)
         {
             SetStatus("먼저 게임 창을 선택하세요.", true);
             return;
         }
-        var screenMode = ScreenTranslationRadioButton.IsChecked == true;
-        IReadOnlyList<CaptureRegion> included = screenMode
-            ? selectedScreenRegion is { } screenRegion ? [screenRegion] : []
-            : selectedChatRegions;
-        var picker = new RegionSelectionWindow(window, included, excludedRegions, allowMultipleIncluded: !screenMode) { Owner = this };
-        if (ShowRegionDialog(picker) == true)
+
+        if (previewEditPurpose == PreviewEditPurpose.DictionaryOcr)
         {
-            if (screenMode)
-            {
-                selectedScreenRegion = picker.Regions.Count > 0 ? picker.Regions[0] : null;
-            }
-            else
-            {
-                selectedChatRegions = picker.Regions.ToList();
-            }
-            excludedRegions = picker.ExcludedRegions.ToList();
-            SaveSelections(window);
-            SetStatus($"영역 편집을 저장했습니다. 번역 {picker.Regions.Count}개 · 제외 {picker.ExcludedRegions.Count}개");
-            UpdateTranslationModeUI();
-            _ = RefreshGamePreviewAsync(window);
+            await CompleteDictionaryOcrSelectionAsync();
+            return;
         }
+
+        if (previewEditPurpose == PreviewEditPurpose.Translation)
+        {
+            SaveTranslationPreviewRegions(window);
+            return;
+        }
+
+        if (GamePreviewImage.Source is null || previewWindowHandle != window.Handle)
+        {
+            await RefreshGamePreviewAsync(window);
+        }
+        if (GamePreviewImage.Source is null)
+        {
+            SetStatus("먼저 새로고침하여 게임 미리보기를 불러오세요.", true);
+            return;
+        }
+
+        BeginPreviewRegionEditing(PreviewEditPurpose.Translation);
     }
 
     private void ClearRegion(object sender, RoutedEventArgs e)
     {
+        if (previewEditPurpose == PreviewEditPurpose.DictionaryOcr)
+        {
+            CancelPreviewRegionEditing("사전 OCR 영역 선택을 취소했습니다.");
+            return;
+        }
+        if (previewEditPurpose == PreviewEditPurpose.Translation)
+        {
+            ClearPreviewEditItems();
+            SetStatus("편집 중인 모든 번역·제외 영역을 지웠습니다. 저장 버튼을 누르면 적용됩니다.");
+            return;
+        }
+
         if (ScreenTranslationRadioButton.IsChecked == true)
         {
             selectedScreenRegion = null;
@@ -576,6 +677,466 @@ public partial class MainWindow : Window
             ? "전체화면 번역 영역을 전체 화면으로 변경했습니다."
             : "번역 영역을 해제했습니다.");
     }
+
+    private void BeginPreviewRegionEditing(PreviewEditPurpose purpose)
+    {
+        previewEditPurpose = purpose;
+        previewDragMode = PreviewDragMode.None;
+        selectedPreviewEditItem = null;
+        PreviewRegionCanvas.Children.Clear();
+        previewEditItems.Clear();
+
+        if (purpose == PreviewEditPurpose.Translation)
+        {
+            IReadOnlyList<CaptureRegion> included = ScreenTranslationRadioButton.IsChecked == true
+                ? selectedScreenRegion is { } screenRegion ? [screenRegion] : []
+                : selectedChatRegions;
+            foreach (var region in included)
+            {
+                AddPreviewEditItem(ToPreviewRect(region), false);
+            }
+            foreach (var region in excludedRegions)
+            {
+                AddPreviewEditItem(ToPreviewRect(region), true);
+            }
+        }
+
+        PreviewRegionCanvas.IsHitTestVisible = true;
+        PreviewRegionCanvas.Background = Brushes.Transparent;
+        PreviewRegionCanvas.Cursor = Cursors.Cross;
+        PreviewRegionCanvas.Focus();
+        Keyboard.Focus(PreviewRegionCanvas);
+        PreviewEditBadge.Visibility = Visibility.Visible;
+        PreviewEditBadgeText.Text = purpose == PreviewEditPurpose.DictionaryOcr
+            ? "사전 OCR 영역 선택 중"
+            : "영역 편집 중";
+        PreviewHelpText.Text = purpose == PreviewEditPurpose.DictionaryOcr
+            ? "좌클릭으로 OCR할 글자를 드래그하세요. · Delete 삭제 · Esc 취소"
+            : "좌클릭: 번역 영역 추가 · 우클릭: 제외 영역 추가 · 드래그: 이동/크기 변경 · Delete 삭제 · Esc 취소";
+        SelectRegionButton.Content = purpose == PreviewEditPurpose.DictionaryOcr ? "OCR 실행" : "편집 저장";
+        ClearRegionButton.Content = purpose == PreviewEditPurpose.DictionaryOcr ? "OCR 취소" : "전체 지우기";
+        DeleteSelectedRegionButton.Visibility = Visibility.Visible;
+        DeleteSelectedRegionButton.IsEnabled = selectedPreviewEditItem is not null;
+        SuspendGameWindowForPreviewEditing();
+        SetPreviewEditorNoActivate(true);
+        SetPreviewConfigurationEnabled(false);
+    }
+
+    private void SetPreviewConfigurationEnabled(bool enabled)
+    {
+        WindowComboBox.IsEnabled = enabled;
+        RefreshWindowButton.IsEnabled = enabled;
+        ChatTranslationRadioButton.IsEnabled = enabled;
+        ScreenTranslationRadioButton.IsEnabled = enabled;
+        DisplayModeComboBox.IsEnabled = enabled && ScreenTranslationRadioButton.IsChecked != true;
+        StartStopButton.IsEnabled = enabled && UpdateStartReadiness();
+    }
+
+    private void SaveTranslationPreviewRegions(CapturableWindow window)
+    {
+        var included = previewEditItems
+            .Where(item => !item.IsExcluded)
+            .Select(item => CaptureRegion.FromPixels(GetPreviewRectangle(item.Shape), GetPreviewSurfaceSize()))
+            .ToList();
+        var excluded = previewEditItems
+            .Where(item => item.IsExcluded)
+            .Select(item => CaptureRegion.FromPixels(GetPreviewRectangle(item.Shape), GetPreviewSurfaceSize()))
+            .ToList();
+
+        if (ScreenTranslationRadioButton.IsChecked == true)
+        {
+            selectedScreenRegion = included.Count > 0 ? included[0] : null;
+        }
+        else
+        {
+            selectedChatRegions = included;
+        }
+        excludedRegions = excluded;
+        SaveSelections(window);
+        FinishPreviewRegionEditing();
+        SetStatus($"영역 편집을 저장했습니다. 번역 {included.Count}개 · 제외 {excluded.Count}개");
+    }
+
+    private async Task CompleteDictionaryOcrSelectionAsync()
+    {
+        var selectedRegion = previewEditItems
+            .Where(item => !item.IsExcluded)
+            .Select(item => CaptureRegion.FromPixels(GetPreviewRectangle(item.Shape), GetPreviewSurfaceSize()))
+            .FirstOrDefault();
+        if (selectedRegion.Width <= 0 || selectedRegion.Height <= 0)
+        {
+            SetStatus("OCR할 원문 영역을 먼저 드래그하세요.", true);
+            return;
+        }
+        if (GamePreviewImage.Source is not BitmapSource bitmap || OcrLanguageComboBox.SelectedItem is not OcrLanguage ocrLanguage)
+        {
+            CancelPreviewRegionEditing("사전 OCR을 시작할 수 없습니다.");
+            return;
+        }
+
+        FinishPreviewRegionEditing(restoreDictionaryTab: true);
+        FillDictSourceFromOcrButton.IsEnabled = false;
+        Mouse.OverrideCursor = Cursors.Wait;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            var source = await RecognizeDictionaryTextAsync(new CapturedFrame(bitmap), selectedRegion, ocrLanguage, cts.Token);
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                SetStatus("선택 영역에서 OCR 텍스트를 찾지 못했습니다.", true);
+                return;
+            }
+
+            DictSourceTextBox.Text = source;
+            DictTargetTextBox.Focus();
+            DictTargetTextBox.SelectAll();
+            SetStatus($"OCR 원문을 입력했습니다: {source}");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Dictionary OCR preview failed", ex);
+            SetStatus($"사전 OCR 실패: {ex.Message}", true);
+        }
+        finally
+        {
+            Mouse.OverrideCursor = null;
+            FillDictSourceFromOcrButton.IsEnabled = true;
+        }
+    }
+
+    private void CancelPreviewRegionEditing(string message)
+    {
+        var restoreDictionaryTab = previewEditPurpose == PreviewEditPurpose.DictionaryOcr;
+        FinishPreviewRegionEditing(restoreDictionaryTab);
+        SetStatus(message);
+    }
+
+    private void FinishPreviewRegionEditing(bool restoreDictionaryTab = false)
+    {
+        PreviewRegionCanvas.ReleaseMouseCapture();
+        previewDragMode = PreviewDragMode.None;
+        selectedPreviewEditItem = null;
+        previewEditItems.Clear();
+        previewEditPurpose = PreviewEditPurpose.None;
+        SetPreviewEditorNoActivate(false);
+        ResumeGameWindowAfterPreviewEditing();
+        PreviewRegionCanvas.IsHitTestVisible = false;
+        PreviewRegionCanvas.Background = Brushes.Transparent;
+        PreviewRegionCanvas.Cursor = Cursors.Arrow;
+        PreviewEditBadge.Visibility = Visibility.Collapsed;
+        PreviewHelpText.Text = "영역을 드래그하여 크기와 위치를 조정하세요. 제외하려면 영역을 빨간색으로 설정하세요.";
+        SelectRegionButton.Content = "영역 편집";
+        ClearRegionButton.Content = "영역 해제";
+        DeleteSelectedRegionButton.Visibility = Visibility.Collapsed;
+        SetPreviewConfigurationEnabled(true);
+        UpdateTranslationModeUI();
+        RenderPreviewRegions();
+
+        if (restoreDictionaryTab && dictionaryReturnTab is not null)
+        {
+            MainTabControl.SelectedItem = dictionaryReturnTab;
+            dictionaryReturnTab = null;
+        }
+    }
+
+    private void ClearPreviewEditItems()
+    {
+        PreviewRegionCanvas.Children.Clear();
+        previewEditItems.Clear();
+        selectedPreviewEditItem = null;
+        previewDragMode = PreviewDragMode.None;
+        DeleteSelectedRegionButton.IsEnabled = false;
+    }
+
+    private void DeleteSelectedPreviewRegion(object sender, RoutedEventArgs e)
+    {
+        if (selectedPreviewEditItem is null)
+        {
+            return;
+        }
+        RemovePreviewEditItem(selectedPreviewEditItem);
+        SetStatus("선택한 영역을 삭제했습니다. 저장 버튼을 누르면 적용됩니다.");
+    }
+
+    private void SetPreviewEditorNoActivate(bool enabled)
+    {
+        if (previewEditorNoActivateApplied == enabled)
+        {
+            return;
+        }
+        var handle = new WindowInteropHelper(this).Handle;
+        var style = NativeMethods.GetWindowLong(handle, NativeMethods.GWL_EXSTYLE);
+        var nextStyle = enabled
+            ? style | NativeMethods.WS_EX_NOACTIVATE
+            : style & ~NativeMethods.WS_EX_NOACTIVATE;
+        NativeMethods.SetWindowLong(handle, NativeMethods.GWL_EXSTYLE, nextStyle);
+        previewEditorNoActivateApplied = enabled;
+    }
+
+    private void SuspendGameWindowForPreviewEditing()
+    {
+        if (WindowComboBox.SelectedItem is not CapturableWindow window
+            || !NativeMethods.IsWindow(window.Handle)
+            || NativeMethods.IsIconic(window.Handle))
+        {
+            return;
+        }
+
+        suspendedPreviewWindowHandle = window.Handle;
+        NativeMethods.ShowWindow(window.Handle, NativeMethods.SwMinimize);
+        Topmost = true;
+        ActivateMainWindow();
+    }
+
+    private void ResumeGameWindowAfterPreviewEditing()
+    {
+        var handle = suspendedPreviewWindowHandle;
+        suspendedPreviewWindowHandle = nint.Zero;
+        if (handle == nint.Zero || !NativeMethods.IsWindow(handle))
+        {
+            return;
+        }
+
+        NativeMethods.ShowWindow(handle, NativeMethods.SwShowNoActivate);
+        NativeMethods.SetWindowPos(
+            handle,
+            NativeMethods.HwndTop,
+            0,
+            0,
+            0,
+            0,
+            NativeMethods.SwpNoMove
+            | NativeMethods.SwpNoSize
+            | NativeMethods.SwpNoActivate
+            | NativeMethods.SwpShowWindow);
+        Topmost = true;
+        ActivateMainWindow();
+    }
+
+    private void BeginPreviewRegionDrag(object sender, MouseButtonEventArgs e)
+    {
+        if (previewEditPurpose == PreviewEditPurpose.None)
+        {
+            return;
+        }
+
+        var isExclude = e.ChangedButton == MouseButton.Right;
+        if (previewEditPurpose == PreviewEditPurpose.DictionaryOcr && isExclude)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        previewDragStart = e.GetPosition(PreviewRegionCanvas);
+        var hit = isExclude ? null : FindPreviewEditItem(e.OriginalSource as DependencyObject);
+        if (hit is not null)
+        {
+            SelectPreviewEditItem(hit);
+            previewDragStartRect = GetPreviewRectangle(hit.Shape);
+            previewResizeEdges = FindPreviewResizeEdges(previewDragStart, previewDragStartRect);
+            previewDragMode = previewResizeEdges == PreviewResizeEdges.None
+                ? PreviewDragMode.Move
+                : PreviewDragMode.Resize;
+        }
+        else
+        {
+            var allowMultipleIncluded = previewEditPurpose == PreviewEditPurpose.Translation
+                && ScreenTranslationRadioButton.IsChecked != true;
+            if (!isExclude && !allowMultipleIncluded)
+            {
+                foreach (var oldItem in previewEditItems.Where(item => !item.IsExcluded).ToArray())
+                {
+                    RemovePreviewEditItem(oldItem);
+                }
+            }
+
+            selectedPreviewEditItem = AddPreviewEditItem(new Rect(previewDragStart, previewDragStart), isExclude);
+            previewDragStartRect = GetPreviewRectangle(selectedPreviewEditItem.Shape);
+            previewDragMode = isExclude ? PreviewDragMode.CreateExclude : PreviewDragMode.CreateInclude;
+        }
+
+        PreviewRegionCanvas.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void UpdatePreviewRegionDrag(object sender, MouseEventArgs e)
+    {
+        if (selectedPreviewEditItem is null || previewDragMode == PreviewDragMode.None)
+        {
+            return;
+        }
+
+        var point = e.GetPosition(PreviewRegionCanvas);
+        var next = previewDragMode switch
+        {
+            PreviewDragMode.CreateInclude or PreviewDragMode.CreateExclude => new Rect(previewDragStart, point),
+            PreviewDragMode.Move => MovePreviewRectangle(previewDragStartRect, point - previewDragStart),
+            PreviewDragMode.Resize => ResizePreviewRectangle(previewDragStartRect, point - previewDragStart, previewResizeEdges),
+            _ => previewDragStartRect
+        };
+        SetPreviewRectangle(selectedPreviewEditItem.Shape, ClampPreviewRectangle(next));
+        e.Handled = true;
+    }
+
+    private void CompletePreviewRegionDrag(object sender, MouseButtonEventArgs e)
+    {
+        if (selectedPreviewEditItem is null || previewDragMode == PreviewDragMode.None)
+        {
+            return;
+        }
+
+        PreviewRegionCanvas.ReleaseMouseCapture();
+        var rectangle = GetPreviewRectangle(selectedPreviewEditItem.Shape);
+        if (rectangle.Width < PreviewMinimumRegionSize || rectangle.Height < PreviewMinimumRegionSize)
+        {
+            RemovePreviewEditItem(selectedPreviewEditItem);
+        }
+        previewDragMode = PreviewDragMode.None;
+        e.Handled = true;
+    }
+
+    private void PreviewRegionEditorKeyDown(object sender, KeyEventArgs e)
+    {
+        if (previewEditPurpose == PreviewEditPurpose.None)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Escape)
+        {
+            CancelPreviewRegionEditing(previewEditPurpose == PreviewEditPurpose.DictionaryOcr
+                ? "사전 OCR 영역 선택을 취소했습니다."
+                : "영역 편집을 취소했습니다.");
+            e.Handled = true;
+        }
+        else if (e.Key is Key.Delete or Key.Back && selectedPreviewEditItem is not null)
+        {
+            RemovePreviewEditItem(selectedPreviewEditItem);
+            e.Handled = true;
+        }
+    }
+
+    private PreviewRegionItem AddPreviewEditItem(Rect rect, bool isExcluded)
+    {
+        var shape = new Rectangle
+        {
+            Fill = CreateBrush(isExcluded ? "#35EF4444" : "#3535C759"),
+            Stroke = CreateBrush(isExcluded ? "#EF4444" : "#35C759"),
+            StrokeThickness = 4,
+            Cursor = Cursors.SizeAll
+        };
+        var item = new PreviewRegionItem(shape, isExcluded);
+        shape.Tag = item;
+        previewEditItems.Add(item);
+        PreviewRegionCanvas.Children.Add(shape);
+        SetPreviewRectangle(shape, rect);
+        SelectPreviewEditItem(item);
+        return item;
+    }
+
+    private void SelectPreviewEditItem(PreviewRegionItem item)
+    {
+        if (selectedPreviewEditItem is not null)
+        {
+            selectedPreviewEditItem.Shape.StrokeThickness = 4;
+        }
+        selectedPreviewEditItem = item;
+        item.Shape.StrokeThickness = 7;
+        Panel.SetZIndex(item.Shape, 10);
+        DeleteSelectedRegionButton.IsEnabled = true;
+    }
+
+    private PreviewRegionItem? FindPreviewEditItem(DependencyObject? source)
+    {
+        while (source is not null && source != PreviewRegionCanvas)
+        {
+            if (source is Rectangle { Tag: PreviewRegionItem item })
+            {
+                return item;
+            }
+            source = VisualTreeHelper.GetParent(source);
+        }
+        return null;
+    }
+
+    private void RemovePreviewEditItem(PreviewRegionItem item)
+    {
+        PreviewRegionCanvas.Children.Remove(item.Shape);
+        previewEditItems.Remove(item);
+        if (selectedPreviewEditItem == item)
+        {
+            selectedPreviewEditItem = null;
+            DeleteSelectedRegionButton.IsEnabled = false;
+        }
+    }
+
+    private Rect ToPreviewRect(CaptureRegion region) => new(
+        region.X * PreviewSurface.Width,
+        region.Y * PreviewSurface.Height,
+        region.Width * PreviewSurface.Width,
+        region.Height * PreviewSurface.Height);
+
+    private Size GetPreviewSurfaceSize() => new(PreviewSurface.Width, PreviewSurface.Height);
+
+    private Rect ClampPreviewRectangle(Rect rect)
+    {
+        var left = Math.Clamp(rect.Left, 0, Math.Max(0, PreviewSurface.Width - 1));
+        var top = Math.Clamp(rect.Top, 0, Math.Max(0, PreviewSurface.Height - 1));
+        var right = Math.Clamp(rect.Right, left, PreviewSurface.Width);
+        var bottom = Math.Clamp(rect.Bottom, top, PreviewSurface.Height);
+        return new Rect(new Point(left, top), new Point(right, bottom));
+    }
+
+    private Rect MovePreviewRectangle(Rect rect, Vector delta)
+    {
+        var x = Math.Clamp(rect.X + delta.X, 0, Math.Max(0, PreviewSurface.Width - rect.Width));
+        var y = Math.Clamp(rect.Y + delta.Y, 0, Math.Max(0, PreviewSurface.Height - rect.Height));
+        return new Rect(x, y, rect.Width, rect.Height);
+    }
+
+    private static Rect ResizePreviewRectangle(Rect rect, Vector delta, PreviewResizeEdges edges)
+    {
+        var left = edges.HasFlag(PreviewResizeEdges.Left) ? rect.Left + delta.X : rect.Left;
+        var right = edges.HasFlag(PreviewResizeEdges.Right) ? rect.Right + delta.X : rect.Right;
+        var top = edges.HasFlag(PreviewResizeEdges.Top) ? rect.Top + delta.Y : rect.Top;
+        var bottom = edges.HasFlag(PreviewResizeEdges.Bottom) ? rect.Bottom + delta.Y : rect.Bottom;
+
+        if (right - left < PreviewMinimumRegionSize)
+        {
+            if (edges.HasFlag(PreviewResizeEdges.Left)) left = right - PreviewMinimumRegionSize;
+            else right = left + PreviewMinimumRegionSize;
+        }
+        if (bottom - top < PreviewMinimumRegionSize)
+        {
+            if (edges.HasFlag(PreviewResizeEdges.Top)) top = bottom - PreviewMinimumRegionSize;
+            else bottom = top + PreviewMinimumRegionSize;
+        }
+        return new Rect(new Point(left, top), new Point(right, bottom));
+    }
+
+    private static PreviewResizeEdges FindPreviewResizeEdges(Point point, Rect rect)
+    {
+        var edges = PreviewResizeEdges.None;
+        if (Math.Abs(point.X - rect.Left) <= PreviewResizeMargin) edges |= PreviewResizeEdges.Left;
+        else if (Math.Abs(point.X - rect.Right) <= PreviewResizeMargin) edges |= PreviewResizeEdges.Right;
+        if (Math.Abs(point.Y - rect.Top) <= PreviewResizeMargin) edges |= PreviewResizeEdges.Top;
+        else if (Math.Abs(point.Y - rect.Bottom) <= PreviewResizeMargin) edges |= PreviewResizeEdges.Bottom;
+        return edges;
+    }
+
+    private static Rect GetPreviewRectangle(Rectangle rectangle) => new(
+        Canvas.GetLeft(rectangle), Canvas.GetTop(rectangle), rectangle.Width, rectangle.Height);
+
+    private static void SetPreviewRectangle(Rectangle rectangle, Rect rect)
+    {
+        Canvas.SetLeft(rectangle, rect.Left);
+        Canvas.SetTop(rectangle, rect.Top);
+        rectangle.Width = rect.Width;
+        rectangle.Height = rect.Height;
+    }
+
+    private static SolidColorBrush CreateBrush(string color) =>
+        new((Color)ColorConverter.ConvertFromString(color));
 
     private bool UpdateStartReadiness()
     {
@@ -603,21 +1164,6 @@ public partial class MainWindow : Window
             ? null
             : string.Join(Environment.NewLine, items.Where(item => !item.IsReady).Select(item => item.MissingText));
         return isReady;
-    }
-
-    private bool? ShowRegionDialog(RegionSelectionWindow picker)
-    {
-        picker.Owner = null;
-        Hide();
-        try
-        {
-            return picker.ShowDialog();
-        }
-        finally
-        {
-            Show();
-            Activate();
-        }
     }
 
     private IReadOnlyList<ReadinessItem> BuildReadinessItems()
@@ -801,7 +1347,9 @@ public partial class MainWindow : Window
             settings = settings with { LastWindowTitle = window.Title, LastWindowProcessName = window.ProcessName };
             settingsStore.Save(settings);
         }
-        StartStopButton.Content = "번역 정지";
+        StartStopButtonLabel.Text = "번역 정지";
+        StartStopButtonIcon.Text = "\uE71A";
+        System.Windows.Automation.AutomationProperties.SetName(StartStopButton, "번역 정지");
         if (settings.DisplayMode == TranslationDisplayMode.TransparentOverlay)
         {
             WindowState = WindowState.Minimized;
@@ -816,7 +1364,9 @@ public partial class MainWindow : Window
         sessionCancellation = null;
         activeSessionRegion = null;
         activeSessionMode = null;
-        StartStopButton.Content = "번역 시작";
+        StartStopButtonLabel.Text = "번역 시작";
+        StartStopButtonIcon.Text = "\uE768";
+        System.Windows.Automation.AutomationProperties.SetName(StartStopButton, "번역 시작");
         overlayWindow?.ClearAll();
         UpdateStartReadiness();
     }
@@ -898,6 +1448,10 @@ public partial class MainWindow : Window
 
     private async void OnClosed(object? sender, EventArgs e)
     {
+        SetPreviewEditorNoActivate(false);
+        ResumeGameWindowAfterPreviewEditing();
+        mainWindowSource?.RemoveHook(MainWindowMessageHook);
+        mainWindowSource = null;
         previewCancellation?.Cancel();
         previewCancellation?.Dispose();
         previewCancellation = null;
@@ -917,7 +1471,8 @@ public partial class MainWindow : Window
     private void SetStatus(string status, bool isError = false)
     {
         StatusText.Text = status;
-        StatusText.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(isError ? "#F1D6CF" : "#E2E8DD"));
+        StatusText.Foreground = CreateBrush(isError ? "#C2413A" : "#239A45");
+        StatusBadgeBorder.Background = CreateBrush(isError ? "#FDECEC" : "#EAF8EC");
     }
 
     private ResultWindow EnsureResultWindow()
@@ -1070,7 +1625,9 @@ public partial class MainWindow : Window
                 Top = SystemParameters.VirtualScreenTop;
                 UpdateLayout();
             }
-            await Task.Delay(140, token);
+            NativeMethods.BringWindowToTop(window.Handle);
+            NativeMethods.SetForegroundWindow(window.Handle);
+            await Task.Delay(180, token);
 
             var frame = await dictionaryCaptureService.CaptureAsync(
                 new CaptureTarget(window),
@@ -1111,6 +1668,8 @@ public partial class MainWindow : Window
                 Height = originalBounds.Height;
                 WindowState = originalState;
                 Topmost = true;
+                UpdateLayout();
+                await Task.Delay(80);
                 ActivateMainWindow();
             }
             capturingPreview = false;
@@ -1126,7 +1685,7 @@ public partial class MainWindow : Window
     {
         var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         var foregroundHandle = NativeMethods.GetForegroundWindow();
-        var currentThreadId = NativeMethods.GetCurrentThreadId();
+        var currentThreadId = NativeMethods.GetWindowThreadProcessId(handle, out _);
         var foregroundThreadId = foregroundHandle == nint.Zero
             ? 0
             : NativeMethods.GetWindowThreadProcessId(foregroundHandle, out _);
@@ -1135,7 +1694,17 @@ public partial class MainWindow : Window
             && NativeMethods.AttachThreadInput(currentThreadId, foregroundThreadId, true);
         try
         {
+            NativeMethods.SetWindowPos(
+                handle,
+                NativeMethods.HwndTopmost,
+                0,
+                0,
+                0,
+                0,
+                NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpShowWindow);
             NativeMethods.BringWindowToTop(handle);
+            NativeMethods.SetActiveWindow(handle);
+            NativeMethods.SetFocus(handle);
             NativeMethods.SetForegroundWindow(handle);
             Activate();
             Focus();
@@ -1162,6 +1731,10 @@ public partial class MainWindow : Window
 
     private void RenderPreviewRegions()
     {
+        if (previewEditPurpose != PreviewEditPurpose.None)
+        {
+            return;
+        }
         PreviewRegionCanvas.Children.Clear();
         if (GamePreviewImage.Source is null || PreviewSurface.Width <= 0 || PreviewSurface.Height <= 0)
         {
@@ -1172,16 +1745,14 @@ public partial class MainWindow : Window
             ? selectedScreenRegion is { } screenRegion ? [screenRegion] : []
             : selectedChatRegions;
 
-        var includeIndex = 1;
         foreach (var region in included)
         {
-            AddPreviewRegion(region, false, $"번역 {includeIndex++}");
+            AddPreviewRegion(region, false);
         }
 
-        var excludeIndex = 1;
         foreach (var region in excludedRegions)
         {
-            AddPreviewRegion(region, true, $"제외 {excludeIndex++}");
+            AddPreviewRegion(region, true);
         }
 
         if (ScreenTranslationRadioButton.IsChecked == true && selectedScreenRegion is null)
@@ -1197,11 +1768,10 @@ public partial class MainWindow : Window
             Canvas.SetLeft(outline, 3);
             Canvas.SetTop(outline, 3);
             PreviewRegionCanvas.Children.Add(outline);
-            AddPreviewLabel("전체 화면", 14, 14, "#CC047857");
         }
     }
 
-    private void AddPreviewRegion(CaptureRegion region, bool excluded, string label)
+    private void AddPreviewRegion(CaptureRegion region, bool excluded)
     {
         var normalizedLeft = Math.Clamp(region.X, 0, 1);
         var normalizedTop = Math.Clamp(region.Y, 0, 1);
@@ -1227,27 +1797,6 @@ public partial class MainWindow : Window
         Canvas.SetLeft(rectangle, left);
         Canvas.SetTop(rectangle, top);
         PreviewRegionCanvas.Children.Add(rectangle);
-        AddPreviewLabel(label, left + 7, top + 7, excluded ? "#CCB91C1C" : "#CC047857");
-    }
-
-    private void AddPreviewLabel(string text, double left, double top, string background)
-    {
-        var label = new Border
-        {
-            Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(background)),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(8, 4, 8, 4),
-            Child = new TextBlock
-            {
-                Text = text,
-                Foreground = Brushes.White,
-                FontWeight = FontWeights.Bold,
-                FontSize = 15
-            }
-        };
-        Canvas.SetLeft(label, left);
-        Canvas.SetTop(label, top);
-        PreviewRegionCanvas.Children.Add(label);
     }
 
     private void SaveSelections(CapturableWindow window)
@@ -1286,18 +1835,14 @@ public partial class MainWindow : Window
 
     private void UpdateRegionButtonVisual()
     {
-        if (SelectedRegion == null && ChatTranslationRadioButton.IsChecked == true)
+        if (previewEditPurpose != PreviewEditPurpose.None)
         {
-            SelectRegionButton.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E65F2B"));
-            SelectRegionButton.Foreground = Brushes.White;
-            SelectRegionButton.FontWeight = FontWeights.Bold;
+            return;
         }
-        else
-        {
-            SelectRegionButton.ClearValue(BackgroundProperty);
-            SelectRegionButton.ClearValue(ForegroundProperty);
-            SelectRegionButton.ClearValue(FontWeightProperty);
-        }
+        SelectRegionButton.Background = Brushes.White;
+        SelectRegionButton.Foreground = CreateBrush("#273142");
+        SelectRegionButton.BorderBrush = CreateBrush(SelectedRegion is null ? "#AFC8ED" : "#DDE3EC");
+        SelectRegionButton.FontWeight = FontWeights.SemiBold;
     }
 
     private void UpdateDisplayModePreview()
@@ -1642,53 +2187,20 @@ public partial class MainWindow : Window
             SetStatus("사전 OCR을 위해 번역을 잠시 정지했습니다.");
         }
 
-        var picker = new RegionSelectionWindow(window) { Owner = this };
-        SetStatus("사전에 추가할 원문 글자 영역을 드래그하세요.");
-        if (ShowRegionDialog(picker) != true || picker.Region is not { } region)
+        if (GamePreviewImage.Source is null || previewWindowHandle != window.Handle)
         {
-            SetStatus("사전 OCR 영역 선택을 취소했습니다.");
+            await RefreshGamePreviewAsync(window);
+        }
+        if (GamePreviewImage.Source is null)
+        {
+            SetStatus("먼저 새로고침하여 게임 미리보기를 불러오세요.", true);
             return;
         }
 
-        FillDictSourceFromOcrButton.IsEnabled = false;
-        Mouse.OverrideCursor = Cursors.Wait;
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        try
-        {
-            await SetOverlayCaptureVisibilityAsync(false, force: true)(cts.Token);
-            await Task.Delay(120, cts.Token);
-            var frame = await dictionaryCaptureService.CaptureAsync(new CaptureTarget(window), FullWindowRegion, cts.Token);
-            var source = await RecognizeDictionaryTextAsync(frame, region, ocrLanguage, cts.Token);
-
-            if (string.IsNullOrWhiteSpace(source))
-            {
-                SetStatus("선택 영역에서 OCR 텍스트를 찾지 못했습니다.", true);
-                return;
-            }
-
-            DictSourceTextBox.Text = source;
-            DictTargetTextBox.Focus();
-            DictTargetTextBox.SelectAll();
-            SetStatus($"OCR 원문을 입력했습니다: {source}");
-        }
-        catch (Exception ex)
-        {
-            AppLog.Write("Dictionary OCR capture failed", ex);
-            SetStatus($"사전 OCR 실패: {ex.Message}", true);
-        }
-        finally
-        {
-            Mouse.OverrideCursor = null;
-            FillDictSourceFromOcrButton.IsEnabled = true;
-            try
-            {
-                await SetOverlayCaptureVisibilityAsync(true, force: true)(CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write("Failed to restore overlay visibility after dictionary OCR", ex);
-            }
-        }
+        dictionaryReturnTab = MainTabControl.SelectedItem;
+        MainTabControl.SelectedItem = TranslationTabItem;
+        BeginPreviewRegionEditing(PreviewEditPurpose.DictionaryOcr);
+        SetStatus($"{ocrLanguage.DisplayName} 원문을 앱 안의 게임 미리보기에서 좌클릭으로 드래그하세요.");
     }
 
     private static string NormalizeDictionaryOcrText(string text)

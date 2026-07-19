@@ -48,10 +48,31 @@ internal static class NativeMethods
     internal static extern bool BringWindowToTop(nint hwnd);
 
     [DllImport("user32.dll")]
+    internal static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll")]
+    internal static extern nint SetActiveWindow(nint hwnd);
+
+    [DllImport("user32.dll")]
+    internal static extern nint SetFocus(nint hwnd);
+
+    [DllImport("user32.dll")]
+    internal static extern bool ShowWindow(nint hwnd, int command);
+
+    [DllImport("user32.dll")]
     internal static extern bool AttachThreadInput(uint sourceThreadId, uint targetThreadId, bool attach);
 
     [DllImport("kernel32.dll")]
     internal static extern uint GetCurrentThreadId();
+
+    internal static readonly nint HwndTop = nint.Zero;
+    internal static readonly nint HwndTopmost = new(-1);
+    internal const uint SwpNoSize = 0x0001;
+    internal const uint SwpNoMove = 0x0002;
+    internal const uint SwpNoActivate = 0x0010;
+    internal const uint SwpShowWindow = 0x0040;
+    internal const int SwMinimize = 6;
+    internal const int SwShowNoActivate = 4;
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     internal static extern int GetWindowText(nint hwnd, StringBuilder text, int maxLength);
@@ -99,6 +120,7 @@ internal static class NativeMethods
     internal static extern bool DeleteDC(nint dc);
 
     internal const int GWL_EXSTYLE = -20;
+    internal const int WS_EX_TOPMOST = 0x00000008;
     internal const int WS_EX_TRANSPARENT = 0x00000020;
     internal const int WS_EX_NOACTIVATE = 0x08000000;
 
