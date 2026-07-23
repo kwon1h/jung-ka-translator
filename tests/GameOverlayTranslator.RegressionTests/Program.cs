@@ -30,6 +30,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("PaddleOCR reuses only identical frames", TestPaddleOcrFrameCache),
     ("Translation session runs OCR off caller context", TestTranslationSessionRunsOcrOffCallerContext),
     ("Slow OCR polling yields CPU time back to the game", TestSlowOcrPollingYieldsToGame),
+    ("Session status ignores routine skips and reports recovery", TestSessionStatusTracksRecovery),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("App settings flush the latest debounced value", TestAppSettingsFlushesLatestValue),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
@@ -1200,15 +1201,23 @@ static async Task TestDeepLSourceLanguageHandling()
 static async Task TestDeepLUnsupportedSourceFallback()
 {
     Assert(
-        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "en")
+        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "en", "ko")
         == TranslationServiceType.DeepL,
         "A DeepL-supported source language should keep the selected provider.");
     Assert(
-        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "hi")
+        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "hi", "ko")
         == TranslationServiceType.GoogleUnofficial,
         "A DeepL-unsupported OCR language should automatically use the broad-language fallback.");
     Assert(
-        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.GoogleWebApp, "hi")
+        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "ko", "hi")
+        == TranslationServiceType.GoogleUnofficial,
+        "Reverse chat translation to a DeepL-unsupported game language should use the fallback.");
+    Assert(
+        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "ko", "en")
+        == TranslationServiceType.DeepL,
+        "Generic English game chat should map to DeepL's default English target variant.");
+    Assert(
+        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.GoogleWebApp, "hi", "ko")
         == TranslationServiceType.GoogleWebApp,
         "Explicitly selected non-DeepL providers must not be changed.");
 
@@ -1220,13 +1229,20 @@ static async Task TestDeepLUnsupportedSourceFallback()
     await service.TranslateAsync(
         new TranslationRequest("नमस्ते", "ko", "hi"),
         CancellationToken.None);
+    await service.TranslateAsync(
+        new TranslationRequest("안녕하세요", "hi", "ko"),
+        CancellationToken.None);
+    await service.TranslateAsync(
+        new TranslationRequest("안녕하세요", "en", "ko"),
+        CancellationToken.None);
     await service.TranslateBatchAsync(
         new BatchTranslationRequest(["hello"], "ko", "en"),
         CancellationToken.None);
 
     Assert(
-        handler.RequestHosts.SequenceEqual(["translate.googleapis.com", "api.deepl.com"]),
-        "Provider routing should use Google only for the unsupported source and retain DeepL otherwise.");
+        handler.RequestHosts.SequenceEqual(
+            ["translate.googleapis.com", "translate.googleapis.com", "api.deepl.com", "api.deepl.com"]),
+        "Provider routing should fall back for unsupported source or target languages and retain DeepL otherwise.");
 }
 
 static async Task TestGoogleBatchTranslationUsesPost()
@@ -1376,6 +1392,40 @@ static Task TestSlowOcrPollingYieldsToGame()
     Assert(
         overrunDelay >= TimeSpan.FromMilliseconds(100),
         "An OCR pass that exceeds its interval must yield CPU time before the next capture.");
+    return Task.CompletedTask;
+}
+
+static Task TestSessionStatusTracksRecovery()
+{
+    var tracker = new SessionStatusTracker();
+    var started = tracker.Observe(new SessionUpdate(TranslationSession.RunningStatus));
+    Assert(started?.Text == TranslationSession.RunningStatus, "Starting a session should show a stable running status.");
+
+    var routineSkip = tracker.Observe(new SessionUpdate(
+        "스킵",
+        FilterRule: "NoText",
+        DiagnosticKind: DiagnosticKind.OcrSkipped));
+    Assert(routineSkip is null, "Routine OCR skips must not replace the global running status.");
+
+    var cooldown = tracker.Observe(new SessionUpdate(
+        "최근 번역 실패로 잠시 대기 중입니다. 자동으로 다시 시도합니다.",
+        FilterRule: "TranslationCooldown",
+        DiagnosticKind: DiagnosticKind.OcrSkipped));
+    Assert(cooldown?.Text.Contains("자동", StringComparison.Ordinal) == true, "A retry cooldown should remain visible.");
+
+    var recovered = tracker.Observe(new SessionUpdate(
+        "스킵",
+        FilterRule: "NoText",
+        DiagnosticKind: DiagnosticKind.OcrSkipped));
+    Assert(recovered?.Text == TranslationSession.RunningStatus, "The first successful poll after a transient state should report recovery.");
+    Assert(
+        tracker.Observe(new SessionUpdate("스킵", FilterRule: "NoText", DiagnosticKind: DiagnosticKind.OcrSkipped)) is null,
+        "Later routine skips should stay silent after recovery.");
+
+    var error = tracker.Observe(new SessionUpdate("API 오류", IsError: true));
+    Assert(error is { IsError: true }, "A real session error must remain visible with error styling.");
+    var translated = tracker.Observe(new SessionUpdate("번역", DiagnosticKind: DiagnosticKind.OcrTranslated));
+    Assert(translated?.Text == TranslationSession.RunningStatus, "A translated poll should clear the previous error state.");
     return Task.CompletedTask;
 }
 

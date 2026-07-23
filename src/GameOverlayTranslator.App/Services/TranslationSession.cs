@@ -13,6 +13,8 @@ namespace GameOverlayTranslator.App.Services;
 
 public sealed class TranslationSession(ICaptureService captureService, IOcrEngine ocrEngine, ITranslationService translationService) : ITranslationSession
 {
+    internal const string RunningStatus = "번역 실행 중";
+    internal const string StoppedStatus = "번역 정지";
     private const int MaxChatTranslationMemoryEntries = 1024;
     private static readonly TimeSpan OverrunCooldown = TimeSpan.FromMilliseconds(100);
     private CancellationTokenSource? runCancellation;
@@ -30,7 +32,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
         runCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         runTask = Task.Run(() => RunAsync(options, runCancellation.Token));
-        Publish("Translation running");
+        Publish(RunningStatus);
         return Task.CompletedTask;
     }
 
@@ -56,7 +58,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         runCancellation.Dispose();
         runCancellation = null;
         runTask = null;
-        Publish("Stopped");
+        Publish(StoppedStatus);
     }
 
     private async Task RunAsync(SessionOptions options, CancellationToken ct)

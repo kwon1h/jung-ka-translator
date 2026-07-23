@@ -131,6 +131,7 @@ public partial class MainWindow : Window
     ];
     private readonly IWindowSource windowSource = new Win32WindowSource();
     private readonly ObservableCollection<OcrLanguage> installedOcrLanguages = [];
+    private readonly SessionStatusTracker sessionStatusTracker = new();
     private readonly ICaptureService dictionaryCaptureService = new WindowCaptureService();
     private readonly PaddleOcrEngine paddleOcrEngine = new();
     private readonly IOcrEngine dictionaryOcrEngine;
@@ -1726,7 +1727,11 @@ public partial class MainWindow : Window
 
     private void SessionUpdated(object? sender, SessionUpdate update) => Dispatcher.Invoke(() =>
     {
-        SetStatus(update.Status, update.IsError);
+        var statusDisplay = sessionStatusTracker.Observe(update);
+        if (statusDisplay is not null)
+        {
+            SetStatus(statusDisplay.Text, statusDisplay.IsError);
+        }
         resultWindow?.Apply(update);
         if (overlayWindow is not null && WindowComboBox.SelectedItem is CapturableWindow window)
         {

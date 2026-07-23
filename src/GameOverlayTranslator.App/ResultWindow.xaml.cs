@@ -15,6 +15,7 @@ public partial class ResultWindow : Window
     private const int MaxChatLines = 80;
     private readonly ObservableCollection<ChatResultItem> chatLines = [];
     private readonly Func<string, Task<string>> translateAndCopyChatAsync;
+    private readonly SessionStatusTracker sessionStatusTracker = new();
     private string chatTargetLanguageName = "게임 언어";
 
     public ResultWindow(Func<string, Task<string>> translateAndCopyChatAsync)
@@ -38,7 +39,13 @@ public partial class ResultWindow : Window
 
     public void Apply(SessionUpdate update)
     {
-        ResultStatusText.Text = update.Status;
+        var statusDisplay = sessionStatusTracker.Observe(update);
+        if (statusDisplay is not null)
+        {
+            ResultStatusText.Text = statusDisplay.Text;
+            ResultStatusText.Foreground = new SolidColorBrush(
+                (Color)ColorConverter.ConvertFromString(statusDisplay.IsError ? "#FCA5A5" : "#B7C6C2"));
+        }
         if (!update.IsChatLine || string.IsNullOrWhiteSpace(update.TranslatedText))
         {
             return;

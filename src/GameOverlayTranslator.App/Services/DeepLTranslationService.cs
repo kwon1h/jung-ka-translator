@@ -17,6 +17,13 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
         "HU", "ID", "IT", "JA", "KO", "LT", "LV", "NB", "NL", "PL", "PT", "RO",
         "RU", "SK", "SL", "SV", "TH", "TR", "UK", "VI", "ZH"
     };
+    private static readonly HashSet<string> SupportedTargetLanguages = new(StringComparer.Ordinal)
+    {
+        "AR", "BG", "CS", "DA", "DE", "EL", "EN-GB", "EN-US", "ES", "ES-419", "ET",
+        "FI", "FR", "HE", "HU", "ID", "IT", "JA", "KO", "LT", "LV", "NB", "NL", "PL",
+        "PT-BR", "PT-PT", "RO", "RU", "SK", "SL", "SV", "TH", "TR", "UK", "VI",
+        "ZH", "ZH-HANS", "ZH-HANT"
+    };
 
     public async Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
     {
@@ -103,6 +110,10 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
     internal static bool SupportsSourceLanguage(string? languageCode) =>
         string.IsNullOrWhiteSpace(languageCode) || NormalizeSourceLanguageCode(languageCode) is not null;
 
+    internal static bool SupportsTargetLanguage(string? languageCode) =>
+        !string.IsNullOrWhiteSpace(languageCode)
+        && SupportedTargetLanguages.Contains(NormalizeTargetLanguageCode(languageCode));
+
     private static IEnumerable<KeyValuePair<string, string>> BuildParameters(TranslationRequest request)
     {
         yield return new("text", request.Text);
@@ -118,6 +129,8 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
         languageCode.Trim().ToLowerInvariant() switch
         {
             "ko" => "KO",
+            "en" => "EN-US",
+            "pt" => "PT-PT",
             "zh-cn" or "zh-hans" => "ZH-HANS",
             _ => languageCode.Trim().ToUpperInvariant()
         };

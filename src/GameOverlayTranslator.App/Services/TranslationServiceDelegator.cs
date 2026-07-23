@@ -28,7 +28,10 @@ public sealed class TranslationServiceDelegator : ITranslationService
     public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
     {
         var settings = settingsProvider();
-        ITranslationService service = ResolveEffectiveTranslator(settings.TranslatorType, request.SourceLanguage) switch
+        ITranslationService service = ResolveEffectiveTranslator(
+            settings.TranslatorType,
+            request.SourceLanguage,
+            request.TargetLanguage) switch
         {
             TranslationServiceType.GoogleUnofficial => googleUnofficialService,
             TranslationServiceType.GoogleWebApp => googleWebAppService,
@@ -40,7 +43,10 @@ public sealed class TranslationServiceDelegator : ITranslationService
     public Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
     {
         var settings = settingsProvider();
-        ITranslationService service = ResolveEffectiveTranslator(settings.TranslatorType, request.SourceLanguage) switch
+        ITranslationService service = ResolveEffectiveTranslator(
+            settings.TranslatorType,
+            request.SourceLanguage,
+            request.TargetLanguage) switch
         {
             TranslationServiceType.GoogleUnofficial => googleUnofficialService,
             TranslationServiceType.GoogleWebApp => googleWebAppService,
@@ -51,9 +57,11 @@ public sealed class TranslationServiceDelegator : ITranslationService
 
     internal static TranslationServiceType ResolveEffectiveTranslator(
         TranslationServiceType selectedTranslator,
-        string? sourceLanguage) =>
+        string? sourceLanguage,
+        string? targetLanguage) =>
         selectedTranslator == TranslationServiceType.DeepL
-        && !DeepLTranslationService.SupportsSourceLanguage(sourceLanguage)
+        && (!DeepLTranslationService.SupportsSourceLanguage(sourceLanguage)
+            || !DeepLTranslationService.SupportsTargetLanguage(targetLanguage))
             ? TranslationServiceType.GoogleUnofficial
             : selectedTranslator;
 }
