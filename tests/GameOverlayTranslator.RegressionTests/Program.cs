@@ -62,9 +62,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Chat translation does not use a speaker-only fallback position", TestChatTranslationDoesNotUseSpeakerOnlyFallbackPosition),
     ("Chat overlay keeps OCR row positions", TestChatOverlayKeepsOcrRowPositions),
     ("Chat overlay does not move dense rows", TestChatOverlayDoesNotMoveDenseRows),
-    ("Chat snapshot removes only overlapping stale rows", TestChatSnapshotRemovesOnlyOverlappingStaleRows),
-    ("Crowded overlay keeps preferred position", TestCrowdedOverlayKeepsPreferredPosition),
-    ("Overlay layout prevents background overlap", TestOverlayLayoutPreventsOverlap)
+    ("Overlapping chat translations keep OCR positions", TestOverlappingChatTranslationsKeepOcrPositions),
+    ("Overlapping backgrounds keep one opacity", TestOverlappingBackgroundsKeepOneOpacity)
 };
 
 var cachePath = Path.Combine(
@@ -1077,48 +1076,41 @@ static Task TestChatOverlayDoesNotMoveDenseRows()
     return Task.CompletedTask;
 }
 
-static Task TestChatSnapshotRemovesOnlyOverlappingStaleRows()
+static Task TestOverlappingChatTranslationsKeepOcrPositions()
 {
-    var current = new OverlayChatItem("current", "current", 10, 20, 20, 80, 180, 120, 24);
-    var overlappingStale = new OverlayChatItem("stale-overlap", "stale", 20, 24, 24, 80, 180, 120, 24);
-    var distantStale = new OverlayChatItem("stale-distant", "stale", 10, 100, 100, 80, 180, 120, 24);
-    var items = new[] { overlappingStale, distantStale, current };
-
-    var staleIds = OverlayLayout.FindStaleItemsOverlappingCurrentRows(
-        items,
-        new HashSet<string>([current.Id], StringComparer.Ordinal));
-    Assert(staleIds.SequenceEqual([overlappingStale.Id]), "Only a stale item overlapping a current OCR row should be removed immediately.");
-
-    var emptySnapshotRemovals = OverlayLayout.FindStaleItemsOverlappingCurrentRows(
-        items,
-        new HashSet<string>(StringComparer.Ordinal));
-    Assert(emptySnapshotRemovals.Count == 0, "An empty current snapshot should retain all stale items for their display-duration TTL.");
+    var placed = OverlayLayout.PlaceChatAtOcrRows(
+    [
+        new OverlayChatItem("first", "first", 10, 20, 20, 80, 180, 160, 28),
+        new OverlayChatItem("second", "second", 18, 24, 24, 80, 180, 160, 28)
+    ]);
+    Assert(placed[0].Top == 20 && placed[1].Top == 24, "Overlapping chat translations must retain their individual OCR rows.");
     return Task.CompletedTask;
 }
 
-static Task TestCrowdedOverlayKeepsPreferredPosition()
+static Task TestOverlappingBackgroundsKeepOneOpacity()
 {
-    var placed = OverlayLayout.AvoidOverlaps(
-    [
-        new Rect(0, 30, 100, 70),
-        new Rect(0, 30, 100, 70)
-    ], new Size(100, 100));
+    var visual = new DrawingVisual();
+    using (var context = visual.RenderOpen())
+    {
+        context.DrawGeometry(
+            new SolidColorBrush(Color.FromArgb(128, 0, 0, 0)),
+            null,
+            OverlayBackgroundGeometry.Create(
+            [
+                new Rect(2, 2, 20, 20),
+                new Rect(12, 2, 20, 20)
+            ],
+            3));
+    }
 
-    Assert(placed[1].Top == 30, "A crowded overlay should fall back to its OCR top instead of jumping to zero.");
-    return Task.CompletedTask;
-}
-
-static Task TestOverlayLayoutPreventsOverlap()
-{
-    var placed = OverlayLayout.AvoidOverlaps(
-    [
-        new Rect(10, 20, 200, 40),
-        new Rect(10, 35, 200, 40),
-        new Rect(300, 35, 100, 40)
-    ], new Size(500, 200));
-
-    Assert(!placed[0].IntersectsWith(placed[1]), "Vertically adjacent translations must not overlap.");
-    Assert(placed[2].Top == 35, "A horizontally separate translation should keep its OCR position.");
+    var bitmap = new RenderTargetBitmap(40, 30, 96, 96, PixelFormats.Pbgra32);
+    bitmap.Render(visual);
+    var pixels = new byte[40 * 30 * 4];
+    bitmap.CopyPixels(pixels, 40 * 4, 0);
+    var singleAlpha = pixels[(10 * 40 + 6) * 4 + 3];
+    var overlapAlpha = pixels[(10 * 40 + 16) * 4 + 3];
+    Assert(singleAlpha > 0, "The background geometry should render its configured opacity.");
+    Assert(Math.Abs(singleAlpha - overlapAlpha) <= 1, "An overlapping background must be composited once instead of becoming darker.");
     return Task.CompletedTask;
 }
 

@@ -133,6 +133,7 @@ public partial class OverlayWindow : Window
             try
             {
                 OverlayItems.Visibility = Visibility.Collapsed;
+                ChatBackgroundPath.Data = Geometry.Empty;
 
                 // Clear the inactive canvas first (it is currently hidden, so no flicker)
                 inactiveCanvas.Children.Clear();
@@ -166,9 +167,10 @@ public partial class OverlayWindow : Window
 
                     var border = new Border
                     {
-                        Background = this.OverlayBackgroundBrush,
+                        Background = Brushes.Transparent,
                         Padding = new Thickness(4, 2, 4, 2),
                         CornerRadius = new CornerRadius(4),
+                        ClipToBounds = true,
                         Child = stack,
                         MinWidth = Math.Min(cluster.Bounds.Width, availableWidth),
                         MaxWidth = availableWidth
@@ -178,17 +180,24 @@ public partial class OverlayWindow : Window
                     var width = Math.Min(availableWidth, Math.Max(border.MinWidth, border.DesiredSize.Width));
                     var height = Math.Max(cluster.Bounds.Height, border.DesiredSize.Height);
                     border.Width = width;
+                    border.Height = height;
 
                     borders.Add(border);
                     desiredBoxes.Add(new Rect(x, y, width, height));
-                    inactiveCanvas.Children.Add(border);
                 }
 
-                var placedBoxes = OverlayLayout.AvoidOverlaps(desiredBoxes, new Size(ActualWidth, ActualHeight));
+                var placedBoxes = desiredBoxes;
+                inactiveCanvas.Children.Add(new System.Windows.Shapes.Path
+                {
+                    Data = OverlayBackgroundGeometry.Create(placedBoxes, 4),
+                    Fill = OverlayBackgroundBrush,
+                    IsHitTestVisible = false
+                });
                 for (var index = 0; index < borders.Count; index++)
                 {
                     Canvas.SetLeft(borders[index], placedBoxes[index].Left);
                     Canvas.SetTop(borders[index], placedBoxes[index].Top);
+                    inactiveCanvas.Children.Add(borders[index]);
                 }
 
                 // Swap visibility in one frame
@@ -220,17 +229,14 @@ public partial class OverlayWindow : Window
                 chatSnapshotMode = true;
             }
 
-            var currentIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var chatItem in chatItems)
             {
                 if (chatItem.BoundingRect is { } itemBounds
                     && !string.IsNullOrWhiteSpace(chatItem.TranslatedText))
                 {
-                    currentIds.Add(chatItem.Id);
                     ApplyChatItem(chatItem.Id, chatItem.Speaker, chatItem.TranslatedText, itemBounds);
                 }
             }
-            RemoveStaleItemsOverlappingCurrentRows(currentIds);
             return;
         }
 
@@ -300,32 +306,6 @@ public partial class OverlayWindow : Window
         var cts = new CancellationTokenSource();
         activeTimers[id] = cts;
         _ = RemoveAfterDelayAsync(id, cts);
-        LayoutChatLines();
-    }
-
-    private void RemoveStaleItemsOverlappingCurrentRows(IReadOnlySet<string> currentIds)
-    {
-        var staleIds = OverlayLayout.FindStaleItemsOverlappingCurrentRows(lines, currentIds);
-        if (staleIds.Count == 0)
-        {
-            return;
-        }
-
-        foreach (var staleId in staleIds)
-        {
-            var staleItem = lines.FirstOrDefault(line => line.Id == staleId);
-            if (staleItem is not null)
-            {
-                lines.Remove(staleItem);
-            }
-
-            if (activeTimers.TryRemove(staleId, out var staleTimer))
-            {
-                staleTimer.Cancel();
-                staleTimer.Dispose();
-            }
-        }
-
         LayoutChatLines();
     }
 
@@ -444,6 +424,7 @@ public partial class OverlayWindow : Window
     {
         if (lines.Count == 0)
         {
+            ChatBackgroundPath.Data = Geometry.Empty;
             return;
         }
 
@@ -455,6 +436,10 @@ public partial class OverlayWindow : Window
                 lines[index] = lines[index] with { Top = placed[index].Top };
             }
         }
+
+        ChatBackgroundPath.Data = OverlayBackgroundGeometry.Create(
+            lines.Select(line => new Rect(line.Left, line.Top, line.RenderedWidth, line.Height)),
+            3);
     }
 
     private void ResetScreenTimer()
@@ -519,6 +504,7 @@ public partial class OverlayWindow : Window
     private void ClearChatItems()
     {
         lines.Clear();
+        ChatBackgroundPath.Data = Geometry.Empty;
         foreach (var cts in activeTimers.Values)
         {
             cts.Cancel();
@@ -559,71 +545,21 @@ public partial class OverlayWindow : Window
 
 internal static class OverlayLayout
 {
-    private const double Gap = 2;
-
     public static IReadOnlyList<Rect> PlaceChatAtOcrRows(IEnumerable<OverlayChatItem> items) =>
         items.Select(line => new Rect(line.Left, line.AnchorTop, line.RenderedWidth, line.Height)).ToArray();
+}
 
-    public static IReadOnlyList<string> FindStaleItemsOverlappingCurrentRows(
-        IEnumerable<OverlayChatItem> items,
-        IReadOnlySet<string> currentIds)
+internal static class OverlayBackgroundGeometry
+{
+    public static Geometry Create(IEnumerable<Rect> rectangles, double cornerRadius)
     {
-        if (currentIds.Count == 0)
+        var group = new GeometryGroup { FillRule = FillRule.Nonzero };
+        foreach (var rectangle in rectangles.Where(rectangle => rectangle.Width > 0 && rectangle.Height > 0))
         {
-            return Array.Empty<string>();
+            group.Children.Add(new RectangleGeometry(rectangle, cornerRadius, cornerRadius));
         }
 
-        var materialized = items.ToList();
-        var currentBounds = materialized
-            .Where(item => currentIds.Contains(item.Id))
-            .Select(ToBounds)
-            .ToArray();
-        return materialized
-            .Where(item => !currentIds.Contains(item.Id)
-                           && currentBounds.Any(current => HasPositiveIntersection(ToBounds(item), current)))
-            .Select(item => item.Id)
-            .ToArray();
+        group.Freeze();
+        return group;
     }
-
-    private static Rect ToBounds(OverlayChatItem item) =>
-        new(item.Left, item.AnchorTop, item.RenderedWidth, item.Height);
-
-    private static bool HasPositiveIntersection(Rect left, Rect right)
-    {
-        left.Intersect(right);
-        return !left.IsEmpty && left.Width > 0 && left.Height > 0;
-    }
-
-    public static IReadOnlyList<Rect> AvoidOverlaps(IReadOnlyList<Rect> desired, Size bounds)
-    {
-        var result = new Rect[desired.Count];
-        var placed = new List<Rect>();
-        foreach (var entry in desired.Select((box, index) => (Box: box, Index: index)).OrderBy(entry => entry.Box.Top))
-        {
-            var width = Math.Min(Math.Max(1, entry.Box.Width), Math.Max(1, bounds.Width));
-            var height = Math.Min(Math.Max(1, entry.Box.Height), Math.Max(1, bounds.Height));
-            var left = Math.Clamp(entry.Box.Left, 0, Math.Max(0, bounds.Width - width));
-            var preferredTop = Math.Clamp(entry.Box.Top, 0, Math.Max(0, bounds.Height - height));
-            var candidates = new[] { preferredTop }
-                .Concat(placed.SelectMany(box => new[] { box.Bottom + Gap, box.Top - height - Gap }))
-                .Where(top => top >= 0 && top + height <= bounds.Height)
-                .Distinct()
-                .OrderBy(top => Math.Abs(top - preferredTop));
-
-            var top = candidates
-                .Where(candidate => placed.All(box => !Overlaps(new Rect(left, candidate, width, height), box)))
-                .DefaultIfEmpty(preferredTop)
-                .First();
-            var resolved = new Rect(left, top, width, height);
-            placed.Add(resolved);
-            result[entry.Index] = resolved;
-        }
-        return result;
-    }
-
-    private static bool Overlaps(Rect first, Rect second) =>
-        first.Left < second.Right + Gap
-        && first.Right + Gap > second.Left
-        && first.Top < second.Bottom + Gap
-        && first.Bottom + Gap > second.Top;
 }

@@ -5,6 +5,9 @@
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
         BorderThickness="0" ShowInTaskbar="False" Topmost="True" ShowActivated="False">
     <Grid>
+        <Path x:Name="ChatBackgroundPath"
+              Fill="{Binding Path=OverlayBackgroundBrush, RelativeSource={RelativeSource AncestorType=Window}}"
+              IsHitTestVisible="False" />
         <ItemsControl x:Name="OverlayItems" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
@@ -20,7 +23,7 @@
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
                     <Grid>
-                        <Border Background="{Binding Path=OverlayBackgroundBrush, RelativeSource={RelativeSource AncestorType=Window}}" 
+                        <Border Background="Transparent"
                                 CornerRadius="3" Padding="6,0" HorizontalAlignment="Left" ClipToBounds="True"
                                 Width="{Binding RenderedWidth}" Height="{Binding Height}"
                                 MinWidth="{Binding MinWidth}" MaxWidth="{Binding MaxWidth}">
