@@ -25,13 +25,18 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             return Task.CompletedTask;
         }
 
+        runCancellation?.Dispose();
+        runCancellation = null;
+        runTask = null;
         runCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
         runTask = Task.Run(() => RunAsync(options, runCancellation.Token));
         Publish(RunningStatus);
         return Task.CompletedTask;
     }
 
-    public async Task StopAsync()
+    public Task StopAsync() => StopAsync(publishStoppedStatus: true);
+
+    internal async Task StopAsync(bool publishStoppedStatus)
     {
         if (runCancellation is null)
         {
@@ -53,7 +58,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         runCancellation.Dispose();
         runCancellation = null;
         runTask = null;
-        Publish(StoppedStatus);
+        if (publishStoppedStatus)
+        {
+            Publish(StoppedStatus);
+        }
     }
 
     private async Task RunAsync(SessionOptions options, CancellationToken ct)
@@ -125,6 +133,15 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     ex.Message,
                     filterReason: "Target window is not foreground",
                     filterRule: "CaptureDeferred");
+            }
+            catch (CaptureException ex) when (ex.IsTerminal)
+            {
+                Publish(
+                    ex.Message,
+                    isError: true,
+                    filterReason: "Target window no longer exists",
+                    filterRule: "CaptureTargetClosed");
+                return;
             }
             catch (CaptureException ex)
             {

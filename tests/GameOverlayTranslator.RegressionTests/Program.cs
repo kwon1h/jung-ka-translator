@@ -105,6 +105,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Overlay tracks target z-order changes", TestOverlayTracksTargetZOrderChanges),
     ("Broadcast option maps only capture affinity", TestBroadcastOptionMapsCaptureAffinity),
     ("Deferred capture resumes without error", TestDeferredCaptureResumesWithoutError),
+    ("Closed capture target stops the session", TestClosedCaptureTargetStopsSession),
+    ("Transient capture failure retries", TestTransientCaptureFailureRetries),
     ("Chat translation keeps OCR position", TestChatTranslationKeepsOcrPosition),
     ("Chat snapshot replays translation at current position", TestChatSnapshotReplaysTranslationAtCurrentPosition),
     ("Similar OCR chat reuses translation at moved position", TestSimilarOcrChatReusesTranslationAtMovedPosition),
@@ -2219,6 +2221,53 @@ static async Task TestDeferredCaptureResumesWithoutError()
     Assert(translation.BatchRequests == 1, "Only the successful capture should reach translation.");
 }
 
+static async Task TestClosedCaptureTargetStopsSession()
+{
+    var capture = new ClosedTargetCaptureService();
+    var session = new TranslationSession(
+        capture,
+        new FakeOcrEngine(new OcrResult(string.Empty, [])),
+        new CountingTranslationService());
+    var updates = Collect(session);
+
+    await session.StartAsync(CreateOptions(TranslationMode.Screen), CancellationToken.None);
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+    while (session.IsRunning)
+    {
+        await Task.Delay(5, timeout.Token);
+    }
+
+    await Task.Delay(50);
+    Assert(capture.CallCount == 1, "A closed game window must not be polled repeatedly.");
+    Assert(
+        updates.Count(update => update.FilterRule == "CaptureTargetClosed") == 1,
+        "A closed game window should publish one terminal session update.");
+    Assert(
+        updates.Any(update => update.FilterRule == "CaptureTargetClosed" && update.IsError),
+        "The terminal update should explain why translation stopped.");
+    await session.StopAsync(publishStoppedStatus: false);
+}
+
+static async Task TestTransientCaptureFailureRetries()
+{
+    var source = Chinese("8bd1");
+    var capture = new TransientThenCaptureService();
+    var translation = new CountingTranslationService();
+    var session = new TranslationSession(
+        capture,
+        new FakeOcrEngine(new OcrResult(source, [new OcrLineResult(source, new Rect(0, 0, 20, 20))])),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Screen), 100);
+
+    Assert(capture.CallCount >= 2, "A temporary capture failure should be retried.");
+    Assert(updates.Any(update => update.IsError), "The temporary capture failure should remain visible.");
+    Assert(
+        updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated),
+        "Translation should recover after a temporary capture failure.");
+}
+
 static async Task TestChatSnapshotReplaysTranslationAtCurrentPosition()
 {
     var message = Chinese("5feb 4f7f 7528 5929 4f7f");
@@ -2534,6 +2583,34 @@ sealed class DeferredThenCaptureService : ICaptureService
         if (CallCount == 1)
         {
             throw new CaptureDeferredException("Waiting for the game window");
+        }
+
+        var bitmap = new RenderTargetBitmap(1, 1, 96, 96, PixelFormats.Pbgra32);
+        return Task.FromResult(new CapturedFrame(bitmap));
+    }
+}
+
+sealed class ClosedTargetCaptureService : ICaptureService
+{
+    public int CallCount { get; private set; }
+
+    public Task<CapturedFrame> CaptureAsync(CaptureTarget target, CaptureRegion region, CancellationToken ct)
+    {
+        CallCount++;
+        throw new CaptureException("Target window closed", isTerminal: true);
+    }
+}
+
+sealed class TransientThenCaptureService : ICaptureService
+{
+    public int CallCount { get; private set; }
+
+    public Task<CapturedFrame> CaptureAsync(CaptureTarget target, CaptureRegion region, CancellationToken ct)
+    {
+        CallCount++;
+        if (CallCount == 1)
+        {
+            throw new CaptureException("Temporary capture failure");
         }
 
         var bitmap = new RenderTargetBitmap(1, 1, 96, 96, PixelFormats.Pbgra32);

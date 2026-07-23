@@ -182,6 +182,7 @@ public partial class MainWindow : Window
     private object? dictionaryReturnTab;
     private bool previewEditorNoActivateApplied;
     private nint suspendedPreviewWindowHandle;
+    private bool automaticSessionEndCleanupPending;
 
     private readonly UserDictionaryStore userDictStore = new();
     private readonly System.Collections.ObjectModel.ObservableCollection<DiagnosticLogItem> diagnosticLogs = new();
@@ -1718,10 +1719,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task StopSessionAsync()
+    private async Task StopSessionAsync(bool publishStoppedStatus = true)
     {
         sessionCancellation?.Cancel();
-        await session.StopAsync();
+        await session.StopAsync(publishStoppedStatus);
         sessionCancellation?.Dispose();
         sessionCancellation = null;
         activeSessionRegion = null;
@@ -1793,8 +1794,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        var terminalCaptureUpdate = updates.LastOrDefault(
+            update => update.FilterRule == "CaptureTargetClosed");
         TranslationMode? mode = null;
-        if (overlayWindow is not null && WindowComboBox.SelectedItem is CapturableWindow window)
+        if (terminalCaptureUpdate is null
+            && overlayWindow is not null
+            && WindowComboBox.SelectedItem is CapturableWindow window)
         {
             var region = activeSessionRegion ?? SelectedRegion ?? FullWindowRegion;
             mode = activeSessionMode ?? settings.TranslationMode;
@@ -1857,6 +1862,36 @@ public partial class MainWindow : Window
         if (refreshApiUsage)
         {
             UpdateApiUsageText();
+        }
+
+        if (terminalCaptureUpdate is not null)
+        {
+            _ = HandleAutomaticSessionEndAsync(terminalCaptureUpdate.Status);
+        }
+    }
+
+    private async Task HandleAutomaticSessionEndAsync(string message)
+    {
+        if (automaticSessionEndCleanupPending || isClosing)
+        {
+            return;
+        }
+
+        automaticSessionEndCleanupPending = true;
+        try
+        {
+            await StopSessionAsync(publishStoppedStatus: false);
+            if (isClosing)
+            {
+                return;
+            }
+
+            RefreshWindows(this, new RoutedEventArgs());
+            SetStatus($"{message} 번역을 중단했으니 게임 창을 다시 확인하세요.", true);
+        }
+        finally
+        {
+            automaticSessionEndCleanupPending = false;
         }
     }
 

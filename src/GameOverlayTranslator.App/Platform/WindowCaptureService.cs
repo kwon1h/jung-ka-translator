@@ -25,7 +25,7 @@ public sealed class WindowCaptureService(bool requireTargetForeground = false) :
 
         if (!NativeMethods.IsWindow(target.Window.Handle))
         {
-            throw new CaptureException("선택한 창이 종료되었습니다.");
+            throw new CaptureException("선택한 게임 창이 종료되었습니다.", isTerminal: true);
         }
 
         if (NativeMethods.IsIconic(target.Window.Handle))
@@ -204,6 +204,9 @@ public sealed class WindowCaptureService(bool requireTargetForeground = false) :
     }
 }
 
-public sealed class CaptureException(string message) : Exception(message);
+public sealed class CaptureException(string message, bool isTerminal = false) : Exception(message)
+{
+    public bool IsTerminal { get; } = isTerminal;
+}
 
 public sealed class CaptureDeferredException(string message) : Exception(message);
