@@ -41,7 +41,9 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
         var json = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"DeepL 번역 요청 실패: {(int)response.StatusCode} {ReadError(json)}");
+            throw TranslationHttpFailure.Create(
+                $"DeepL 번역 요청 실패: {(int)response.StatusCode} {ReadError(json)}",
+                response);
         }
 
         using var document = JsonDocument.Parse(json);
@@ -87,7 +89,9 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
         var json = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"DeepL 번역 요청 실패: {(int)response.StatusCode} {ReadError(json)}");
+            throw TranslationHttpFailure.Create(
+                $"DeepL 번역 요청 실패: {(int)response.StatusCode} {ReadError(json)}",
+                response);
         }
 
         using var document = JsonDocument.Parse(json);

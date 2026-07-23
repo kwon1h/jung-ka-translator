@@ -159,6 +159,14 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     filterRule: "TranslationCooldown",
                     diagnosticKind: DiagnosticKind.OcrSkipped);
             }
+            catch (TranslationRetryAfterException ex)
+            {
+                Publish(
+                    $"{ex.Message} 번역은 자동으로 재개됩니다.",
+                    filterReason: "Provider requested retry delay",
+                    filterRule: "TranslationCooldown",
+                    diagnosticKind: DiagnosticKind.OcrSkipped);
+            }
             catch (Exception ex)
             {
                 Publish(ex.Message, isError: true);

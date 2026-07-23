@@ -64,20 +64,23 @@ public sealed class CachingTranslationService : ITranslationService
 
         lock (cacheLock)
         {
-            PruneFailedTexts(DateTime.UtcNow);
-            if (IsProviderBlocked(failureScope, DateTime.UtcNow))
-            {
-                throw new TranslationTemporarilyUnavailableException();
-            }
-
+            var now = DateTime.UtcNow;
+            PruneFailedTexts(now);
             if (TryGetCachedTranslation(cacheKey, legacyKey, out var cachedTranslation))
             {
                 return new TranslationResult(request.Text, cachedTranslation, request.SourceLanguage, new TranslationUsage(CacheHitCount: 1));
             }
 
-            if (failedTexts.TryGetValue(cacheKey, out var failedTime) && DateTime.UtcNow - failedTime < negativeCacheDuration)
+            if (GetProviderBlockRemaining(failureScope, now) is { } providerDelay)
             {
-                throw new TranslationTemporarilyUnavailableException();
+                throw new TranslationTemporarilyUnavailableException(providerDelay);
+            }
+
+            if (failedTexts.TryGetValue(cacheKey, out var failedTime)
+                && now - failedTime < negativeCacheDuration)
+            {
+                throw new TranslationTemporarilyUnavailableException(
+                    negativeCacheDuration - (now - failedTime));
             }
         }
 
@@ -101,13 +104,17 @@ public sealed class CachingTranslationService : ITranslationService
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             lock (cacheLock)
             {
-                failedTexts[cacheKey] = DateTime.UtcNow;
-                PruneFailedTexts(DateTime.UtcNow);
-                RecordProviderFailure(failureScope, DateTime.UtcNow);
+                var now = DateTime.UtcNow;
+                failedTexts[cacheKey] = now;
+                PruneFailedTexts(now);
+                RecordProviderFailure(
+                    failureScope,
+                    now,
+                    (ex as TranslationRetryAfterException)?.RetryAfter);
             }
             throw;
         }
@@ -125,11 +132,13 @@ public sealed class CachingTranslationService : ITranslationService
         var batchMissMap = new Dictionary<string, List<int>>(StringComparer.Ordinal);
         var usage = TranslationUsage.None;
         var hasDeferredTranslation = false;
+        TimeSpan? deferredDelay = null;
 
         lock (cacheLock)
         {
-            PruneFailedTexts(DateTime.UtcNow);
-            var isBlocked = IsProviderBlocked(failureScope, DateTime.UtcNow);
+            var now = DateTime.UtcNow;
+            PruneFailedTexts(now);
+            var providerDelay = GetProviderBlockRemaining(failureScope, now);
 
             for (var index = 0; index < texts.Count; index++)
             {
@@ -137,20 +146,23 @@ public sealed class CachingTranslationService : ITranslationService
                 var key = GetCacheKey(text, targetLanguage, request.SourceLanguage, cacheNamespace);
                 var legacyKey = cacheNamespace is null ? GetLegacyCacheKey(text, targetLanguage) : null;
 
-                if (isBlocked)
-                {
-                    hasDeferredTranslation = true;
-                    continue;
-                }
-
                 if (TryGetCachedTranslation(key, legacyKey, out var cachedTranslation))
                 {
                     results[index] = cachedTranslation;
                     usage = usage.Add(new TranslationUsage(CacheHitCount: 1));
                 }
-                else if (failedTexts.TryGetValue(key, out var failedTime) && DateTime.UtcNow - failedTime < negativeCacheDuration)
+                else if (providerDelay is not null)
                 {
                     hasDeferredTranslation = true;
+                    deferredDelay = MaxDelay(deferredDelay, providerDelay);
+                }
+                else if (failedTexts.TryGetValue(key, out var failedTime)
+                         && now - failedTime < negativeCacheDuration)
+                {
+                    hasDeferredTranslation = true;
+                    deferredDelay = MaxDelay(
+                        deferredDelay,
+                        negativeCacheDuration - (now - failedTime));
                 }
                 else if (batchMissMap.TryGetValue(key, out var indices))
                 {
@@ -167,7 +179,7 @@ public sealed class CachingTranslationService : ITranslationService
 
         if (hasDeferredTranslation)
         {
-            throw new TranslationTemporarilyUnavailableException();
+            throw new TranslationTemporarilyUnavailableException(deferredDelay);
         }
 
         if (missTexts.Count > 0)
@@ -206,17 +218,21 @@ public sealed class CachingTranslationService : ITranslationService
             {
                 throw;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 lock (cacheLock)
                 {
+                    var now = DateTime.UtcNow;
                     foreach (var key in missKeys)
                     {
-                        failedTexts[key] = DateTime.UtcNow;
+                        failedTexts[key] = now;
                     }
-                    PruneFailedTexts(DateTime.UtcNow);
+                    PruneFailedTexts(now);
 
-                    RecordProviderFailure(failureScope, DateTime.UtcNow);
+                    RecordProviderFailure(
+                        failureScope,
+                        now,
+                        (ex as TranslationRetryAfterException)?.RetryAfter);
                 }
                 throw;
             }
@@ -405,11 +421,16 @@ public sealed class CachingTranslationService : ITranslationService
         }
     }
 
-    private bool IsProviderBlocked(string failureScope, DateTime now) =>
+    private TimeSpan? GetProviderBlockRemaining(string failureScope, DateTime now) =>
         providerFailures.TryGetValue(failureScope, out var failure)
-        && now < failure.BlockUntil;
+        && now < failure.BlockUntil
+            ? failure.BlockUntil - now
+            : null;
 
-    private void RecordProviderFailure(string failureScope, DateTime now)
+    private void RecordProviderFailure(
+        string failureScope,
+        DateTime now,
+        TimeSpan? retryAfter = null)
     {
         if (!providerFailures.TryGetValue(failureScope, out var failure))
         {
@@ -418,10 +439,33 @@ public sealed class CachingTranslationService : ITranslationService
         }
 
         failure.ContinuousFailures++;
-        if (failure.ContinuousFailures >= FailureThreshold)
+        if (retryAfter is { } providerDelay && providerDelay > TimeSpan.Zero)
+        {
+            var requestedBlockUntil = now + providerDelay;
+            if (requestedBlockUntil > failure.BlockUntil)
+            {
+                failure.BlockUntil = requestedBlockUntil;
+            }
+        }
+        else if (failure.ContinuousFailures >= FailureThreshold)
         {
             failure.BlockUntil = now + circuitBreakerDuration;
         }
+    }
+
+    private static TimeSpan? MaxDelay(TimeSpan? left, TimeSpan? right)
+    {
+        if (left is null)
+        {
+            return right;
+        }
+
+        if (right is null)
+        {
+            return left;
+        }
+
+        return left >= right ? left : right;
     }
 
     private string? GetCacheNamespace(string? sourceLanguage, string targetLanguage)
@@ -472,5 +516,10 @@ public sealed class CachingTranslationService : ITranslationService
     }
 }
 
-public sealed class TranslationTemporarilyUnavailableException()
-    : Exception("최근 번역 실패로 잠시 대기 중입니다. 자동으로 다시 시도합니다.");
+public sealed class TranslationTemporarilyUnavailableException(TimeSpan? retryAfter = null)
+    : Exception(retryAfter is { } delay && delay > TimeSpan.Zero
+        ? $"번역 서비스 요청을 잠시 쉬는 중입니다. {TranslationHttpFailure.FormatRetryDelay(delay)} 후 자동으로 다시 시도합니다."
+        : "최근 번역 실패로 잠시 대기 중입니다. 자동으로 다시 시도합니다.")
+{
+    public TimeSpan? RetryAfter { get; } = retryAfter;
+}

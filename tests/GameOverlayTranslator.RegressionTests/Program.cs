@@ -71,6 +71,9 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Provider usage is preserved", TestProviderUsageIsPreserved),
     ("Translation failure cooldown bypasses API", TestTranslationFailureCooldown),
     ("Translation cooldown does not publish source as translated", TestTranslationCooldownDoesNotPublishSource),
+    ("Translation retry-after honors provider delay", TestTranslationRetryAfter),
+    ("Rate limit keeps cached translations available", TestRateLimitPreservesCachedTranslations),
+    ("Rate limit status reports automatic retry", TestRateLimitStatusReportsRetry),
     ("Chat retries after a transient batch failure", TestChatRetriesAfterTransientFailure),
     ("Malformed batch response is not cached", TestMalformedBatchResponseIsNotCached),
     ("Cancellation does not trip translation circuit", TestCancellationDoesNotTripTranslationCircuit),
@@ -81,6 +84,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("DeepL selects Free and Pro endpoints from the key", TestDeepLEndpointSelection),
     ("DeepL normalizes source variants and omits unsupported sources", TestDeepLSourceLanguageHandling),
     ("DeepL unsupported OCR languages fall back to Google", TestDeepLUnsupportedSourceFallback),
+    ("Google rate limit exposes retry delay", TestGoogleRateLimitResponse),
     ("Google batch translation posts long text once", TestGoogleBatchTranslationUsesPost),
     ("Google Web App fallback is bounded and ordered", TestGoogleWebAppFallbackConcurrency),
     ("Spaced-language screen segment keeps phrases", TestSpacedLanguageScreenSegmentKeepsPhrases),
@@ -1198,6 +1202,104 @@ static async Task TestTranslationCooldownDoesNotPublishSource()
         "Cooldown polls should report an automatic non-error retry state.");
 }
 
+static Task TestTranslationRetryAfter()
+{
+    var now = new DateTimeOffset(2026, 7, 24, 6, 0, 0, TimeSpan.Zero);
+    using var deltaResponse = new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests);
+    deltaResponse.Headers.RetryAfter =
+        new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(42));
+    Assert(
+        TranslationHttpFailure.GetRetryAfter(deltaResponse, now) == TimeSpan.FromSeconds(42),
+        "A Retry-After delta should be honored exactly.");
+
+    using var dateResponse = new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable);
+    dateResponse.Headers.RetryAfter =
+        new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddMinutes(3));
+    Assert(
+        TranslationHttpFailure.GetRetryAfter(dateResponse, now) == TimeSpan.FromMinutes(3),
+        "A Retry-After date should be converted to a delay.");
+
+    using var defaultResponse = new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests);
+    Assert(
+        TranslationHttpFailure.GetRetryAfter(defaultResponse, now) == TimeSpan.FromSeconds(30),
+        "A 429 response without a header should still receive a safe default cooldown.");
+
+    using var zeroResponse = new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests);
+    zeroResponse.Headers.RetryAfter =
+        new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.Zero);
+    Assert(
+        TranslationHttpFailure.GetRetryAfter(zeroResponse, now) == TimeSpan.FromSeconds(30),
+        "A non-positive 429 delay should fall back to the safe default cooldown.");
+
+    using var cappedResponse = new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests);
+    cappedResponse.Headers.RetryAfter =
+        new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromHours(8));
+    Assert(
+        TranslationHttpFailure.GetRetryAfter(cappedResponse, now) == TimeSpan.FromHours(1),
+        "An invalidly long provider delay should be capped.");
+    return Task.CompletedTask;
+}
+
+static async Task TestRateLimitPreservesCachedTranslations()
+{
+    var provider = new RateLimitingTranslationService(TimeSpan.FromMinutes(5));
+    var cached = new CachingTranslationService(provider, new MemoryTranslationCacheStore());
+    var cachedRequest = new TranslationRequest("already translated", "ko", "en");
+    var limitedRequest = new TranslationRequest("rate limited", "ko", "en");
+
+    var initial = await cached.TranslateAsync(cachedRequest, CancellationToken.None);
+    provider.RateLimitNext = true;
+    try
+    {
+        await cached.TranslateAsync(limitedRequest, CancellationToken.None);
+        Assert(false, "The provider rate limit should reach the caller once.");
+    }
+    catch (TranslationRetryAfterException ex)
+    {
+        Assert(ex.RetryAfter == TimeSpan.FromMinutes(5), "The provider retry delay changed.");
+    }
+
+    try
+    {
+        await cached.TranslateAsync(
+            new TranslationRequest("blocked miss", "ko", "en"),
+            CancellationToken.None);
+        Assert(false, "A cache miss should not call a rate-limited provider.");
+    }
+    catch (TranslationTemporarilyUnavailableException ex)
+    {
+        Assert(
+            ex.RetryAfter >= TimeSpan.FromMinutes(4),
+            "The remaining provider cooldown should be exposed to the UI.");
+    }
+
+    var cacheHit = await cached.TranslateAsync(cachedRequest, CancellationToken.None);
+    Assert(cacheHit.TranslatedText == initial.TranslatedText, "A provider cooldown must not hide cached results.");
+    Assert(provider.CallCount == 2, "The blocked cache miss should not reach the provider.");
+}
+
+static async Task TestRateLimitStatusReportsRetry()
+{
+    var source = Chinese("8bf7 7a0d 540e 518d 8bd5");
+    var provider = new RateLimitingTranslationService(TimeSpan.FromMinutes(2))
+    {
+        RateLimitNext = true
+    };
+    var cached = new CachingTranslationService(provider, new MemoryTranslationCacheStore());
+    var session = ScreenSession(source, cached);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Screen), 80);
+
+    Assert(provider.CallCount == 1, "A provider Retry-After should block subsequent polling requests.");
+    Assert(
+        updates.Any(update =>
+            update.FilterRule == "TranslationCooldown"
+            && !update.IsError
+            && update.Status.Contains("자동으로 재개", StringComparison.Ordinal)),
+        "The session should show the provider delay as a non-error automatic retry state.");
+}
+
 static async Task TestChatRetriesAfterTransientFailure()
 {
     var message = Chinese("4e00 6b21 5931 8d25 540e 91cd 8bd5");
@@ -1444,6 +1546,24 @@ static async Task TestDeepLUnsupportedSourceFallback()
         handler.RequestHosts.SequenceEqual(
             ["translate.googleapis.com", "translate.googleapis.com", "api.deepl.com", "api.deepl.com"]),
         "Provider routing should fall back for unsupported source or target languages and retain DeepL otherwise.");
+}
+
+static async Task TestGoogleRateLimitResponse()
+{
+    using var client = new HttpClient(new RateLimitHttpHandler(TimeSpan.FromSeconds(75)));
+    var service = new GoogleUnofficialTranslationService(client);
+    try
+    {
+        await service.TranslateAsync(
+            new TranslationRequest("hello", "ko", "en"),
+            CancellationToken.None);
+        Assert(false, "A 429 response should fail with its retry delay.");
+    }
+    catch (TranslationRetryAfterException ex)
+    {
+        Assert(ex.RetryAfter == TimeSpan.FromSeconds(75), "The Google Retry-After delay was not preserved.");
+        Assert(ex.Message.Contains("2분", StringComparison.Ordinal), "The retry message should show a rounded wait time.");
+    }
 }
 
 static async Task TestGoogleBatchTranslationUsesPost()
@@ -2719,6 +2839,58 @@ sealed class FailOnceThenSucceedBatchTranslationService : ITranslationService
     }
 }
 
+sealed class RateLimitingTranslationService(TimeSpan retryAfter) : ITranslationService
+{
+    public bool RateLimitNext { get; set; }
+    public int CallCount { get; private set; }
+
+    public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
+    {
+        CallCount++;
+        if (RateLimitNext)
+        {
+            RateLimitNext = false;
+            throw new TranslationRetryAfterException(
+                $"Provider rate limit. {TranslationHttpFailure.FormatRetryDelay(retryAfter)} 후 다시 시도할 수 있습니다.",
+                retryAfter);
+        }
+
+        return Task.FromResult(new TranslationResult(
+            request.Text,
+            $"translated:{request.Text}",
+            request.SourceLanguage));
+    }
+
+    public Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
+    {
+        CallCount++;
+        if (RateLimitNext)
+        {
+            RateLimitNext = false;
+            throw new TranslationRetryAfterException(
+                $"Provider rate limit. {TranslationHttpFailure.FormatRetryDelay(retryAfter)} 후 다시 시도할 수 있습니다.",
+                retryAfter);
+        }
+
+        return Task.FromResult(new BatchTranslationResult(
+            request.Texts.Select(text => $"translated:{text}").ToArray()));
+    }
+}
+
+sealed class MemoryTranslationCacheStore : ITranslationCacheStore
+{
+    private Dictionary<string, string> cache = new(StringComparer.Ordinal);
+
+    public Dictionary<string, string> Load() =>
+        new(cache, StringComparer.Ordinal);
+
+    public bool Save(IReadOnlyDictionary<string, string> snapshot)
+    {
+        cache = new Dictionary<string, string>(snapshot, StringComparer.Ordinal);
+        return true;
+    }
+}
+
 sealed class MalformedBatchTranslationService : ITranslationService
 {
     public int BatchRequests { get; private set; }
@@ -2854,6 +3026,19 @@ sealed class ProviderRoutingHandler : HttpMessageHandler
         {
             Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
         });
+    }
+}
+
+sealed class RateLimitHttpHandler(TimeSpan retryAfter) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        var response = new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests);
+        response.Headers.RetryAfter =
+            new System.Net.Http.Headers.RetryConditionHeaderValue(retryAfter);
+        return Task.FromResult(response);
     }
 }
 

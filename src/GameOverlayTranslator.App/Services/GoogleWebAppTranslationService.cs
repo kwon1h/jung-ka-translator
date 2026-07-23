@@ -41,7 +41,9 @@ public sealed class GoogleWebAppTranslationService(HttpClient httpClient, Func<s
         using var response = await httpClient.PostAsync(url.Trim(), content, ct);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Google Web App 번역 요청 실패: {(int)response.StatusCode} {response.ReasonPhrase}");
+            throw TranslationHttpFailure.Create(
+                $"Google Web App 번역 요청 실패: {(int)response.StatusCode} {response.ReasonPhrase}",
+                response);
         }
 
         var responseJson = await response.Content.ReadAsStringAsync(ct);
@@ -83,7 +85,9 @@ public sealed class GoogleWebAppTranslationService(HttpClient httpClient, Func<s
         using var response = await httpClient.PostAsync(url.Trim(), content, ct);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Google Web App 번역 요청 실패: {(int)response.StatusCode} {response.ReasonPhrase}");
+            throw TranslationHttpFailure.Create(
+                $"Google Web App 번역 요청 실패: {(int)response.StatusCode} {response.ReasonPhrase}",
+                response);
         }
 
         var responseJson = await response.Content.ReadAsStringAsync(ct);

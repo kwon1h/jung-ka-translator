@@ -33,7 +33,9 @@ public sealed class GoogleUnofficialTranslationService(HttpClient httpClient) : 
         using var response = await httpClient.PostAsync(TranslateEndpoint, content, ct);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Google 번역 요청 실패: {(int)response.StatusCode} {response.ReasonPhrase}");
+            throw TranslationHttpFailure.Create(
+                $"Google 번역 요청 실패: {(int)response.StatusCode} {response.ReasonPhrase}",
+                response);
         }
 
         var json = await response.Content.ReadAsStringAsync(ct);
