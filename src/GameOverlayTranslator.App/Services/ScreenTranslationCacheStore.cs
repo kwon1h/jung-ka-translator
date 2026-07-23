@@ -7,7 +7,7 @@ namespace GameOverlayTranslator.App.Services;
 
 public sealed class ScreenTranslationCacheStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions JsonOptions = new();
     private readonly string cachePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "GameOverlayTranslator",
@@ -37,7 +37,9 @@ public sealed class ScreenTranslationCacheStore
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
             var json = JsonSerializer.Serialize(cache, JsonOptions);
-            File.WriteAllText(cachePath, json);
+            var temporaryPath = $"{cachePath}.tmp";
+            File.WriteAllText(temporaryPath, json);
+            File.Move(temporaryPath, cachePath, true);
         }
         catch (Exception ex)
         {

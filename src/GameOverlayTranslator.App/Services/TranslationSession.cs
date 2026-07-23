@@ -12,6 +12,7 @@ namespace GameOverlayTranslator.App.Services;
 
 public sealed class TranslationSession(ICaptureService captureService, IOcrEngine ocrEngine, ITranslationService translationService) : ITranslationSession
 {
+    private const int MaxChatTranslationMemoryEntries = 1024;
     private CancellationTokenSource? runCancellation;
     private Task? runTask;
 
@@ -859,6 +860,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         }
 
         memory[deduplicationKey] = entry;
+        TrimChatTranslationMemory(memory);
     }
 
     private static bool TryAliasRememberedChatTranslation(
@@ -880,8 +882,25 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             pollLine.Line.SourceLine,
             activeLine.Speaker,
             remembered.TranslatedText);
+        TrimChatTranslationMemory(memory);
         AppLog.Write($"ChatTranslationMemory alias chatLineId={chatLineId} source={Quote(pollLine.Line.SourceLine)}");
         return true;
+    }
+
+    private static void TrimChatTranslationMemory(
+        Dictionary<string, ChatTranslationMemoryEntry> memory)
+    {
+        if (memory.Count <= MaxChatTranslationMemoryEntries)
+        {
+            return;
+        }
+
+        foreach (var oldestKey in memory.Keys
+                     .Take(memory.Count - MaxChatTranslationMemoryEntries)
+                     .ToList())
+        {
+            memory.Remove(oldestKey);
+        }
     }
 
     private static string JoinTranslatedSegments(IReadOnlyList<ScreenSegmentPlan> segments) =>

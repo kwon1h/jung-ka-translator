@@ -5,9 +5,13 @@ namespace GameOverlayTranslator.App.Services;
 
 public sealed class CachingTranslationService : ITranslationService
 {
+    private const int DefaultMaxCacheEntries = 5000;
+    private const int MaxFailedTexts = 1024;
     private readonly ITranslationService innerService;
     private readonly ScreenTranslationCacheStore cacheStore;
     private readonly Dictionary<string, string> cache;
+    private readonly Queue<string> cacheInsertionOrder;
+    private readonly int maxCacheEntries;
     private readonly object cacheLock = new();
 
     private readonly Dictionary<string, DateTime> failedTexts = new(StringComparer.Ordinal);
@@ -17,11 +21,22 @@ public sealed class CachingTranslationService : ITranslationService
     private readonly TimeSpan circuitBreakerDuration = TimeSpan.FromSeconds(15);
     private const int FailureThreshold = 3;
 
-    public CachingTranslationService(ITranslationService innerService, ScreenTranslationCacheStore cacheStore)
+    public CachingTranslationService(
+        ITranslationService innerService,
+        ScreenTranslationCacheStore cacheStore,
+        int maxCacheEntries = DefaultMaxCacheEntries)
     {
         this.innerService = innerService ?? throw new ArgumentNullException(nameof(innerService));
         this.cacheStore = cacheStore ?? throw new ArgumentNullException(nameof(cacheStore));
+        if (maxCacheEntries <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxCacheEntries));
+        }
+
+        this.maxCacheEntries = maxCacheEntries;
         cache = cacheStore.Load() ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        cacheInsertionOrder = new Queue<string>(cache.Keys);
+        TrimCache();
     }
 
     public async Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
@@ -31,6 +46,7 @@ public sealed class CachingTranslationService : ITranslationService
 
         lock (cacheLock)
         {
+            PruneFailedTexts(DateTime.UtcNow);
             if (DateTime.UtcNow < blockUntil)
             {
                 return new TranslationResult(request.Text, request.Text, request.SourceLanguage, new TranslationUsage(SkippedCount: 1));
@@ -57,7 +73,7 @@ public sealed class CachingTranslationService : ITranslationService
             {
                 continuousFailures = 0;
                 failedTexts.Remove(cacheKey);
-                cache[cacheKey] = result.TranslatedText;
+                SetCachedTranslation(cacheKey, result.TranslatedText);
                 cacheStore.Save(cache);
             }
 
@@ -72,6 +88,7 @@ public sealed class CachingTranslationService : ITranslationService
             lock (cacheLock)
             {
                 failedTexts[cacheKey] = DateTime.UtcNow;
+                PruneFailedTexts(DateTime.UtcNow);
                 continuousFailures++;
                 if (continuousFailures >= FailureThreshold)
                 {
@@ -94,6 +111,7 @@ public sealed class CachingTranslationService : ITranslationService
 
         lock (cacheLock)
         {
+            PruneFailedTexts(DateTime.UtcNow);
             var isBlocked = DateTime.UtcNow < blockUntil;
 
             for (var index = 0; index < texts.Count; index++)
@@ -153,7 +171,7 @@ public sealed class CachingTranslationService : ITranslationService
                         var key = missKeys[index];
                         var translatedText = batchResult.TranslatedTexts[index];
 
-                        cache[key] = translatedText;
+                        SetCachedTranslation(key, translatedText);
                         failedTexts.Remove(key);
 
                         foreach (var resultIndex in batchMissMap[key])
@@ -176,6 +194,7 @@ public sealed class CachingTranslationService : ITranslationService
                     {
                         failedTexts[key] = DateTime.UtcNow;
                     }
+                    PruneFailedTexts(DateTime.UtcNow);
 
                     continuousFailures++;
                     if (continuousFailures >= FailureThreshold)
@@ -226,8 +245,44 @@ public sealed class CachingTranslationService : ITranslationService
             return false;
         }
 
-        cache[cacheKey] = translatedText;
+        SetCachedTranslation(cacheKey, translatedText);
         return true;
+    }
+
+    private void SetCachedTranslation(string cacheKey, string translatedText)
+    {
+        if (!cache.ContainsKey(cacheKey))
+        {
+            cacheInsertionOrder.Enqueue(cacheKey);
+        }
+
+        cache[cacheKey] = translatedText;
+        TrimCache();
+    }
+
+    private void TrimCache()
+    {
+        while (cache.Count > maxCacheEntries && cacheInsertionOrder.TryDequeue(out var oldestKey))
+        {
+            cache.Remove(oldestKey);
+        }
+    }
+
+    private void PruneFailedTexts(DateTime now)
+    {
+        foreach (var expiredKey in failedTexts
+                     .Where(pair => now - pair.Value >= negativeCacheDuration)
+                     .Select(pair => pair.Key)
+                     .ToList())
+        {
+            failedTexts.Remove(expiredKey);
+        }
+
+        while (failedTexts.Count > MaxFailedTexts)
+        {
+            var oldest = failedTexts.MinBy(pair => pair.Value);
+            failedTexts.Remove(oldest.Key);
+        }
     }
 
     private static string GetCacheKey(string text, string targetLanguage, string? sourceLanguage)

@@ -29,6 +29,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Rejected chat does not poison duplicate cache", TestRejectedChatDoesNotPoisonExactDuplicateCache),
     ("Repeated screen OCR uses cache", TestRepeatedScreenLineUsesCachedTranslation),
     ("Repeated chat translation uses cache", TestRepeatedChatLineUsesCachedTranslation),
+    ("Translation cache evicts oldest entries", TestTranslationCacheEvictsOldestEntries),
+    ("Application logs rotate and expire", TestApplicationLogMaintenance),
     ("Empty screen OCR keeps overlay items", TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems),
     ("Screen translation publishes translated diagnostic", TestScreenTranslatedDiagnostic),
     ("Screen diagnostic source contains only translation requests", TestScreenDiagnosticSourceContainsOnlyTranslationRequests),
@@ -305,6 +307,53 @@ static async Task TestRepeatedChatLineUsesCachedTranslation()
     Assert(translation.SingleRequests == 1, "Repeated chat request should call API once.");
     Assert(first.TranslatedText == second.TranslatedText, "Cached translation should match.");
     Assert((second.Usage?.OutboundRequestCount ?? -1) == 0, "Cache hit should report zero outbound requests.");
+}
+
+static async Task TestTranslationCacheEvictsOldestEntries()
+{
+    var translation = new CountingTranslationService();
+    var cached = new CachingTranslationService(translation, new ScreenTranslationCacheStore(), maxCacheEntries: 2);
+
+    await cached.TranslateAsync(new TranslationRequest("cache-first", "ko", "en"), CancellationToken.None);
+    await cached.TranslateAsync(new TranslationRequest("cache-second", "ko", "en"), CancellationToken.None);
+    await cached.TranslateAsync(new TranslationRequest("cache-third", "ko", "en"), CancellationToken.None);
+    await cached.TranslateAsync(new TranslationRequest("cache-first", "ko", "en"), CancellationToken.None);
+
+    Assert(translation.SingleRequests == 4, "The oldest entry should be evicted after the cache reaches its limit.");
+}
+
+static Task TestApplicationLogMaintenance()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"game-overlay-translator-log-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+
+    try
+    {
+        var currentLog = Path.Combine(directory, "current.log");
+        File.WriteAllText(currentLog, "1234567890");
+        AppLog.RotateIfNeeded(currentLog, incomingBytes: 1, maxBytes: 10);
+
+        var rotatedLog = Path.Combine(directory, "current.previous.log");
+        Assert(!File.Exists(currentLog), "The full current log should be rotated.");
+        Assert(File.Exists(rotatedLog), "The rotated log should be retained.");
+
+        var expiredLog = Path.Combine(directory, "expired.log");
+        var recentLog = Path.Combine(directory, "recent.log");
+        File.WriteAllText(expiredLog, "expired");
+        File.WriteAllText(recentLog, "recent");
+        File.SetLastWriteTimeUtc(expiredLog, DateTime.UtcNow.AddDays(-30));
+        File.SetLastWriteTimeUtc(recentLog, DateTime.UtcNow);
+
+        AppLog.DeleteExpiredLogs(directory, DateTime.UtcNow.AddDays(-14));
+
+        Assert(!File.Exists(expiredLog), "Expired logs should be deleted.");
+        Assert(File.Exists(recentLog), "Recent logs should be retained.");
+        return Task.CompletedTask;
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
 }
 
 static async Task TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems()
