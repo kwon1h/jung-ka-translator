@@ -144,6 +144,14 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             {
                 throw;
             }
+            catch (TranslationTemporarilyUnavailableException ex)
+            {
+                Publish(
+                    ex.Message,
+                    filterReason: "Translation retry cooldown",
+                    filterRule: "TranslationCooldown",
+                    diagnosticKind: DiagnosticKind.OcrSkipped);
+            }
             catch (Exception ex)
             {
                 Publish(ex.Message, isError: true);
@@ -296,11 +304,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             }
             catch (Exception ex)
             {
-                AppLog.Write("Batch translation failed, falling back to raw texts", ex);
-                for (var index = 0; index < textsToTranslate.Count; index++)
-                {
-                    translationMap[textKeysToTranslate[index]] = textsToTranslate[index];
-                }
+                AppLog.Write("Batch screen translation failed", ex);
+                throw;
             }
         }
         var screenItems = new List<ScreenTranslationItem>();
@@ -512,6 +517,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         Func<TranslationUsage, (int TotalRequests, int TotalCharacters)> addUsage,
         CancellationToken ct)
     {
+        var recentChatState = recentChat.CaptureState();
         var positionedChatLines = ParsePositionedChatLines(recognized, options.OcrLanguage);
         AppLog.Write($"OCR chat poll raw={Quote(recognized.Text)} parsedLines={positionedChatLines.Count}");
         if (positionedChatLines.Count == 0)
@@ -706,6 +712,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             }
             catch
             {
+                recentChat.RestoreState(recentChatState);
                 Publish(
                     "번역",
                     ocrRawText: recognized.Text,

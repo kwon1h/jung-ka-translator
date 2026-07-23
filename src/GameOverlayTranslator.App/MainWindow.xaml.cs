@@ -202,8 +202,14 @@ public partial class MainWindow : Window
         session.Updated += SessionUpdated;
 
         OcrLanguageComboBox.ItemsSource = installedOcrLanguages;
-        OcrModelLanguageComboBox.ItemsSource = LanguageCatalog.OcrLanguages;
-        OcrModelLanguageComboBox.SelectedItem = LanguageCatalog.OcrLanguages.FirstOrDefault(l => string.Equals(l.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase)) ?? LanguageCatalog.OcrLanguages[0];
+        OcrModelLanguageComboBox.ItemsSource = LanguageCatalog.OcrModelPackages;
+        var savedLanguage = LanguageCatalog.OcrLanguages.FirstOrDefault(
+            language => string.Equals(language.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase));
+        var savedModelKey = savedLanguage is null
+            ? LanguageCatalog.OcrModelPackages[0].Key
+            : PaddleOcrEngine.GetModelKey(savedLanguage.Tag);
+        OcrModelLanguageComboBox.SelectedItem = LanguageCatalog.OcrModelPackages.FirstOrDefault(model => model.Key == savedModelKey)
+            ?? LanguageCatalog.OcrModelPackages[0];
         RefreshInstalledOcrLanguages();
 
         TargetLanguageComboBox.ItemsSource = LanguageCatalog.TargetLanguages;
@@ -814,14 +820,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (OcrModelLanguageComboBox.SelectedItem is not OcrLanguage language)
+        if (OcrModelLanguageComboBox.SelectedItem is not OcrModelPackage model)
         {
             DownloadOcrModelButton.Content = "다운로드";
             DownloadOcrModelButton.IsEnabled = false;
             return;
         }
 
-        var isReady = PaddleOcrEngine.IsModelAvailable(language);
+        var isReady = PaddleOcrEngine.IsModelAvailable(model.Key);
         DownloadOcrModelButton.Content = isReady ? "준비됨" : "다운로드";
         DownloadOcrModelButton.IsEnabled = !isReady && !session.IsRunning;
         DownloadOcrModelButton.ToolTip = session.IsRunning && !isReady
@@ -1044,7 +1050,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (OcrModelLanguageComboBox.SelectedItem is not OcrLanguage language)
+        if (OcrModelLanguageComboBox.SelectedItem is not OcrModelPackage model)
         {
             SetStatus("먼저 내려받을 언어를 선택하세요.", true);
             return;
@@ -1059,26 +1065,27 @@ public partial class MainWindow : Window
         var downloadCancellation = new CancellationTokenSource();
         ocrModelDownloadCancellation = downloadCancellation;
         var downloadTask = Task.Run(
-            () => paddleOcrEngine.PrepareAsync(language, downloadCancellation.Token),
+            () => paddleOcrEngine.PrepareModelAsync(model.Key, model.DisplayName, downloadCancellation.Token),
             downloadCancellation.Token);
         ocrModelDownloadTask = downloadTask;
         UpdateOcrModelDownloadState();
-        SetStatus($"{language.DisplayName} OCR 모델을 준비하는 중입니다...");
+        SetStatus($"{model.DisplayName} OCR 모델을 준비하는 중입니다...");
         try
         {
             await downloadTask;
             if (!isClosing)
             {
                 RefreshInstalledOcrLanguages();
-                OcrLanguageComboBox.SelectedItem = installedOcrLanguages.FirstOrDefault(item => item.Tag == language.Tag);
-                SetStatus($"{language.DisplayName} OCR 모델 준비가 완료되었습니다.");
+                OcrLanguageComboBox.SelectedItem = installedOcrLanguages.FirstOrDefault(
+                    item => PaddleOcrEngine.GetModelKey(item.Tag) == model.Key);
+                SetStatus($"{model.DisplayName} OCR 모델 준비가 완료되었습니다.");
             }
         }
         catch (OperationCanceledException) when (downloadCancellation.IsCancellationRequested)
         {
             if (!isClosing)
             {
-                SetStatus($"{language.DisplayName} OCR 모델 다운로드를 취소했습니다.");
+                SetStatus($"{model.DisplayName} OCR 모델 다운로드를 취소했습니다.");
             }
         }
         catch (Exception ex)

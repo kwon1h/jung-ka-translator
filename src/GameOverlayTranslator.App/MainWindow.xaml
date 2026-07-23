@@ -745,8 +745,8 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel VerticalAlignment="Center">
-                                                <TextBlock Text="OCR 게임 언어 추가" FontWeight="SemiBold" Foreground="#273142" />
-                                                <TextBlock Text="필요한 언어 모델을 내려받으면 위 게임 언어 목록에서 선택할 수 있습니다."
+                                                <TextBlock Text="게임 언어 모델 다운로드" FontWeight="SemiBold" Foreground="#273142" />
+                                                <TextBlock Text="모델을 선택해 내려받으면 지원 언어가 위 게임 언어 목록에 자동으로 추가됩니다."
                                                            Foreground="#7B8797"
                                                            FontSize="11"
                                                            Margin="0,3,12,0" />

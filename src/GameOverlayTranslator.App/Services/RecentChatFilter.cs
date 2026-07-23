@@ -8,6 +8,25 @@ public sealed class RecentChatFilter
 {
     private readonly List<Entry> entries = [];
 
+    internal RecentChatFilterState CaptureState() =>
+        new(entries.Select(entry => new RecentChatFilterStateEntry(
+            entry.Id,
+            entry.Line,
+            new HashSet<string>(entry.Tokens, StringComparer.Ordinal),
+            entry.Score,
+            entry.LastSeen)).ToList());
+
+    internal void RestoreState(RecentChatFilterState state)
+    {
+        entries.Clear();
+        entries.AddRange(state.Entries.Select(entry => new Entry(
+            entry.Id,
+            entry.Line,
+            new HashSet<string>(entry.Tokens, StringComparer.Ordinal),
+            entry.Score,
+            entry.LastSeen)));
+    }
+
     public ChatFilterDecision Evaluate(ChatLine line, FilterSettings filter)
     {
         var now = DateTimeOffset.UtcNow;
@@ -132,6 +151,15 @@ public sealed class RecentChatFilter
 
     private sealed record SimilarityResult(double Score, int Overlap, int Union);
 }
+
+internal sealed record RecentChatFilterState(IReadOnlyList<RecentChatFilterStateEntry> Entries);
+
+internal sealed record RecentChatFilterStateEntry(
+    string Id,
+    ChatLine Line,
+    HashSet<string> Tokens,
+    int Score,
+    DateTimeOffset LastSeen);
 
 public sealed record ChatFilterDecision(string Id, ChatFilterAction Action, double SimilarityScore = 0)
 {

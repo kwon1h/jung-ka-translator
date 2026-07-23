@@ -60,7 +60,7 @@ public sealed class CachingTranslationService : ITranslationService
             PruneFailedTexts(DateTime.UtcNow);
             if (DateTime.UtcNow < blockUntil)
             {
-                return new TranslationResult(request.Text, request.Text, request.SourceLanguage, new TranslationUsage(SkippedCount: 1));
+                throw new TranslationTemporarilyUnavailableException();
             }
 
             if (TryGetCachedTranslation(cacheKey, legacyKey, out var cachedTranslation))
@@ -70,7 +70,7 @@ public sealed class CachingTranslationService : ITranslationService
 
             if (failedTexts.TryGetValue(cacheKey, out var failedTime) && DateTime.UtcNow - failedTime < negativeCacheDuration)
             {
-                return new TranslationResult(request.Text, request.Text, request.SourceLanguage, new TranslationUsage(SkippedCount: 1));
+                throw new TranslationTemporarilyUnavailableException();
             }
         }
 
@@ -119,6 +119,7 @@ public sealed class CachingTranslationService : ITranslationService
         var missKeys = new List<string>();
         var batchMissMap = new Dictionary<string, List<int>>(StringComparer.Ordinal);
         var usage = TranslationUsage.None;
+        var hasDeferredTranslation = false;
 
         lock (cacheLock)
         {
@@ -133,8 +134,7 @@ public sealed class CachingTranslationService : ITranslationService
 
                 if (isBlocked)
                 {
-                    results[index] = text;
-                    usage = usage.Add(new TranslationUsage(SkippedCount: 1));
+                    hasDeferredTranslation = true;
                     continue;
                 }
 
@@ -145,8 +145,7 @@ public sealed class CachingTranslationService : ITranslationService
                 }
                 else if (failedTexts.TryGetValue(key, out var failedTime) && DateTime.UtcNow - failedTime < negativeCacheDuration)
                 {
-                    results[index] = text;
-                    usage = usage.Add(new TranslationUsage(SkippedCount: 1));
+                    hasDeferredTranslation = true;
                 }
                 else if (batchMissMap.TryGetValue(key, out var indices))
                 {
@@ -159,6 +158,11 @@ public sealed class CachingTranslationService : ITranslationService
                     missTexts.Add(text);
                 }
             }
+        }
+
+        if (hasDeferredTranslation)
+        {
+            throw new TranslationTemporarilyUnavailableException();
         }
 
         if (missTexts.Count > 0)
@@ -350,3 +354,6 @@ public sealed class CachingTranslationService : ITranslationService
         return string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
     }
 }
+
+public sealed class TranslationTemporarilyUnavailableException()
+    : Exception("최근 번역 실패로 잠시 대기 중입니다. 자동으로 다시 시도합니다.");

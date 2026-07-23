@@ -61,6 +61,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Cache hit usage is zero", TestDirectCacheHitUsageIsZero),
     ("Provider usage is preserved", TestProviderUsageIsPreserved),
     ("Translation failure cooldown bypasses API", TestTranslationFailureCooldown),
+    ("Translation cooldown does not publish source as translated", TestTranslationCooldownDoesNotPublishSource),
+    ("Chat retries after a transient batch failure", TestChatRetriesAfterTransientFailure),
     ("Malformed batch response is not cached", TestMalformedBatchResponseIsNotCached),
     ("Cancellation does not trip translation circuit", TestCancellationDoesNotTripTranslationCircuit),
     ("Stopping screen translation does not publish canceled text", TestScreenStopDoesNotPublishCanceledText),
@@ -469,8 +471,18 @@ static Task TestOcrModelCatalog()
     Assert(tags.Contains("en"), "English OCR model is missing.");
     Assert(tags.Contains("ja"), "Japanese OCR model is missing.");
     Assert(tags.Contains("ko"), "Korean OCR model is missing.");
-    Assert(tags.Count >= 8, "OCR model catalog should expose the available multilingual models.");
+    Assert(tags.Contains("zh-Hant"), "Traditional Chinese OCR model is missing.");
+    Assert(tags.Contains("de"), "Latin-script OCR languages are missing.");
+    Assert(tags.Contains("ru"), "Cyrillic OCR languages are missing.");
+    Assert(tags.Count >= 20, "OCR language catalog should expose the available multilingual models.");
     Assert(tags.Count == LanguageCatalog.OcrLanguages.Count, "OCR model language tags must be unique.");
+
+    var modelKeys = LanguageCatalog.OcrModelPackages
+        .Select(model => model.Key)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    Assert(modelKeys.Contains("latin"), "The Latin-script download option is missing.");
+    Assert(modelKeys.Contains("cyrillic"), "The Cyrillic download option is missing.");
+    Assert(modelKeys.Count == LanguageCatalog.OcrModelPackages.Count, "OCR download model keys must be unique.");
     return Task.CompletedTask;
 }
 
@@ -493,6 +505,24 @@ static Task TestInstalledOcrLanguageDetection()
         Assert(
             !PaddleOcrEngine.IsModelAvailable(new OcrLanguage("ja", "Japanese"), directory),
             "A language without its recognition model must not appear as installed.");
+
+        foreach (var modelDirectory in new[] { "ml_PP-OCRv3_det", "latin_PP-OCRv3_rec" })
+        {
+            var modelPath = Path.Combine(directory, modelDirectory);
+            Directory.CreateDirectory(modelPath);
+            File.WriteAllText(Path.Combine(modelPath, "inference.pdmodel"), "model");
+            File.WriteAllText(Path.Combine(modelPath, "inference.pdiparams"), "parameters");
+        }
+
+        Assert(
+            PaddleOcrEngine.IsModelAvailable(new OcrLanguage("de", "German"), directory),
+            "A downloaded Latin model should install German.");
+        Assert(
+            PaddleOcrEngine.IsModelAvailable(new OcrLanguage("fr", "French"), directory),
+            "One Latin model should expose every supported Latin-script game language.");
+        Assert(
+            !PaddleOcrEngine.IsModelAvailable(new OcrLanguage("ru", "Russian"), directory),
+            "The Latin model must not mark the Cyrillic model as installed.");
     }
     finally
     {
@@ -949,9 +979,55 @@ static async Task TestTranslationFailureCooldown()
     {
     }
 
-    var bypassed = await cached.TranslateAsync(request, CancellationToken.None);
-    Assert(bypassed.TranslatedText == "failure", "Failure cooldown should return source text.");
+    try
+    {
+        await cached.TranslateAsync(request, CancellationToken.None);
+        Assert(false, "Failure cooldown should defer instead of returning source text as a translation.");
+    }
+    catch (TranslationTemporarilyUnavailableException)
+    {
+    }
     Assert(failing.CallCount == 1, "Cooldown should avoid second provider call.");
+}
+
+static async Task TestTranslationCooldownDoesNotPublishSource()
+{
+    var source = Chinese("4e34 65f6 7f51 7edc 5931 8d25");
+    var failing = new FailingTranslationService();
+    var cached = new CachingTranslationService(failing, new ScreenTranslationCacheStore());
+    var session = ScreenSession(source, cached);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Screen), 110);
+
+    Assert(failing.CallCount == 1, "The cooldown should suppress repeated provider calls.");
+    Assert(
+        updates.All(update => update.ScreenItems is not { Count: > 0 }),
+        "A failed translation must not be published as a raw source overlay.");
+    Assert(
+        updates.Any(update => update.FilterRule == "TranslationCooldown" && !update.IsError),
+        "Cooldown polls should report an automatic non-error retry state.");
+}
+
+static async Task TestChatRetriesAfterTransientFailure()
+{
+    var message = Chinese("4e00 6b21 5931 8d25 540e 91cd 8bd5");
+    var sourceLine = $"racer: {message}";
+    var translation = new FailOnceThenSucceedBatchTranslationService();
+    var session = new TranslationSession(
+        new FakeCaptureService(),
+        new FakeOcrEngine(new OcrResult(sourceLine, [new OcrLineResult(sourceLine, new Rect(0, 0, 180, 24))])),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat), 110);
+
+    Assert(translation.BatchRequests >= 2, "A transiently failed chat line should be sent again.");
+    Assert(
+        updates.Any(update => update.IsChatLine
+                              && update.DiagnosticKind == DiagnosticKind.OcrTranslated
+                              && update.TranslatedText == $"translated:{message}"),
+        "The retried chat line should eventually publish its translation.");
 }
 
 static async Task TestMalformedBatchResponseIsNotCached()
@@ -2058,6 +2134,26 @@ sealed class SucceedOnceThenFailBatchTranslationService : ITranslationService
 
         return Task.FromResult(new BatchTranslationResult(
             request.Texts.Select(text => $"translated:{text}").ToList()));
+    }
+}
+
+sealed class FailOnceThenSucceedBatchTranslationService : ITranslationService
+{
+    public int BatchRequests { get; private set; }
+
+    public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct) =>
+        Task.FromResult(new TranslationResult(request.Text, $"translated:{request.Text}", request.SourceLanguage));
+
+    public Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
+    {
+        BatchRequests++;
+        if (BatchRequests == 1)
+        {
+            throw new InvalidOperationException("Transient batch failure");
+        }
+
+        return Task.FromResult(new BatchTranslationResult(
+            request.Texts.Select(text => $"translated:{text}").ToArray()));
     }
 }
 
