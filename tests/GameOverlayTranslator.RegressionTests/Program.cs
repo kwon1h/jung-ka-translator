@@ -20,6 +20,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("User dictionary CSV round trip", TestUserDictionaryCsvRoundTrip),
     ("Overlay defaults are readable", TestOverlayDefaults),
     ("PaddleOCR is the only OCR engine", TestPaddleOcrIsOnlyEngine),
+    ("Translation target catalog includes major languages", TestTranslationTargetCatalog),
     ("PaddleOCR bitmap conversion preserves BGR pixels", TestPaddleOcrBitmapConversion),
     ("PaddleOCR reuses only identical frames", TestPaddleOcrFrameCache),
     ("Translation session runs OCR off caller context", TestTranslationSessionRunsOcrOffCallerContext),
@@ -308,6 +309,26 @@ static async Task TestRepeatedChatLineUsesCachedTranslation()
     Assert(translation.SingleRequests == 1, "Repeated chat request should call API once.");
     Assert(first.TranslatedText == second.TranslatedText, "Cached translation should match.");
     Assert((second.Usage?.OutboundRequestCount ?? -1) == 0, "Cache hit should report zero outbound requests.");
+}
+
+static Task TestTranslationTargetCatalog()
+{
+    var codes = LanguageCatalog.TargetLanguages
+        .Select(language => language.Code)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    Assert(codes.Contains("ko"), "Korean target language is missing.");
+    Assert(codes.Contains("en-US"), "English target language is missing.");
+    Assert(codes.Contains("zh-Hans"), "Simplified Chinese target language is missing.");
+    Assert(codes.Contains("zh-Hant"), "Traditional Chinese target language is missing.");
+    Assert(codes.Contains("ja"), "Japanese target language is missing.");
+    Assert(codes.Count == LanguageCatalog.TargetLanguages.Count, "Target language codes must be unique.");
+    Assert(
+        !TranslationTextNormalizer.AreSameLanguage(
+            new OcrLanguage("zh-Hans", "Simplified Chinese"),
+            new TranslationLanguage("zh-Hant", "Traditional Chinese")),
+        "Simplified-to-Traditional Chinese should remain selectable.");
+    return Task.CompletedTask;
 }
 
 static async Task TestTranslationCacheEvictsOldestEntries()

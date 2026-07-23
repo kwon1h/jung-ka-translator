@@ -65,7 +65,40 @@ internal static partial class TranslationTextNormalizer
     {
         var sourcePrimary = source.Tag.Split('-', 2)[0];
         var targetPrimary = target.Code.Split('-', 2)[0];
-        return string.Equals(sourcePrimary, targetPrimary, StringComparison.OrdinalIgnoreCase);
+        if (!string.Equals(sourcePrimary, targetPrimary, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.Equals(sourcePrimary, "zh", StringComparison.OrdinalIgnoreCase))
+        {
+            var sourceScript = ChineseScript(source.Tag);
+            var targetScript = ChineseScript(target.Code);
+            if (sourceScript is not null && targetScript is not null)
+            {
+                return string.Equals(sourceScript, targetScript, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        return true;
+    }
+
+    private static string? ChineseScript(string languageCode)
+    {
+        if (languageCode.Contains("hans", StringComparison.OrdinalIgnoreCase)
+            || languageCode.Contains("-cn", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Hans";
+        }
+
+        if (languageCode.Contains("hant", StringComparison.OrdinalIgnoreCase)
+            || languageCode.Contains("-tw", StringComparison.OrdinalIgnoreCase)
+            || languageCode.Contains("-hk", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Hant";
+        }
+
+        return null;
     }
 
     public static double CalculateCanonicalSimilarity(string leftCanonical, string rightCanonical)

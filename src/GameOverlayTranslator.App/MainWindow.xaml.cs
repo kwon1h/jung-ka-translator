@@ -75,19 +75,6 @@ public partial class MainWindow : Window
 
     private sealed record ReadinessItem(TextBlock? Target, bool IsReady, string ReadyText, string MissingText);
 
-    private static readonly IReadOnlyList<OcrLanguage> SupportedOcrLanguages =
-    [
-        new("zh-Hans", "중국어(간체)"),
-        new("en", "영어"),
-        new("ja", "일본어"),
-        new("ko", "한국어"),
-        new("ar", "아랍어"),
-        new("hi", "힌디어"),
-        new("ta", "타밀어"),
-        new("te", "텔루구어"),
-        new("kn", "칸나다어")
-    ];
-    private static readonly IReadOnlyList<TranslationLanguage> TargetLanguages = [new("ko", "한국어")];
     private static readonly IReadOnlyList<DisplayModeChoice> DisplayModes =
     [
         new(TranslationDisplayMode.Window, "별도 창"),
@@ -211,12 +198,12 @@ public partial class MainWindow : Window
         session.Updated += SessionUpdated;
 
         OcrLanguageComboBox.ItemsSource = installedOcrLanguages;
-        OcrModelLanguageComboBox.ItemsSource = SupportedOcrLanguages;
-        OcrModelLanguageComboBox.SelectedItem = SupportedOcrLanguages.FirstOrDefault(l => string.Equals(l.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase)) ?? SupportedOcrLanguages[0];
+        OcrModelLanguageComboBox.ItemsSource = LanguageCatalog.OcrLanguages;
+        OcrModelLanguageComboBox.SelectedItem = LanguageCatalog.OcrLanguages.FirstOrDefault(l => string.Equals(l.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase)) ?? LanguageCatalog.OcrLanguages[0];
         RefreshInstalledOcrLanguages();
 
-        TargetLanguageComboBox.ItemsSource = TargetLanguages;
-        var selectedTarget = TargetLanguages.FirstOrDefault(l => string.Equals(l.Code, settings.TargetLanguageCode, StringComparison.OrdinalIgnoreCase)) ?? TargetLanguages[0];
+        TargetLanguageComboBox.ItemsSource = LanguageCatalog.TargetLanguages;
+        var selectedTarget = LanguageCatalog.TargetLanguages.FirstOrDefault(l => string.Equals(l.Code, settings.TargetLanguageCode, StringComparison.OrdinalIgnoreCase)) ?? LanguageCatalog.TargetLanguages[0];
         TargetLanguageComboBox.SelectedItem = selectedTarget;
         DisplayModeComboBox.ItemsSource = DisplayModes;
         OverlayPresetComboBox.ItemsSource = OverlayPresets;
@@ -709,7 +696,7 @@ public partial class MainWindow : Window
     {
         var selectedTag = (OcrLanguageComboBox.SelectedItem as OcrLanguage)?.Tag ?? settings.OcrLanguageTag;
         installedOcrLanguages.Clear();
-        foreach (var language in SupportedOcrLanguages.Where(PaddleOcrEngine.IsModelAvailable))
+        foreach (var language in LanguageCatalog.OcrLanguages.Where(PaddleOcrEngine.IsModelAvailable))
         {
             installedOcrLanguages.Add(language);
         }
