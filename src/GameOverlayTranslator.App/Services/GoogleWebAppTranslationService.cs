@@ -12,6 +12,7 @@ namespace GameOverlayTranslator.App.Services;
 
 public sealed class GoogleWebAppTranslationService(HttpClient httpClient, Func<string?> webAppUrlProvider) : ITranslationService
 {
+    private const int MaxFallbackConcurrency = 4;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public async Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
@@ -99,15 +100,29 @@ public sealed class GoogleWebAppTranslationService(HttpClient httpClient, Func<s
             return new BatchTranslationResult(translatedTexts, TranslationUsage.Outbound(1, request.Texts.Sum(text => text.Length)));
         }
 
-        // If the web app didn't return translatedTexts, fallback to translating sequentially.
-        var fallbackResults = new List<string>();
-        var usage = TranslationUsage.None;
-        foreach (var text in request.Texts)
+        // Older web apps may only support one string at a time. Keep the fallback bounded,
+        // but overlap network waits so a busy game screen does not translate every row serially.
+        using var semaphore = new SemaphoreSlim(MaxFallbackConcurrency);
+        var fallbackTasks = request.Texts.Select(async text =>
         {
-            var res = await TranslateAsync(new TranslationRequest(text, request.TargetLanguage, request.SourceLanguage), ct);
-            fallbackResults.Add(res.TranslatedText);
-            usage = usage.Add(res.Usage ?? TranslationUsage.Outbound(1, text.Length));
+            await semaphore.WaitAsync(ct);
+            try
+            {
+                return await TranslateAsync(
+                    new TranslationRequest(text, request.TargetLanguage, request.SourceLanguage),
+                    ct);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+        var fallbackResults = await Task.WhenAll(fallbackTasks);
+        var usage = TranslationUsage.None;
+        foreach (var result in fallbackResults)
+        {
+            usage = usage.Add(result.Usage ?? TranslationUsage.Outbound(1, result.SourceText.Length));
         }
-        return new BatchTranslationResult(fallbackResults, usage);
+        return new BatchTranslationResult(fallbackResults.Select(result => result.TranslatedText).ToArray(), usage);
     }
 }

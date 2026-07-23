@@ -66,6 +66,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Stopping screen translation does not publish canceled text", TestScreenStopDoesNotPublishCanceledText),
     ("Translation HTTP timeout is suitable for real-time use", TestTranslationHttpTimeout),
     ("Google batch translation posts long text once", TestGoogleBatchTranslationUsesPost),
+    ("Google Web App fallback is bounded and ordered", TestGoogleWebAppFallbackConcurrency),
     ("Spaced-language screen segment keeps phrases", TestSpacedLanguageScreenSegmentKeepsPhrases),
     ("CJK screen segment separates OCR chunks", TestCjkScreenSegmentSeparatesOcrChunks),
     ("Supported OCR scripts pass screen filter", TestSupportedOcrScriptsPassScreenFilter),
@@ -1054,6 +1055,26 @@ static async Task TestGoogleBatchTranslationUsesPost()
     Assert(string.IsNullOrEmpty(handler.LastRequestUri?.Query), "The translation text must not be placed in the request URL.");
     Assert(handler.LastBody?.Length > texts[1].Length, "The POST body should contain the complete long translation batch.");
     Assert(result.TranslatedTexts.SequenceEqual(texts), "The packed Google batch should split back into its original rows.");
+}
+
+static async Task TestGoogleWebAppFallbackConcurrency()
+{
+    var handler = new LegacyGoogleWebAppHandler();
+    using var client = new HttpClient(handler);
+    var service = new GoogleWebAppTranslationService(client, () => "https://example.test/translate");
+    var texts = Enumerable.Range(0, 8).Select(index => $"line-{index}").ToArray();
+
+    var result = await service.TranslateBatchAsync(
+        new BatchTranslationRequest(texts, "ko", "en"),
+        CancellationToken.None);
+
+    Assert(handler.BatchRequests == 1, "The Web App batch endpoint should be attempted once.");
+    Assert(handler.SingleRequests == texts.Length, "A legacy Web App should receive one fallback request per text.");
+    Assert(handler.MaxConcurrentSingles > 1, "Legacy fallback requests should overlap network waits.");
+    Assert(handler.MaxConcurrentSingles <= 4, "Legacy fallback concurrency must remain bounded.");
+    Assert(
+        result.TranslatedTexts.SequenceEqual(texts.Select(text => $"translated:{text}")),
+        "Concurrent fallback results must preserve the original OCR row order.");
 }
 
 static SessionOptions CreateOptions(TranslationMode mode, IReadOnlyList<UserDictEntry>? dictionary = null) =>
@@ -2072,6 +2093,67 @@ sealed class EchoGoogleTranslationHandler : HttpMessageHandler
         {
             Content = new StringContent(json)
         };
+    }
+}
+
+sealed class LegacyGoogleWebAppHandler : HttpMessageHandler
+{
+    private int activeSingles;
+    private int maxConcurrentSingles;
+    private int batchRequests;
+    private int singleRequests;
+
+    public int BatchRequests => Volatile.Read(ref batchRequests);
+    public int SingleRequests => Volatile.Read(ref singleRequests);
+    public int MaxConcurrentSingles => Volatile.Read(ref maxConcurrentSingles);
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = request.Content is null
+            ? string.Empty
+            : await request.Content.ReadAsStringAsync(cancellationToken);
+        using var document = System.Text.Json.JsonDocument.Parse(body);
+        var query = document.RootElement.GetProperty("q");
+        if (query.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            Interlocked.Increment(ref batchRequests);
+            return JsonResponse("{}");
+        }
+
+        Interlocked.Increment(ref singleRequests);
+        var active = Interlocked.Increment(ref activeSingles);
+        UpdateMaximum(ref maxConcurrentSingles, active);
+        try
+        {
+            await Task.Delay(40, cancellationToken);
+            var source = query.GetString() ?? string.Empty;
+            var json = System.Text.Json.JsonSerializer.Serialize(new { translatedText = $"translated:{source}" });
+            return JsonResponse(json);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref activeSingles);
+        }
+    }
+
+    private static HttpResponseMessage JsonResponse(string json) =>
+        new(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
+
+    private static void UpdateMaximum(ref int maximum, int candidate)
+    {
+        var current = Volatile.Read(ref maximum);
+        while (candidate > current)
+        {
+            var observed = Interlocked.CompareExchange(ref maximum, candidate, current);
+            if (observed == current)
+            {
+                return;
+            }
+            current = observed;
+        }
     }
 }
 
