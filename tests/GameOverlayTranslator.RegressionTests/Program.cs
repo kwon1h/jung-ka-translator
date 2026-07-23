@@ -106,6 +106,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Capture reads the target window device context", TestCaptureUsesTargetWindowDeviceContext),
     ("Capture buffer reuse requires the same source and size", TestCaptureBufferReuseRequirements),
     ("Overlay capture never hides the overlay", TestOverlayCaptureNeverHidesOverlay),
+    ("Global hotkey toggles translation without repeat", TestGlobalTranslationHotKey),
     ("Overlay topmost promotion is non-activating", TestOverlayTopmostPromotionIsNonActivating),
     ("Overlay tracks target z-order changes", TestOverlayTracksTargetZOrderChanges),
     ("Broadcast option maps only capture affinity", TestBroadcastOptionMapsCaptureAffinity),
@@ -644,26 +645,30 @@ static Task TestOcrModelCatalog()
     Assert(tags.Count >= 20, "OCR language catalog should expose the available multilingual models.");
     Assert(tags.Count == LanguageCatalog.OcrLanguages.Count, "OCR model language tags must be unique.");
 
-    var modelKeys = LanguageCatalog.OcrModelPackages
-        .Select(model => model.Key)
+    var modelKeys = LanguageCatalog.OcrLanguages
+        .Select(language => PaddleOcrEngine.GetModelKey(language.Tag))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
     Assert(modelKeys.Contains("latin"), "The Latin-script download option is missing.");
     Assert(modelKeys.Contains("cyrillic"), "The Cyrillic download option is missing.");
-    Assert(modelKeys.Count == LanguageCatalog.OcrModelPackages.Count, "OCR download model keys must be unique.");
-    Assert(
-        LanguageCatalog.OcrModelPackages.Single(model => model.Key == "latin").DisplayName.Contains("독일어"),
-        "Grouped model options should name representative game languages.");
-    Assert(
-        LanguageCatalog.OcrModelPackages.Single(model => model.Key == "cyrillic").DisplayName.Contains("우크라이나어"),
-        "Grouped model options should make their included languages clear.");
     Assert(
         LanguageCatalog.OcrLanguages.All(language => modelKeys.Contains(PaddleOcrEngine.GetModelKey(language.Tag))),
         "Every game language must map to a downloadable OCR model package.");
 
-    var installedOption = new OcrModelInstallOption(LanguageCatalog.OcrModelPackages[0], true);
-    var downloadableOption = new OcrModelInstallOption(LanguageCatalog.OcrModelPackages[1], false);
-    Assert(installedOption.ToString().Contains("설치됨"), "Installed model options must identify their state.");
-    Assert(downloadableOption.ToString().Contains("다운로드 가능"), "Missing model options must identify their state.");
+    var installedLanguage = new OcrLanguageInstallOption(
+        LanguageCatalog.OcrLanguages.Single(language => language.Tag == "ja"),
+        true);
+    var downloadableLanguage = new OcrLanguageInstallOption(
+        LanguageCatalog.OcrLanguages.Single(language => language.Tag == "en"),
+        false);
+    Assert(installedLanguage.ModelKey == "ja", "Japanese must map to its downloadable OCR model.");
+    Assert(installedLanguage.ToString().Contains("설치됨"), "Installed language options must identify their state.");
+    Assert(downloadableLanguage.ToString().Contains("다운로드 가능"), "Missing language options must identify their state.");
+    Assert(
+        LanguageCatalog.OcrLanguages
+            .Select(language => new OcrLanguageInstallOption(language, false).Tag)
+            .SequenceEqual(LanguageCatalog.OcrLanguages.Select(language => language.Tag)),
+        "The download menu must expose every supported game language.");
     return Task.CompletedTask;
 }
 
@@ -2290,6 +2295,35 @@ static Task TestOverlayCaptureNeverHidesOverlay()
     Assert(
         typeof(OverlayWindow).GetMethod("SetCaptureVisibility") is null,
         "The overlay must remain visible throughout every OCR capture.");
+    return Task.CompletedTask;
+}
+
+static Task TestGlobalTranslationHotKey()
+{
+    var modifiers = MainWindow.TranslationHotKeyModifiers;
+    Assert(
+        (modifiers & NativeMethods.ModControl) != 0
+        && (modifiers & NativeMethods.ModShift) != 0,
+        "The game-safe translation hotkey should require Ctrl+Shift.");
+    Assert(
+        (modifiers & NativeMethods.ModNoRepeat) != 0,
+        "Holding the translation hotkey must not rapidly toggle the session.");
+    Assert(
+        MainWindow.TranslationHotKeyVirtualKey == NativeMethods.VkF8,
+        "The visible Ctrl+Shift+F8 hint must match the registered virtual key.");
+    Assert(
+        MainWindow.IsTranslationHotKeyMessage(
+            NativeMethods.WmHotKey,
+            new nint(MainWindow.TranslationHotKeyId)),
+        "The registered WM_HOTKEY message should toggle translation.");
+    Assert(
+        !MainWindow.IsTranslationHotKeyMessage(
+            NativeMethods.WmHotKey,
+            new nint(MainWindow.TranslationHotKeyId + 1))
+        && !MainWindow.IsTranslationHotKeyMessage(
+            message: 0,
+            wParam: new nint(MainWindow.TranslationHotKeyId)),
+        "Unrelated window messages and hotkey IDs must be ignored.");
     return Task.CompletedTask;
 }
 

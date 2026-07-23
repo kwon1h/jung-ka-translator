@@ -468,9 +468,14 @@
                     <TextBlock Text="文" Foreground="White" FontWeight="Bold" FontSize="15" HorizontalAlignment="Center" VerticalAlignment="Center" />
                 </Border>
                 <TextBlock Grid.Column="1" Text="중카 번역기" FontSize="17" FontWeight="Bold" Foreground="#172033" Margin="11,0,0,0" VerticalAlignment="Center" />
-                <Border x:Name="StatusBadgeBorder" Grid.Column="2" Background="#EAF8EC" CornerRadius="13" Padding="11,4" Margin="18,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Left" MaxWidth="650">
-                    <TextBlock x:Name="StatusText" Text="번역 준비 완료" Foreground="#239A45" FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                </Border>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="18,0,0,0" VerticalAlignment="Center">
+                    <Border x:Name="StatusBadgeBorder" Background="#EAF8EC" CornerRadius="13" Padding="11,4" VerticalAlignment="Center" MaxWidth="520">
+                        <TextBlock x:Name="StatusText" Text="번역 준비 완료" Foreground="#239A45" FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                    </Border>
+                    <Border x:Name="HotKeyBadgeBorder" Background="#F1F6FF" CornerRadius="13" Padding="11,4" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <TextBlock x:Name="HotKeyHintText" Text="Ctrl+Shift+F8  시작/정지" Foreground="#1769E8" FontSize="11" FontWeight="SemiBold" />
+                    </Border>
+                </StackPanel>
                 <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Content="&#xE921;" Style="{StaticResource ChromeButtonStyle}" Click="MinimizeWindow" ToolTip="최소화" />
                     <Button x:Name="MaximizeWindowButton" Content="&#xE922;" Style="{StaticResource ChromeButtonStyle}" Click="ToggleMaximizeWindow" ToolTip="최대화/복원" />
@@ -574,7 +579,7 @@
                             </Grid>
                         </Border>
 
-                        <Button x:Name="StartStopButton" Grid.Column="2" AutomationProperties.Name="번역 시작" Height="66" Click="ToggleSession" Style="{StaticResource StartActionButtonStyle}" FontWeight="Bold">
+                        <Button x:Name="StartStopButton" Grid.Column="2" AutomationProperties.Name="번역 시작" AutomationProperties.HelpText="Ctrl+Shift+F8로 게임 중에도 번역을 시작하거나 정지할 수 있습니다." ToolTip="Ctrl+Shift+F8로 게임 중에도 시작/정지" Height="66" Click="ToggleSession" Style="{StaticResource StartActionButtonStyle}" FontWeight="Bold">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                 <TextBlock x:Name="StartStopButtonIcon" Text="&#xE768;" FontFamily="Segoe Fluent Icons" FontSize="18" Margin="0,0,10,0" VerticalAlignment="Center" />
                                 <TextBlock x:Name="StartStopButtonLabel" Text="번역 시작" VerticalAlignment="Center" />
@@ -746,7 +751,8 @@
                                             </Grid.ColumnDefinitions>
                                             <StackPanel VerticalAlignment="Center">
                                                 <TextBlock Text="게임 언어 모델 다운로드" FontWeight="SemiBold" Foreground="#273142" />
-                                                <TextBlock Text="모델을 선택해 내려받으면 지원 언어가 위 게임 언어 목록에 자동으로 추가됩니다."
+                                                <TextBlock x:Name="OcrModelInstallStatusText"
+                                                           Text="언어를 선택하면 설치 여부를 확인합니다."
                                                            Foreground="#7B8797"
                                                            FontSize="11"
                                                            Margin="0,3,12,0" />

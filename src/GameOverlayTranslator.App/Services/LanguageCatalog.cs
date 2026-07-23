@@ -4,22 +4,6 @@ namespace GameOverlayTranslator.App.Services;
 
 internal static class LanguageCatalog
 {
-    public static IReadOnlyList<OcrModelPackage> OcrModelPackages { get; } =
-    [
-        new("zh-Hans", "중국어(간체)"),
-        new("zh-Hant", "중국어(번체)"),
-        new("en", "영어"),
-        new("ja", "일본어"),
-        new("ko", "한국어"),
-        new("latin", "라틴 문자 (독일어·프랑스어·스페인어 외 7개)"),
-        new("cyrillic", "키릴 문자 (러시아어·우크라이나어·불가리아어)"),
-        new("ar", "아랍 문자 (아랍어·페르시아어·우르두어)"),
-        new("hi", "데바나가리 (힌디어·마라티어·네팔어)"),
-        new("ta", "타밀어"),
-        new("te", "텔루구어"),
-        new("kn", "칸나다어")
-    ];
-
     public static IReadOnlyList<OcrLanguage> OcrLanguages { get; } =
     [
         new("zh-Hans", "중국어(간체)"),
@@ -79,15 +63,11 @@ internal static class LanguageCatalog
         && string.Equals(entry.TargetLanguage, targetLanguage.Code, StringComparison.OrdinalIgnoreCase);
 }
 
-internal sealed record OcrModelPackage(string Key, string DisplayName)
+internal sealed record OcrLanguageInstallOption(OcrLanguage Language, bool IsInstalled)
 {
-    public override string ToString() => DisplayName;
-}
-
-internal sealed record OcrModelInstallOption(OcrModelPackage Package, bool IsInstalled)
-{
-    public string Key => Package.Key;
-    public string DisplayName => Package.DisplayName;
+    public string Tag => Language.Tag;
+    public string DisplayName => Language.DisplayName;
+    public string ModelKey => PaddleOcrEngine.GetModelKey(Language.Tag);
 
     public override string ToString() =>
         $"{DisplayName}  ·  {(IsInstalled ? "설치됨" : "다운로드 가능")}";

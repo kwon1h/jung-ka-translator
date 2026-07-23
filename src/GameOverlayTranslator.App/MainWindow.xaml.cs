@@ -21,6 +21,10 @@ public partial class MainWindow : Window
 {
     private const double PreviewMinimumRegionSize = 10;
     private const double PreviewResizeMargin = 12;
+    internal const int TranslationHotKeyId = 0x474F;
+    internal const uint TranslationHotKeyModifiers =
+        NativeMethods.ModControl | NativeMethods.ModShift | NativeMethods.ModNoRepeat;
+    internal const uint TranslationHotKeyVirtualKey = NativeMethods.VkF8;
 
     private enum PreviewEditPurpose
     {
@@ -183,11 +187,13 @@ public partial class MainWindow : Window
     private bool previewEditorNoActivateApplied;
     private nint suspendedPreviewWindowHandle;
     private bool automaticSessionEndCleanupPending;
+    private bool translationHotKeyRegistered;
+    private bool sessionTogglePending;
 
     private readonly UserDictionaryStore userDictStore = new();
     private readonly System.Collections.ObjectModel.ObservableCollection<DiagnosticLogItem> diagnosticLogs = new();
     private readonly List<UserDictEntry> userDictionaryEntries = new();
-    private readonly ObservableCollection<OcrModelInstallOption> ocrModelOptions = [];
+    private readonly ObservableCollection<OcrLanguageInstallOption> ocrLanguageInstallOptions = [];
     private int totalTranslationRequestCount;
     private int totalTranslationCharacterCount;
 
@@ -211,7 +217,7 @@ public partial class MainWindow : Window
         session.Updated += SessionUpdated;
 
         OcrLanguageComboBox.ItemsSource = installedOcrLanguages;
-        OcrModelLanguageComboBox.ItemsSource = ocrModelOptions;
+        OcrModelLanguageComboBox.ItemsSource = ocrLanguageInstallOptions;
         RefreshInstalledOcrLanguages();
 
         TargetLanguageComboBox.ItemsSource = LanguageCatalog.TargetLanguages;
@@ -321,7 +327,14 @@ public partial class MainWindow : Window
         }
     }
 
-    private void MainWindowActivated(object? sender, EventArgs e) => Topmost = true;
+    private void MainWindowActivated(object? sender, EventArgs e)
+    {
+        Topmost = true;
+        if (IsLoaded && !session.IsRunning && ocrModelDownloadCancellation is null)
+        {
+            RefreshInstalledOcrLanguages();
+        }
+    }
 
     private void MainWindowDeactivated(object? sender, EventArgs e)
     {
@@ -335,10 +348,18 @@ public partial class MainWindow : Window
     {
         mainWindowSource = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         mainWindowSource?.AddHook(MainWindowMessageHook);
+        RegisterTranslationHotKey();
     }
 
     private nint MainWindowMessageHook(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
     {
+        if (IsTranslationHotKeyMessage(message, wParam))
+        {
+            handled = true;
+            _ = ToggleSessionAsync();
+            return nint.Zero;
+        }
+
         const int WmMouseActivate = 0x0021;
         const int MouseActivateNoActivate = 3;
         var gameOwnsForeground = previewWindowHandle != nint.Zero
@@ -350,6 +371,30 @@ public partial class MainWindow : Window
             return new nint(MouseActivateNoActivate);
         }
         return nint.Zero;
+    }
+
+    internal static bool IsTranslationHotKeyMessage(int message, nint wParam) =>
+        message == NativeMethods.WmHotKey && wParam == new nint(TranslationHotKeyId);
+
+    private void RegisterTranslationHotKey()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        translationHotKeyRegistered = hwnd != nint.Zero
+            && NativeMethods.RegisterHotKey(
+                hwnd,
+                TranslationHotKeyId,
+                TranslationHotKeyModifiers,
+                TranslationHotKeyVirtualKey);
+        if (translationHotKeyRegistered)
+        {
+            return;
+        }
+
+        HotKeyBadgeBorder.Background = CreateBrush("#FFF7ED");
+        HotKeyHintText.Foreground = CreateBrush("#C2410C");
+        HotKeyHintText.Text = "Ctrl+Shift+F8  사용 불가";
+        HotKeyBadgeBorder.ToolTip = "다른 프로그램이 이 단축키를 사용 중입니다. 화면의 번역 시작 버튼은 정상적으로 사용할 수 있습니다.";
+        AppLog.Write("Global translation hotkey Ctrl+Shift+F8 could not be registered.");
     }
 
     private void MinimizeWindow(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
@@ -811,24 +856,20 @@ public partial class MainWindow : Window
     private void RefreshInstalledOcrLanguages()
     {
         var selectedTag = (OcrLanguageComboBox.SelectedItem as OcrLanguage)?.Tag ?? settings.OcrLanguageTag;
-        var selectedModelKey = (OcrModelLanguageComboBox.SelectedItem as OcrModelInstallOption)?.Key;
-        if (selectedModelKey is null)
+        var selectedDownloadTag = (OcrModelLanguageComboBox.SelectedItem as OcrLanguageInstallOption)?.Tag
+            ?? selectedTag;
+
+        ocrLanguageInstallOptions.Clear();
+        foreach (var language in LanguageCatalog.OcrLanguages)
         {
-            var savedLanguage = LanguageCatalog.OcrLanguages.FirstOrDefault(
-                language => string.Equals(language.Tag, selectedTag, StringComparison.OrdinalIgnoreCase));
-            selectedModelKey = savedLanguage is null
-                ? LanguageCatalog.OcrModelPackages[0].Key
-                : PaddleOcrEngine.GetModelKey(savedLanguage.Tag);
+            ocrLanguageInstallOptions.Add(new OcrLanguageInstallOption(
+                language,
+                PaddleOcrEngine.IsModelAvailable(language)));
         }
 
-        ocrModelOptions.Clear();
-        foreach (var model in LanguageCatalog.OcrModelPackages)
-        {
-            ocrModelOptions.Add(new OcrModelInstallOption(model, PaddleOcrEngine.IsModelAvailable(model.Key)));
-        }
-
-        OcrModelLanguageComboBox.SelectedItem = ocrModelOptions.FirstOrDefault(model => model.Key == selectedModelKey)
-            ?? ocrModelOptions[0];
+        OcrModelLanguageComboBox.SelectedItem = ocrLanguageInstallOptions.FirstOrDefault(
+                option => string.Equals(option.Tag, selectedDownloadTag, StringComparison.OrdinalIgnoreCase))
+            ?? ocrLanguageInstallOptions[0];
 
         installedOcrLanguages.Clear();
         foreach (var language in LanguageCatalog.OcrLanguages.Where(PaddleOcrEngine.IsModelAvailable))
@@ -854,20 +895,25 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (OcrModelLanguageComboBox.SelectedItem is not OcrModelInstallOption model)
+        if (OcrModelLanguageComboBox.SelectedItem is not OcrLanguageInstallOption model)
         {
             DownloadOcrModelButton.Content = "다운로드";
             DownloadOcrModelButton.IsEnabled = false;
+            OcrModelInstallStatusText.Text = "다운로드할 게임 언어를 선택하세요.";
             return;
         }
 
-        DownloadOcrModelButton.Content = model.IsInstalled ? "설치됨" : "다운로드";
-        DownloadOcrModelButton.IsEnabled = !model.IsInstalled && !session.IsRunning;
-        DownloadOcrModelButton.ToolTip = model.IsInstalled
+        var isInstalled = PaddleOcrEngine.IsModelAvailable(model.Language);
+        DownloadOcrModelButton.Content = isInstalled ? "설치됨" : "다운로드";
+        DownloadOcrModelButton.IsEnabled = !isInstalled && !session.IsRunning;
+        DownloadOcrModelButton.ToolTip = isInstalled
             ? "이미 설치된 OCR 모델입니다."
             : session.IsRunning
             ? "번역을 정지한 뒤 OCR 모델을 다운로드할 수 있습니다."
             : null;
+        OcrModelInstallStatusText.Text = isInstalled
+            ? $"{model.DisplayName} 모델이 이 PC에 설치되어 있습니다."
+            : $"{model.DisplayName} 모델을 다운로드하면 게임 언어에서 선택할 수 있습니다.";
     }
 
     private void TargetLanguageSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -1085,9 +1131,18 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (OcrModelLanguageComboBox.SelectedItem is not OcrModelInstallOption model)
+        if (OcrModelLanguageComboBox.SelectedItem is not OcrLanguageInstallOption model)
         {
             SetStatus("먼저 내려받을 언어를 선택하세요.", true);
+            return;
+        }
+
+        if (PaddleOcrEngine.IsModelAvailable(model.Language))
+        {
+            RefreshInstalledOcrLanguages();
+            OcrLanguageComboBox.SelectedItem = installedOcrLanguages.FirstOrDefault(
+                language => string.Equals(language.Tag, model.Tag, StringComparison.OrdinalIgnoreCase));
+            SetStatus($"{model.DisplayName} OCR 모델은 이미 설치되어 있습니다.");
             return;
         }
 
@@ -1100,7 +1155,7 @@ public partial class MainWindow : Window
         var downloadCancellation = new CancellationTokenSource();
         ocrModelDownloadCancellation = downloadCancellation;
         var downloadTask = Task.Run(
-            () => paddleOcrEngine.DownloadModelPackageAsync(model.Key, model.DisplayName, downloadCancellation.Token),
+            () => paddleOcrEngine.DownloadModelPackageAsync(model.ModelKey, model.DisplayName, downloadCancellation.Token),
             downloadCancellation.Token);
         ocrModelDownloadTask = downloadTask;
         UpdateOcrModelDownloadState();
@@ -1112,7 +1167,7 @@ public partial class MainWindow : Window
             {
                 RefreshInstalledOcrLanguages();
                 OcrLanguageComboBox.SelectedItem = installedOcrLanguages.FirstOrDefault(
-                    item => PaddleOcrEngine.GetModelKey(item.Tag) == model.Key);
+                    item => string.Equals(item.Tag, model.Tag, StringComparison.OrdinalIgnoreCase));
                 SetStatus($"{model.DisplayName} OCR 모델 준비가 완료되었습니다.");
             }
         }
@@ -1634,7 +1689,33 @@ public partial class MainWindow : Window
         return chatText;
     }
 
-    private async void ToggleSession(object sender, RoutedEventArgs e)
+    private async void ToggleSession(object sender, RoutedEventArgs e) =>
+        await ToggleSessionAsync();
+
+    private async Task ToggleSessionAsync()
+    {
+        if (sessionTogglePending || isClosing)
+        {
+            return;
+        }
+
+        sessionTogglePending = true;
+        try
+        {
+            await ToggleSessionCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Failed to toggle translation session", ex);
+            SetStatus($"번역 시작/정지 실패: {ex.Message}", true);
+        }
+        finally
+        {
+            sessionTogglePending = false;
+        }
+    }
+
+    private async Task ToggleSessionCoreAsync()
     {
         if (session.IsRunning)
         {
@@ -1909,6 +1990,14 @@ public partial class MainWindow : Window
         settingsStore.Flush();
         SetPreviewEditorNoActivate(false);
         ResumeGameWindowAfterPreviewEditing();
+        if (translationHotKeyRegistered && mainWindowSource is not null)
+        {
+            if (!NativeMethods.UnregisterHotKey(mainWindowSource.Handle, TranslationHotKeyId))
+            {
+                AppLog.Write("Failed to unregister global translation hotkey Ctrl+Shift+F8.");
+            }
+            translationHotKeyRegistered = false;
+        }
         mainWindowSource?.RemoveHook(MainWindowMessageHook);
         mainWindowSource = null;
         previewCancellation?.Cancel();

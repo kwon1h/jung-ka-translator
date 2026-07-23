@@ -74,6 +74,12 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern bool UnhookWinEvent(nint eventHook);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool RegisterHotKey(nint hwnd, int id, uint modifiers, uint virtualKey);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool UnregisterHotKey(nint hwnd, int id);
+
     [DllImport("user32.dll")]
     internal static extern nint SetActiveWindow(nint hwnd);
 
@@ -102,6 +108,11 @@ internal static class NativeMethods
     internal const uint EventObjectLocationChange = 0x800B;
     internal const uint WinEventOutOfContext = 0x0000;
     internal const uint WinEventSkipOwnProcess = 0x0002;
+    internal const int WmHotKey = 0x0312;
+    internal const uint ModControl = 0x0002;
+    internal const uint ModShift = 0x0004;
+    internal const uint ModNoRepeat = 0x4000;
+    internal const uint VkF8 = 0x77;
     internal const int ObjIdWindow = 0;
     internal const int SwMinimize = 6;
     internal const int SwShowNoActivate = 4;
