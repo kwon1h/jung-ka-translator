@@ -175,7 +175,10 @@ public static partial class ChatLineParser
         messageStart < line.Length && !string.IsNullOrWhiteSpace(line[messageStart..]);
 
     private static void LogUncertainEmbeddedSplit(ChatLine line) =>
-        AppLog.Write($"ChatLineParser kept uncertain embedded speaker marker. Speaker={line.Speaker} MessageLength={line.Message.Length}");
+        AppLog.WriteThrottled(
+            "chat-parser-uncertain-speaker",
+            $"ChatLineParser kept uncertain embedded speaker marker. SpeakerLength={line.Speaker.Length} MessageLength={line.Message.Length}",
+            TimeSpan.FromSeconds(30));
 
     private static bool IsSpeakerCharacter(char value) =>
         char.IsLetterOrDigit(value) || IsHan(value) || value is '_' or '-' or '.' or '=' or '|' || char.IsWhiteSpace(value);

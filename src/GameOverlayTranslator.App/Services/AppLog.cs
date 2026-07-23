@@ -12,6 +12,7 @@ public static class AppLog
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "GameOverlayTranslator",
         "logs");
+    private static readonly Dictionary<string, DateTimeOffset> LastThrottledWrites = new(StringComparer.Ordinal);
     private static DateOnly lastMaintenanceDate;
 
     public static string CurrentLogPath => Path.Combine(LogDirectory, $"{DateTime.Now:yyyy-MM-dd}.log");
@@ -39,6 +40,46 @@ public static class AppLog
         }
         catch
         {
+        }
+    }
+
+    public static void WriteThrottled(string key, string message, TimeSpan minimumInterval)
+    {
+        if (ShouldWriteThrottled(key, DateTimeOffset.UtcNow, minimumInterval))
+        {
+            Write(message);
+        }
+    }
+
+    internal static bool ShouldWriteThrottled(string key, DateTimeOffset now, TimeSpan minimumInterval)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        if (minimumInterval < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minimumInterval));
+        }
+
+        lock (Sync)
+        {
+            if (LastThrottledWrites.TryGetValue(key, out var previous)
+                && now - previous < minimumInterval)
+            {
+                return false;
+            }
+
+            LastThrottledWrites[key] = now;
+            if (LastThrottledWrites.Count > 128)
+            {
+                foreach (var staleKey in LastThrottledWrites
+                             .OrderBy(entry => entry.Value)
+                             .Take(LastThrottledWrites.Count - 128)
+                             .Select(entry => entry.Key)
+                             .ToArray())
+                {
+                    LastThrottledWrites.Remove(staleKey);
+                }
+            }
+            return true;
         }
     }
 

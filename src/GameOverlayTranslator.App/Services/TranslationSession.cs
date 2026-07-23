@@ -544,7 +544,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
     {
         var recentChatState = recentChat.CaptureState();
         var positionedChatLines = ParsePositionedChatLines(recognized, options.OcrLanguage);
-        AppLog.Write($"OCR chat poll raw={Quote(recognized.Text)} parsedLines={positionedChatLines.Count}");
+        AppLog.WriteThrottled(
+            "ocr-chat-poll",
+            $"OCR chat poll chars={recognized.Text.Length} parsedLines={positionedChatLines.Count}",
+            TimeSpan.FromSeconds(30));
         if (positionedChatLines.Count == 0)
         {
             Publish(
@@ -586,7 +589,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
             if (exactEntry is not null)
             {
-                AppLog.Write($"UserDictionary exact match source={Quote(activeLine.Message)} target={Quote(exactEntry.Target)}");
+                AppLog.WriteThrottled(
+                    "chat-dictionary-exact",
+                    $"UserDictionary exact match sourceChars={activeLine.Message.Length} targetChars={exactEntry.Target.Length}",
+                    TimeSpan.FromSeconds(30));
                 var decision = recentChat.Evaluate(new ChatLine(activeLine.Speaker, exactEntry.Target), options.Filter);
                 if (decision.Action == ChatFilterAction.Skip)
                 {
@@ -633,7 +639,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             var bypassFilter = NeedsTranslationDueToChineseRatio(activeLine.Message);
             if (!initialQuality.Accepted && !bypassFilter)
             {
-                AppLog.Write($"ChatQualityFilter reject reason={initialQuality.Reason} line={Quote(line.SourceLine)}");
+                AppLog.WriteThrottled(
+                    "chat-quality-initial-reject",
+                    $"ChatQualityFilter reject reason={initialQuality.Reason} lineChars={line.SourceLine.Length}",
+                    TimeSpan.FromSeconds(30));
                 Publish(
                     "스킵",
                     line.SourceLine,
@@ -655,14 +664,20 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
             if (replaced)
             {
-                AppLog.Write($"UserDictionary substring replace. Before={Quote(activeLine.Message)} After={Quote(processedMessage)}");
+                AppLog.WriteThrottled(
+                    "chat-dictionary-substring",
+                    $"UserDictionary substring replace beforeChars={activeLine.Message.Length} afterChars={processedMessage.Length}",
+                    TimeSpan.FromSeconds(30));
                 activeLine = new ChatLine(activeLine.Speaker, processedMessage);
             }
 
             var quality = replaced ? ChatQualityFilter.Check(activeLine, options.OcrLanguage, options.Filter) : initialQuality;
             if (!quality.Accepted && !bypassFilter)
             {
-                AppLog.Write($"ChatQualityFilter reject reason={quality.Reason} line={Quote(activeLine.SourceLine)}");
+                AppLog.WriteThrottled(
+                    "chat-quality-replaced-reject",
+                    $"ChatQualityFilter reject reason={quality.Reason} lineChars={activeLine.SourceLine.Length}",
+                    TimeSpan.FromSeconds(30));
                 Publish(
                     "스킵",
                     activeLine.SourceLine,
@@ -692,7 +707,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
             if (!quality.TranslateWithService && !bypassFilter)
             {
-                AppLog.Write($"ChatQualityFilter source-only reason={quality.Reason} line={Quote(activeLine.SourceLine)}");
+                AppLog.WriteThrottled(
+                    "chat-quality-source-only",
+                    $"ChatQualityFilter source-only reason={quality.Reason} lineChars={activeLine.SourceLine.Length}",
+                    TimeSpan.FromSeconds(30));
                 Publish(
                     "스킵",
                     activeLine.SourceLine,
@@ -926,7 +944,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             activeLine.Speaker,
             remembered.TranslatedText);
         TrimChatTranslationMemory(memory);
-        AppLog.Write($"ChatTranslationMemory alias chatLineId={chatLineId} source={Quote(pollLine.Line.SourceLine)}");
+        AppLog.WriteThrottled(
+            "chat-memory-alias",
+            $"ChatTranslationMemory alias sourceChars={pollLine.Line.SourceLine.Length}",
+            TimeSpan.FromSeconds(30));
         return true;
     }
 
@@ -1037,9 +1058,6 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         options.SuppressEnglishOnlyScreenLines
         && !options.OcrLanguage.Tag.StartsWith("en", StringComparison.OrdinalIgnoreCase)
         && IsEnglishOnly(text);
-
-    private static string Quote(string value) =>
-        $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\r", string.Empty, StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}\"";
 
     private static string NormalizeForMatching(string value)
     {

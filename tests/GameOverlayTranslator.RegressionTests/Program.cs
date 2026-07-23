@@ -43,6 +43,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Translation cache evicts oldest entries", TestTranslationCacheEvictsOldestEntries),
     ("Translation cache flushes deferred entries", TestTranslationCacheFlushesDeferredEntries),
     ("Application logs rotate and expire", TestApplicationLogMaintenance),
+    ("High-frequency application logs are throttled", TestApplicationLogThrottling),
     ("Empty screen OCR keeps overlay items", TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems),
     ("Screen translation publishes translated diagnostic", TestScreenTranslatedDiagnostic),
     ("Screen diagnostic source contains only translation requests", TestScreenDiagnosticSourceContainsOnlyTranslationRequests),
@@ -619,6 +620,22 @@ static Task TestApplicationLogMaintenance()
     {
         Directory.Delete(directory, recursive: true);
     }
+}
+
+static Task TestApplicationLogThrottling()
+{
+    var key = $"regression-{Guid.NewGuid():N}";
+    var start = new DateTimeOffset(2026, 7, 24, 0, 0, 0, TimeSpan.Zero);
+    Assert(
+        AppLog.ShouldWriteThrottled(key, start, TimeSpan.FromSeconds(30)),
+        "The first high-frequency diagnostic should be written.");
+    Assert(
+        !AppLog.ShouldWriteThrottled(key, start.AddSeconds(29), TimeSpan.FromSeconds(30)),
+        "Repeated diagnostics inside the throttle interval should not touch the log file.");
+    Assert(
+        AppLog.ShouldWriteThrottled(key, start.AddSeconds(30), TimeSpan.FromSeconds(30)),
+        "A diagnostic should be writable again after the throttle interval.");
+    return Task.CompletedTask;
 }
 
 static async Task TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems()

@@ -131,14 +131,14 @@ public sealed class RecentChatFilter
 
     private static void LogDecision(string action, Entry candidate, Entry? match, double? similarity, int? overlap, int? union)
     {
-        AppLog.Write(
-            $"RecentChatFilter action={action} candidateSpeaker={Quoted(candidate.Line.Speaker)} candidateMessage={Quoted(candidate.Line.Message)} " +
+        AppLog.WriteThrottled(
+            $"recent-chat-filter-{action}",
+            $"RecentChatFilter action={action} candidateSpeakerChars={candidate.Line.Speaker.Length} candidateMessageChars={candidate.Line.Message.Length} " +
             $"candidateTokens={candidate.Tokens.Count} candidateScore={candidate.Score} " +
-            $"matchSpeaker={Quoted(match?.Line.Speaker)} matchMessage={Quoted(match?.Line.Message)} matchTokens={match?.Tokens.Count ?? 0} " +
-            $"matchScore={match?.Score} similarity={similarity:0.000} overlap={overlap} union={union}");
+            $"matchSpeakerChars={match?.Line.Speaker.Length ?? 0} matchMessageChars={match?.Line.Message.Length ?? 0} matchTokens={match?.Tokens.Count ?? 0} " +
+            $"matchScore={match?.Score} similarity={similarity:0.000} overlap={overlap} union={union}",
+            TimeSpan.FromSeconds(30));
     }
-
-    private static string Quoted(string? value) => $"\"{value?.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 
     private sealed class Entry(string id, ChatLine line, HashSet<string> tokens, int score, DateTimeOffset lastSeen)
     {
