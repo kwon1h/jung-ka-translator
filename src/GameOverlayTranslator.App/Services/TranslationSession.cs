@@ -3,8 +3,6 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Platform;
@@ -95,9 +93,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                 var recognized = await ocrEngine.RecognizeAsync(frameForOcr, options.OcrLanguage, ct);
                 var recognizedForTranslation = ApplyRegionFilters(
                     recognized,
-                    options,
-                    frameForOcr.Bitmap.PixelWidth,
-                    frameForOcr.Bitmap.PixelHeight);
+                    frameForOcr.IncludedOcrRects,
+                    frameForOcr.ExcludedOcrRects);
 
                 if (options.Mode == TranslationMode.Screen)
                 {
@@ -399,45 +396,18 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             return frame;
         }
 
-        var width = frame.Bitmap.PixelWidth;
-        var height = frame.Bitmap.PixelHeight;
-        var visual = new DrawingVisual();
-        using (var context = visual.RenderOpen())
+        return frame with
         {
-            if (includedRects.Count == 0)
-            {
-                context.DrawImage(frame.Bitmap, new Rect(0, 0, width, height));
-            }
-            else
-            {
-                context.DrawRectangle(Brushes.Black, null, new Rect(0, 0, width, height));
-                foreach (var includedRect in includedRects)
-                {
-                    context.PushClip(new RectangleGeometry(includedRect));
-                    context.DrawImage(frame.Bitmap, new Rect(0, 0, width, height));
-                    context.Pop();
-                }
-            }
-            foreach (var excludedRect in excludedRects)
-            {
-                context.DrawRectangle(Brushes.Black, null, excludedRect);
-            }
-        }
-
-        var masked = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
-        masked.Render(visual);
-        masked.Freeze();
-        return new CapturedFrame(masked);
+            IncludedOcrRects = includedRects,
+            ExcludedOcrRects = excludedRects
+        };
     }
 
     private static OcrResult ApplyRegionFilters(
         OcrResult recognized,
-        SessionOptions options,
-        int frameWidth,
-        int frameHeight)
+        IReadOnlyList<Rect> includedRects,
+        IReadOnlyList<Rect> excludedRects)
     {
-        var includedRects = BuildRelativeRects(options.IncludedRegions, options.Region, frameWidth, frameHeight);
-        var excludedRects = BuildRelativeRects(options.ExcludedRegions, options.Region, frameWidth, frameHeight);
         if ((includedRects.Count == 0 && excludedRects.Count == 0) || recognized.Lines.Count == 0)
         {
             return recognized;

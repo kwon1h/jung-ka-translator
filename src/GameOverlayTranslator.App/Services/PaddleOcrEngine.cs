@@ -156,6 +156,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
             await EnsureModelLoadedAsync(GetModelKey(language.Tag), language.DisplayName, ct);
 
             using var pixels = CaptureBitmapPixels(frame.Bitmap);
+            pixels.ApplyMasks(frame.IncludedOcrRects, frame.ExcludedOcrRects);
             if (frameCache.TryGet(pixels, language.Tag, out var cachedResult))
             {
                 return cachedResult;

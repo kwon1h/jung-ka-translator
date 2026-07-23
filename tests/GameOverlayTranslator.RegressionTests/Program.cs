@@ -28,6 +28,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Quick-chat copy names the selected game language", TestResultWindowUsesSelectedGameLanguage),
     ("PaddleOCR bitmap conversion preserves BGR pixels", TestPaddleOcrBitmapConversion),
     ("PaddleOCR reuses only identical frames", TestPaddleOcrFrameCache),
+    ("OCR masks modify the pooled pixel buffer", TestPaddleOcrPixelMasks),
     ("Translation session runs OCR off caller context", TestTranslationSessionRunsOcrOffCallerContext),
     ("Slow OCR polling yields CPU time back to the game", TestSlowOcrPollingYieldsToGame),
     ("Session status ignores routine skips and reports recovery", TestSessionStatusTracksRecovery),
@@ -1558,6 +1559,37 @@ static Task TestPaddleOcrFrameCache()
     using var changed = PaddleOcrEngine.CaptureBitmapPixels(changedBitmap);
     Assert(!cache.TryGet(changed, "en", out _), "Any pixel change must invalidate the OCR result.");
     Assert(!cache.TryGet(identical, "ja", out _), "A language change must invalidate the OCR result.");
+    return Task.CompletedTask;
+}
+
+static Task TestPaddleOcrPixelMasks()
+{
+    var pixels = Enumerable.Repeat(new byte[] { 10, 20, 30, 255 }, 8)
+        .SelectMany(pixel => pixel)
+        .ToArray();
+    var bitmap = BitmapSource.Create(
+        4,
+        2,
+        96,
+        96,
+        PixelFormats.Bgra32,
+        null,
+        pixels,
+        16);
+    using var frame = PaddleOcrEngine.CaptureBitmapPixels(bitmap);
+    frame.ApplyMasks(
+        [new Rect(1, 0, 2, 2)],
+        [new Rect(2, 1, 1, 1)]);
+
+    static bool IsBlack(OcrFramePixels frame, int x, int y)
+    {
+        var offset = y * frame.Stride + x * 4;
+        return frame.Buffer.AsSpan(offset, 4).SequenceEqual(stackalloc byte[4]);
+    }
+
+    Assert(IsBlack(frame, 0, 0) && IsBlack(frame, 3, 1), "Pixels outside include regions must be black.");
+    Assert(!IsBlack(frame, 1, 0) && !IsBlack(frame, 2, 0), "Pixels inside include regions must be preserved.");
+    Assert(IsBlack(frame, 2, 1), "Excluded regions must override included regions.");
     return Task.CompletedTask;
 }
 

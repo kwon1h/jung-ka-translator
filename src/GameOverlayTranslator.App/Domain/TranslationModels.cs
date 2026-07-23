@@ -25,7 +25,11 @@ public readonly record struct CaptureRegion(double X, double Y, double Width, do
     }
 }
 
-public sealed record CapturedFrame(BitmapSource Bitmap);
+public sealed record CapturedFrame(BitmapSource Bitmap)
+{
+    public IReadOnlyList<Rect> IncludedOcrRects { get; init; } = Array.Empty<Rect>();
+    public IReadOnlyList<Rect> ExcludedOcrRects { get; init; } = Array.Empty<Rect>();
+}
 
 public sealed record OcrLanguage(string Tag, string DisplayName)
 {

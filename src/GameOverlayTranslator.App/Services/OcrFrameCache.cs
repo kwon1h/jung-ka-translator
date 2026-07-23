@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Windows;
 using GameOverlayTranslator.App.Domain;
 
 namespace GameOverlayTranslator.App.Services;
@@ -29,6 +30,62 @@ internal sealed class OcrFramePixels : IDisposable
         return detached;
     }
 
+    public void ApplyMasks(
+        IReadOnlyList<Rect>? includedRects,
+        IReadOnlyList<Rect>? excludedRects)
+    {
+        if (includedRects is { Count: > 0 })
+        {
+            var includedPixels = ToPixelRects(includedRects);
+            if (includedPixels.Count == 0)
+            {
+                Buffer.AsSpan(0, Length).Clear();
+            }
+            else
+            {
+                includedPixels.Sort(static (left, right) => left.Left.CompareTo(right.Left));
+                for (var y = 0; y < Height; y++)
+                {
+                    var cursor = 0;
+                    foreach (var rect in includedPixels)
+                    {
+                        if (y < rect.Top || y >= rect.Bottom)
+                        {
+                            continue;
+                        }
+
+                        if (rect.Left > cursor)
+                        {
+                            ClearRowRange(y, cursor, rect.Left);
+                        }
+
+                        cursor = Math.Max(cursor, rect.Right);
+                        if (cursor >= Width)
+                        {
+                            break;
+                        }
+                    }
+
+                    if (cursor < Width)
+                    {
+                        ClearRowRange(y, cursor, Width);
+                    }
+                }
+            }
+        }
+
+        if (excludedRects is { Count: > 0 })
+        {
+            foreach (var rect in ToPixelRects(excludedRects))
+            {
+                for (var y = rect.Top; y < rect.Bottom; y++)
+                {
+                    ClearRowRange(y, rect.Left, rect.Right);
+                }
+            }
+        }
+    }
+
     public void Dispose()
     {
         var rented = Interlocked.Exchange(ref buffer, null);
@@ -37,6 +94,33 @@ internal sealed class OcrFramePixels : IDisposable
             ArrayPool<byte>.Shared.Return(rented);
         }
     }
+
+    private List<PixelRect> ToPixelRects(IReadOnlyList<Rect> rects)
+    {
+        var result = new List<PixelRect>(rects.Count);
+        foreach (var rect in rects)
+        {
+            var left = Math.Clamp((int)Math.Floor(rect.Left), 0, Width);
+            var top = Math.Clamp((int)Math.Floor(rect.Top), 0, Height);
+            var right = Math.Clamp((int)Math.Ceiling(rect.Right), 0, Width);
+            var bottom = Math.Clamp((int)Math.Ceiling(rect.Bottom), 0, Height);
+            if (right > left && bottom > top)
+            {
+                result.Add(new PixelRect(left, top, right, bottom));
+            }
+        }
+
+        return result;
+    }
+
+    private void ClearRowRange(int y, int left, int right)
+    {
+        var offset = checked(y * Stride + left * 4);
+        var length = checked((right - left) * 4);
+        Buffer.AsSpan(offset, length).Clear();
+    }
+
+    private readonly record struct PixelRect(int Left, int Top, int Right, int Bottom);
 }
 
 internal sealed class OcrFrameCache : IDisposable
