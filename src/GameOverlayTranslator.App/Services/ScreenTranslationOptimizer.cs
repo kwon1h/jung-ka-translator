@@ -140,7 +140,9 @@ public static class ScreenTranslationSegmenter
 
         var chunks = SplitByHardBreaks(normalized)
             .SelectMany(chunk => chunk.Length > 120 ? SplitBySoftBreaks(chunk) : [chunk])
-            .SelectMany(chunk => chunk.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            .SelectMany(chunk => UsesUnspacedScript(language)
+                ? chunk.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                : [chunk])
             .Select(chunk => TranslationTextNormalizer.NormalizeForTranslation(chunk, language))
             .Where(chunk => !string.IsNullOrWhiteSpace(chunk))
             .ToList();
@@ -168,8 +170,12 @@ public static class ScreenTranslationSegmenter
             return false;
         }
 
-        return !TranslationTextNormalizer.IsMostlyNumericOrSymbolic(segment.Text);
+        return !TranslationTextNormalizer.IsMostlyNumericOrSymbolic(segment.Text, language);
     }
+
+    private static bool UsesUnspacedScript(OcrLanguage language) =>
+        language.Tag.StartsWith("zh", StringComparison.OrdinalIgnoreCase)
+        || language.Tag.StartsWith("ja", StringComparison.OrdinalIgnoreCase);
 
     private static IEnumerable<string> SplitByHardBreaks(string text)
     {

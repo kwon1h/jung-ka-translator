@@ -58,17 +58,7 @@ internal static partial class TranslationTextNormalizer
 
     public static bool HasExpectedSourceScript(string message, OcrLanguage language)
     {
-        if (language.Tag.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
-        {
-            return message.Any(IsHan);
-        }
-
-        if (language.Tag.StartsWith("ja", StringComparison.OrdinalIgnoreCase))
-        {
-            return message.Any(character => IsHan(character) || character is >= '\u3040' and <= '\u30FF');
-        }
-
-        return true;
+        return message.Any(character => IsExpectedSourceCharacter(character, language));
     }
 
     public static double CalculateCanonicalSimilarity(string leftCanonical, string rightCanonical)
@@ -85,7 +75,7 @@ internal static partial class TranslationTextNormalizer
         return union == 0 ? 0 : overlap / (double)union;
     }
 
-    public static bool IsMostlyNumericOrSymbolic(string text)
+    public static bool IsMostlyNumericOrSymbolic(string text, OcrLanguage language)
     {
         var meaningful = 0;
         var sourceLetters = 0;
@@ -97,18 +87,73 @@ internal static partial class TranslationTextNormalizer
                 continue;
             }
 
-            if (char.IsLetterOrDigit(character) || IsHan(character) || character is >= '\u3040' and <= '\u30FF')
+            if (char.IsLetterOrDigit(character))
             {
                 meaningful++;
             }
 
-            if (IsHan(character) || character is >= '\u3040' and <= '\u30FF')
+            if (IsExpectedSourceCharacter(character, language))
             {
                 sourceLetters++;
             }
         }
 
         return meaningful == 0 || sourceLetters < 2 || sourceLetters / (double)Math.Max(1, meaningful) < 0.25;
+    }
+
+    private static bool IsExpectedSourceCharacter(char character, OcrLanguage language)
+    {
+        var tag = language.Tag;
+        if (tag.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
+        {
+            return IsHan(character);
+        }
+
+        if (tag.StartsWith("ja", StringComparison.OrdinalIgnoreCase))
+        {
+            return IsHan(character) || character is >= '\u3040' and <= '\u30FF';
+        }
+
+        if (tag.StartsWith("ko", StringComparison.OrdinalIgnoreCase))
+        {
+            return character is >= '\u1100' and <= '\u11FF'
+                or >= '\u3130' and <= '\u318F'
+                or >= '\uAC00' and <= '\uD7A3';
+        }
+
+        if (tag.StartsWith("ar", StringComparison.OrdinalIgnoreCase))
+        {
+            return character is >= '\u0600' and <= '\u06FF'
+                or >= '\u0750' and <= '\u077F'
+                or >= '\u08A0' and <= '\u08FF';
+        }
+
+        if (tag.StartsWith("hi", StringComparison.OrdinalIgnoreCase))
+        {
+            return character is >= '\u0900' and <= '\u097F';
+        }
+
+        if (tag.StartsWith("ta", StringComparison.OrdinalIgnoreCase))
+        {
+            return character is >= '\u0B80' and <= '\u0BFF';
+        }
+
+        if (tag.StartsWith("te", StringComparison.OrdinalIgnoreCase))
+        {
+            return character is >= '\u0C00' and <= '\u0C7F';
+        }
+
+        if (tag.StartsWith("kn", StringComparison.OrdinalIgnoreCase))
+        {
+            return character is >= '\u0C80' and <= '\u0CFF';
+        }
+
+        if (tag.StartsWith("en", StringComparison.OrdinalIgnoreCase))
+        {
+            return character is >= 'A' and <= 'Z' or >= 'a' and <= 'z';
+        }
+
+        return char.IsLetter(character);
     }
 
     private static HashSet<string> TokenizeCanonical(string canonical)

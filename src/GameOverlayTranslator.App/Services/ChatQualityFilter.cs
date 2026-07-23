@@ -36,7 +36,7 @@ public static class ChatQualityFilter
             }
         }
 
-        if (!HasExpectedSourceScript(line.Message, language))
+        if (!TranslationTextNormalizer.HasExpectedSourceScript(line.Message, language))
         {
             return ChatQualityDecision.ShowSource("원문 표시", "ScriptFilter");
         }
@@ -61,21 +61,6 @@ public static class ChatQualityFilter
             .Split(' ', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Count(token => token.Length == 1 && token.All(character => character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9'));
         return fragments >= maxNoiseCount;
-    }
-
-    private static bool HasExpectedSourceScript(string message, OcrLanguage language)
-    {
-        if (language.Tag.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
-        {
-            return message.Any(IsHan);
-        }
-
-        if (language.Tag.StartsWith("ja", StringComparison.OrdinalIgnoreCase))
-        {
-            return message.Any(character => IsHan(character) || character is >= '\u3040' and <= '\u30FF');
-        }
-
-        return true;
     }
 
     private static bool IsHan(char character) => character is >= '\u3400' and <= '\u9FFF';

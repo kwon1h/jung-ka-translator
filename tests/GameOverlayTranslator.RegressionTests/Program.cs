@@ -44,10 +44,13 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Cache hit usage is zero", TestDirectCacheHitUsageIsZero),
     ("Provider usage is preserved", TestProviderUsageIsPreserved),
     ("Translation failure cooldown bypasses API", TestTranslationFailureCooldown),
-    ("Screen segment splits by spaces", TestScreenSegmentSplitsBySpaces),
+    ("Spaced-language screen segment keeps phrases", TestSpacedLanguageScreenSegmentKeepsPhrases),
+    ("CJK screen segment separates OCR chunks", TestCjkScreenSegmentSeparatesOcrChunks),
+    ("Supported OCR scripts pass screen filter", TestSupportedOcrScriptsPassScreenFilter),
     ("Chinese ratio bypasses screen filter", TestChineseRatioBypassesScreenFilter),
     ("Chinese ratio bypasses chat filter", TestChineseRatioBypassesChatFilter),
     ("English-only screen lines are hidden", TestEnglishOnlyScreenLinesAreHidden),
+    ("English game text is translated", TestEnglishGameTextIsTranslated),
     ("Screen overlay keeps individual OCR positions", TestScreenOverlayKeepsIndividualOcrPositions),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
     ("Foreground capture accepts only target window", TestForegroundCaptureAcceptsOnlyTargetWindow),
@@ -707,13 +710,41 @@ static void Assert(bool condition, string message)
     }
 }
 
-static Task TestScreenSegmentSplitsBySpaces()
+static Task TestSpacedLanguageScreenSegmentKeepsPhrases()
 {
     var segments = ScreenTranslationSegmenter.Split("hello world test", new OcrLanguage("en", "English"));
-    Assert(segments.Count == 3, $"Expected 3 segments, got {segments.Count}");
-    Assert(segments[0].Text == "hello", $"Expected 'hello', got '{segments[0].Text}'");
-    Assert(segments[1].Text == "world", $"Expected 'world', got '{segments[1].Text}'");
-    Assert(segments[2].Text == "test", $"Expected 'test', got '{segments[2].Text}'");
+    Assert(segments.Count == 1, $"Expected one phrase segment, got {segments.Count}");
+    Assert(segments[0].Text == "hello world test", $"Expected the full English phrase, got '{segments[0].Text}'");
+    return Task.CompletedTask;
+}
+
+static Task TestCjkScreenSegmentSeparatesOcrChunks()
+{
+    var segments = ScreenTranslationSegmenter.Split(
+        "こんにちは 世界",
+        new OcrLanguage("ja", "Japanese"));
+    Assert(segments.Count == 2, $"Expected two CJK OCR chunks, got {segments.Count}");
+    return Task.CompletedTask;
+}
+
+static Task TestSupportedOcrScriptsPassScreenFilter()
+{
+    var samples = new[]
+    {
+        (new OcrLanguage("en", "English"), "START GAME"),
+        (new OcrLanguage("ko", "Korean"), "게임 시작"),
+        (new OcrLanguage("ar", "Arabic"), "ابدأ اللعبة"),
+        (new OcrLanguage("hi", "Hindi"), "खेल शुरू"),
+        (new OcrLanguage("ta", "Tamil"), "விளையாட்டு தொடங்கு"),
+        (new OcrLanguage("te", "Telugu"), "ఆట ప్రారంభించండి"),
+        (new OcrLanguage("kn", "Kannada"), "ಆಟ ಪ್ರಾರಂಭಿಸಿ")
+    };
+
+    foreach (var (language, text) in samples)
+    {
+        var segment = ScreenTranslationSegmenter.Split(text, language).Single();
+        Assert(ScreenTranslationSegmenter.ShouldSendToTranslation(segment, language), $"{language.DisplayName} text should pass the screen translation filter.");
+    }
     return Task.CompletedTask;
 }
 
@@ -767,6 +798,23 @@ static async Task TestEnglishOnlyScreenLinesAreHidden()
     Assert(translation.BatchRequests == 0, "English-only screen text should not call translation.");
     Assert(!updates.Any(update => update.ScreenItems is { Count: > 0 }), "English-only screen text should not be shown.");
     Assert(updates.Any(update => update.FilterRule == "EnglishOnly" && update.ScreenItems is { Count: 0 }), "English-only OCR should clear an existing overlay.");
+}
+
+static async Task TestEnglishGameTextIsTranslated()
+{
+    var translation = new CountingTranslationService();
+    var session = ScreenSession("START GAME", translation);
+    var updates = Collect(session);
+    var options = CreateOptions(TranslationMode.Screen) with
+    {
+        OcrLanguage = new OcrLanguage("en", "English"),
+        SuppressEnglishOnlyScreenLines = true
+    };
+
+    await RunSession(session, options);
+
+    Assert(translation.BatchRequests == 1, "English source language must not be suppressed as English-only UI noise.");
+    Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated), "Expected an English screen translation update.");
 }
 
 static Task TestScreenOverlayKeepsIndividualOcrPositions()

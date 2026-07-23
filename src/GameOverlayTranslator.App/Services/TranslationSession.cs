@@ -164,7 +164,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             return;
         }
 
-        if (options.SuppressEnglishOnlyScreenLines && IsEnglishOnly(string.Join(" ", recognized.Lines.Select(line => line.Text))))
+        if (ShouldSuppressEnglishOnly(options, string.Join(" ", recognized.Lines.Select(line => line.Text))))
         {
             Publish(
                 "스킵",
@@ -186,7 +186,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
         foreach (var line in recognized.Lines)
         {
-            if (options.SuppressEnglishOnlyScreenLines && IsEnglishOnly(line.Text))
+            if (ShouldSuppressEnglishOnly(options, line.Text))
             {
                 continue;
             }
@@ -964,6 +964,11 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         var letters = text.Where(char.IsLetter).ToArray();
         return letters.Length > 0 && letters.All(character => character is >= 'A' and <= 'Z' or >= 'a' and <= 'z');
     }
+
+    private static bool ShouldSuppressEnglishOnly(SessionOptions options, string text) =>
+        options.SuppressEnglishOnlyScreenLines
+        && !options.OcrLanguage.Tag.StartsWith("en", StringComparison.OrdinalIgnoreCase)
+        && IsEnglishOnly(text);
 
     private static string Quote(string value) =>
         $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\r", string.Empty, StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal)}\"";

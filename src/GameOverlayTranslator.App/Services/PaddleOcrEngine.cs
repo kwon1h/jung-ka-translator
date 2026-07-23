@@ -39,41 +39,45 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         await semaphore.WaitAsync(ct);
         try
         {
-            if (currentOcr != null && currentLanguageTag == language.Tag)
-            {
-                return;
-            }
-
-            currentOcr?.Dispose();
-            currentOcr = null;
-
-            AppLog.Write($"Loading PaddleOCR model for language: {language.Tag}");
-
-            FullOcrModel model;
-            try
-            {
-                model = await DownloadModelAsync(language.Tag, ct);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write($"[Error] Failed to load PaddleOCR models: {ex.Message}");
-                AppLog.Write("[Tip] If you are experiencing network download issues, please run the download script at: scripts/download-models.ps1");
-                throw new Exception("PaddleOCR model files are missing or could not be downloaded. Please run the download helper script 'scripts/download-models.ps1' to manually set them up.", ex);
-            }
-
-            currentOcr = new PaddleOcrAll(model, new DeviceOptions("CPU"))
-            {
-                AllowRotateDetection = false,
-                Enable180Classification = false
-            };
-            currentOcr.Detector.MaxSize = 2048;
-            currentLanguageTag = language.Tag;
-            AppLog.Write($"PaddleOCR model for language {language.Tag} loaded successfully.");
+            await EnsureModelLoadedAsync(language, ct);
         }
         finally
         {
             semaphore.Release();
         }
+    }
+
+    private async Task EnsureModelLoadedAsync(OcrLanguage language, CancellationToken ct)
+    {
+        if (currentOcr != null && currentLanguageTag == language.Tag)
+        {
+            return;
+        }
+
+        AppLog.Write($"Loading PaddleOCR model for language: {language.Tag}");
+
+        FullOcrModel model;
+        try
+        {
+            model = await DownloadModelAsync(language.Tag, ct);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[Error] Failed to load PaddleOCR models: {ex.Message}");
+            throw new Exception($"{language.DisplayName} OCR 모델을 준비하지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도하세요.", ex);
+        }
+
+        var nextOcr = new PaddleOcrAll(model, new DeviceOptions("CPU"))
+        {
+            AllowRotateDetection = false,
+            Enable180Classification = false
+        };
+        nextOcr.Detector.MaxSize = 2048;
+        var previousOcr = currentOcr;
+        currentOcr = nextOcr;
+        currentLanguageTag = language.Tag;
+        previousOcr?.Dispose();
+        AppLog.Write($"PaddleOCR model for language {language.Tag} loaded successfully.");
     }
 
     private static string RecognitionDirectory(string languageTag) => languageTag switch
@@ -106,39 +110,44 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
 
     public async Task<OcrResult> RecognizeAsync(CapturedFrame frame, OcrLanguage language, CancellationToken ct)
     {
-        await PrepareAsync(language, ct);
-
-        // Convert CapturedFrame Bitmap to OpenCV Mat
-        using var mat = BitmapSourceToMat(frame.Bitmap);
-        
-        // Run OCR (Run is synchronous, so run it on the current thread)
-        var ocr = currentOcr ?? throw new InvalidOperationException("PaddleOCR 모델이 준비되지 않았습니다.");
-        var paddleResult = ocr.Run(mat);
-
-        // Convert PaddleOcrResult to OcrResult
-        var lines = new List<OcrLineResult>();
-        var words = new List<OcrWordResult>();
-
-        foreach (var region in paddleResult.Regions)
+        ct.ThrowIfCancellationRequested();
+        await semaphore.WaitAsync(ct);
+        try
         {
-            if (string.IsNullOrWhiteSpace(region.Text))
-                continue;
+            await EnsureModelLoadedAsync(language, ct);
 
-            // Get bounding rect
-            var openCvRect = region.Rect.BoundingRect();
-            var wpfRect = new System.Windows.Rect(openCvRect.X, openCvRect.Y, openCvRect.Width, openCvRect.Height);
-            
-            lines.Add(new OcrLineResult(region.Text.Trim(), wpfRect));
-            words.Add(new OcrWordResult(region.Text.Trim(), wpfRect));
+            using var mat = BitmapSourceToMat(frame.Bitmap);
+            var ocr = currentOcr ?? throw new InvalidOperationException("PaddleOCR 모델이 준비되지 않았습니다.");
+            var paddleResult = ocr.Run(mat);
+
+            var lines = new List<OcrLineResult>();
+            var words = new List<OcrWordResult>();
+
+            foreach (var region in paddleResult.Regions)
+            {
+                if (string.IsNullOrWhiteSpace(region.Text))
+                {
+                    continue;
+                }
+
+                var openCvRect = region.Rect.BoundingRect();
+                var wpfRect = new System.Windows.Rect(openCvRect.X, openCvRect.Y, openCvRect.Width, openCvRect.Height);
+
+                lines.Add(new OcrLineResult(region.Text.Trim(), wpfRect));
+                words.Add(new OcrWordResult(region.Text.Trim(), wpfRect));
+            }
+
+            var concatenatedText = string.Join(Environment.NewLine, lines.Select(line => line.Text));
+
+            return new OcrResult(concatenatedText, lines)
+            {
+                Words = words
+            };
         }
-
-        // Concatenate text
-        var concatenatedText = string.Join(Environment.NewLine, lines.Select(l => l.Text));
-
-        return new OcrResult(concatenatedText, lines)
+        finally
         {
-            Words = words
-        };
+            semaphore.Release();
+        }
     }
 
     private static Mat BitmapSourceToMat(BitmapSource bitmap)

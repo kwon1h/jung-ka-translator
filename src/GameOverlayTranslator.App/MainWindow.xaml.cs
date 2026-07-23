@@ -726,7 +726,10 @@ public partial class MainWindow : Window
 
         var isReady = PaddleOcrEngine.IsModelAvailable(language);
         DownloadOcrModelButton.Content = isReady ? "준비됨" : "다운로드";
-        DownloadOcrModelButton.IsEnabled = !isReady;
+        DownloadOcrModelButton.IsEnabled = !isReady && !session.IsRunning;
+        DownloadOcrModelButton.ToolTip = session.IsRunning && !isReady
+            ? "번역을 정지한 뒤 OCR 모델을 다운로드할 수 있습니다."
+            : null;
     }
 
     private void TargetLanguageSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -935,6 +938,12 @@ public partial class MainWindow : Window
         if (OcrModelLanguageComboBox.SelectedItem is not OcrLanguage language)
         {
             SetStatus("먼저 내려받을 언어를 선택하세요.", true);
+            return;
+        }
+
+        if (session.IsRunning)
+        {
+            SetStatus("번역을 정지한 뒤 OCR 모델을 다운로드하세요.", true);
             return;
         }
 
@@ -1405,8 +1414,10 @@ public partial class MainWindow : Window
         }
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var gameLanguage = OcrLanguageComboBox.SelectedItem as OcrLanguage
+            ?? throw new InvalidOperationException("게임 언어를 먼저 선택하세요.");
         var translated = await chatTranslationService.TranslateAsync(
-            new TranslationRequest(sourceText, "zh-CN", "ko"),
+            new TranslationRequest(sourceText, gameLanguage.Tag, settings.TargetLanguageCode),
             cts.Token);
 
         var chatText = translated.TranslatedText.Trim();
@@ -1496,6 +1507,7 @@ public partial class MainWindow : Window
         StartStopButtonLabel.Text = "번역 정지";
         StartStopButtonIcon.Text = "\uE71A";
         System.Windows.Automation.AutomationProperties.SetName(StartStopButton, "번역 정지");
+        UpdateOcrModelDownloadState();
         if (settings.DisplayMode == TranslationDisplayMode.TransparentOverlay)
         {
             WindowState = WindowState.Minimized;
@@ -1516,6 +1528,7 @@ public partial class MainWindow : Window
         overlayWindow?.StopTrackingTargetTopmost();
         overlayWindow?.ClearAll();
         UpdateStartReadiness();
+        UpdateOcrModelDownloadState();
     }
 
     private void SessionUpdated(object? sender, SessionUpdate update) => Dispatcher.Invoke(() =>
