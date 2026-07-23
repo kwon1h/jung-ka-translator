@@ -1,23 +1,64 @@
+using System.Buffers;
 using GameOverlayTranslator.App.Domain;
-using OpenCvSharp;
 
 namespace GameOverlayTranslator.App.Services;
 
+internal sealed class OcrFramePixels : IDisposable
+{
+    private byte[]? buffer;
+
+    public OcrFramePixels(byte[] buffer, int width, int height, int stride)
+    {
+        this.buffer = buffer;
+        Width = width;
+        Height = height;
+        Stride = stride;
+        Length = checked(stride * height);
+    }
+
+    public byte[] Buffer => buffer ?? throw new ObjectDisposedException(nameof(OcrFramePixels));
+    public int Width { get; }
+    public int Height { get; }
+    public int Stride { get; }
+    public int Length { get; }
+
+    public byte[] DetachBuffer()
+    {
+        var detached = Buffer;
+        buffer = null;
+        return detached;
+    }
+
+    public void Dispose()
+    {
+        var rented = Interlocked.Exchange(ref buffer, null);
+        if (rented is not null)
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+}
+
 internal sealed class OcrFrameCache : IDisposable
 {
-    private Mat? previousFrame;
+    private byte[]? previousPixels;
+    private int previousLength;
+    private int previousWidth;
+    private int previousHeight;
+    private int previousStride;
     private string? previousLanguageTag;
     private OcrResult? previousResult;
 
-    public bool TryGet(Mat frame, string languageTag, out OcrResult result)
+    public bool TryGet(OcrFramePixels frame, string languageTag, out OcrResult result)
     {
-        if (previousFrame is not null
+        if (previousPixels is not null
             && previousResult is not null
             && string.Equals(previousLanguageTag, languageTag, StringComparison.OrdinalIgnoreCase)
-            && previousFrame.Rows == frame.Rows
-            && previousFrame.Cols == frame.Cols
-            && previousFrame.Type() == frame.Type()
-            && Cv2.Norm(previousFrame, frame, NormTypes.L1) == 0)
+            && previousWidth == frame.Width
+            && previousHeight == frame.Height
+            && previousStride == frame.Stride
+            && previousLength == frame.Length
+            && previousPixels.AsSpan(0, previousLength).SequenceEqual(frame.Buffer.AsSpan(0, frame.Length)))
         {
             result = previousResult;
             return true;
@@ -27,22 +68,37 @@ internal sealed class OcrFrameCache : IDisposable
         return false;
     }
 
-    public void Store(Mat frame, string languageTag, OcrResult result)
+    public void Store(OcrFramePixels frame, string languageTag, OcrResult result)
     {
-        var storedFrame = frame.Clone();
-        previousFrame?.Dispose();
-        previousFrame = storedFrame;
+        ReleasePreviousPixels();
+        previousPixels = frame.DetachBuffer();
+        previousLength = frame.Length;
+        previousWidth = frame.Width;
+        previousHeight = frame.Height;
+        previousStride = frame.Stride;
         previousLanguageTag = languageTag;
         previousResult = result;
     }
 
     public void Clear()
     {
-        previousFrame?.Dispose();
-        previousFrame = null;
+        ReleasePreviousPixels();
+        previousLength = 0;
+        previousWidth = 0;
+        previousHeight = 0;
+        previousStride = 0;
         previousLanguageTag = null;
         previousResult = null;
     }
 
     public void Dispose() => Clear();
+
+    private void ReleasePreviousPixels()
+    {
+        if (previousPixels is not null)
+        {
+            ArrayPool<byte>.Shared.Return(previousPixels);
+            previousPixels = null;
+        }
+    }
 }

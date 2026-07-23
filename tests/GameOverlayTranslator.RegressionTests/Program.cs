@@ -1506,24 +1506,55 @@ static Task TestPaddleOcrBitmapConversion()
     var second = mat.At<CvVec3b>(0, 1);
     Assert(first.Item0 == 10 && first.Item1 == 20 && first.Item2 == 30, "First BGR pixel changed during conversion.");
     Assert(second.Item0 == 40 && second.Item1 == 50 && second.Item2 == 60, "Second BGR pixel changed during conversion.");
+
+    var bgr32Bitmap = BitmapSource.Create(
+        2,
+        1,
+        96,
+        96,
+        PixelFormats.Bgr32,
+        null,
+        pixels,
+        8);
+    using var bgr32Mat = PaddleOcrEngine.BitmapSourceToMat(bgr32Bitmap);
+    Assert(
+        bgr32Mat.At<CvVec3b>(0, 0).Equals(first) && bgr32Mat.At<CvVec3b>(0, 1).Equals(second),
+        "A native GDI Bgr32 capture should preserve colors without an intermediate format conversion.");
     return Task.CompletedTask;
 }
 
 static Task TestPaddleOcrFrameCache()
 {
     using var cache = new OcrFrameCache();
-    using var original = new OpenCvSharp.Mat(2, 2, CvMatType.CV_8UC3, OpenCvSharp.Scalar.All(0));
+    var originalBitmap = BitmapSource.Create(
+        2,
+        2,
+        96,
+        96,
+        PixelFormats.Bgra32,
+        null,
+        new byte[16],
+        8);
+    using var original = PaddleOcrEngine.CaptureBitmapPixels(originalBitmap);
     var expected = new OcrResult("cached", []);
 
     Assert(!cache.TryGet(original, "en", out _), "An empty frame cache must miss.");
     cache.Store(original, "en", expected);
 
-    using var identical = original.Clone();
+    using var identical = PaddleOcrEngine.CaptureBitmapPixels(originalBitmap);
     Assert(cache.TryGet(identical, "en", out var reused), "An identical frame should reuse its OCR result.");
     Assert(ReferenceEquals(reused, expected), "The cached OCR result instance should be returned unchanged.");
 
-    using var changed = original.Clone();
-    changed.Set(0, 0, new CvVec3b(1, 0, 0));
+    var changedBitmap = BitmapSource.Create(
+        2,
+        2,
+        96,
+        96,
+        PixelFormats.Bgra32,
+        null,
+        new byte[] { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        8);
+    using var changed = PaddleOcrEngine.CaptureBitmapPixels(changedBitmap);
     Assert(!cache.TryGet(changed, "en", out _), "Any pixel change must invalidate the OCR result.");
     Assert(!cache.TryGet(identical, "ja", out _), "A language change must invalidate the OCR result.");
     return Task.CompletedTask;

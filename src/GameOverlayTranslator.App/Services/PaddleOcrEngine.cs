@@ -1,7 +1,9 @@
 using System;
+using System.Buffers;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -153,12 +155,13 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         {
             await EnsureModelLoadedAsync(GetModelKey(language.Tag), language.DisplayName, ct);
 
-            using var mat = BitmapSourceToMat(frame.Bitmap);
-            if (frameCache.TryGet(mat, language.Tag, out var cachedResult))
+            using var pixels = CaptureBitmapPixels(frame.Bitmap);
+            if (frameCache.TryGet(pixels, language.Tag, out var cachedResult))
             {
                 return cachedResult;
             }
 
+            using var mat = PixelsToMat(pixels);
             var ocr = currentOcr ?? throw new InvalidOperationException("PaddleOCR 모델이 준비되지 않았습니다.");
             var paddleResult = ocr.Run(mat);
 
@@ -185,7 +188,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
             {
                 Words = words
             };
-            frameCache.Store(mat, language.Tag, result);
+            frameCache.Store(pixels, language.Tag, result);
             return result;
         }
         finally
@@ -196,8 +199,14 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
 
     internal static Mat BitmapSourceToMat(BitmapSource bitmap)
     {
+        using var pixels = CaptureBitmapPixels(bitmap);
+        return PixelsToMat(pixels);
+    }
+
+    internal static OcrFramePixels CaptureBitmapPixels(BitmapSource bitmap)
+    {
         BitmapSource source = bitmap;
-        if (bitmap.Format != PixelFormats.Bgra32)
+        if (bitmap.Format != PixelFormats.Bgra32 && bitmap.Format != PixelFormats.Bgr32)
         {
             var converted = new FormatConvertedBitmap();
             converted.BeginInit();
@@ -208,13 +217,40 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
             source = converted;
         }
 
-        using var bgra = new Mat(source.PixelHeight, source.PixelWidth, MatType.CV_8UC4);
-        var stride = checked((int)bgra.Step());
-        source.CopyPixels(Int32Rect.Empty, bgra.Data, checked(stride * source.PixelHeight), stride);
+        var stride = checked(source.PixelWidth * 4);
+        var length = checked(stride * source.PixelHeight);
+        var buffer = ArrayPool<byte>.Shared.Rent(length);
+        try
+        {
+            source.CopyPixels(buffer, stride, 0);
+            return new OcrFramePixels(buffer, source.PixelWidth, source.PixelHeight, stride);
+        }
+        catch
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+            throw;
+        }
+    }
 
-        var bgr = new Mat();
-        Cv2.CvtColor(bgra, bgr, ColorConversionCodes.BGRA2BGR);
-        return bgr;
+    private static Mat PixelsToMat(OcrFramePixels pixels)
+    {
+        var pinned = GCHandle.Alloc(pixels.Buffer, GCHandleType.Pinned);
+        try
+        {
+            using var bgra = Mat.FromPixelData(
+                pixels.Height,
+                pixels.Width,
+                MatType.CV_8UC4,
+                pinned.AddrOfPinnedObject(),
+                pixels.Stride);
+            var bgr = new Mat();
+            Cv2.CvtColor(bgra, bgr, ColorConversionCodes.BGRA2BGR);
+            return bgr;
+        }
+        finally
+        {
+            pinned.Free();
+        }
     }
 
     public void Dispose()
