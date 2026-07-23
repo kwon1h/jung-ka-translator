@@ -15,6 +15,7 @@ public partial class ResultWindow : Window
     private const int MaxChatLines = 80;
     private readonly ObservableCollection<ChatResultItem> chatLines = [];
     private readonly Func<string, Task<string>> translateAndCopyChatAsync;
+    private string chatTargetLanguageName = "게임 언어";
 
     public ResultWindow(Func<string, Task<string>> translateAndCopyChatAsync)
     {
@@ -22,6 +23,18 @@ public partial class ResultWindow : Window
         InitializeComponent();
         ChatItems.ItemsSource = chatLines;
     }
+
+    public void SetChatTargetLanguage(string displayName)
+    {
+        chatTargetLanguageName = string.IsNullOrWhiteSpace(displayName) ? "게임 언어" : displayName;
+        ChatSendStatusText.Text = CreateChatSendHint(chatTargetLanguageName);
+    }
+
+    internal static string CreateChatSendHint(string targetLanguageName) =>
+        $"Enter로 {targetLanguageName} 번역 후 클립보드에 복사합니다. 줄바꿈은 Shift+Enter입니다.";
+
+    internal static string CreateChatSendProgress(string targetLanguageName) =>
+        $"채팅을 {targetLanguageName}(으)로 번역해서 클립보드에 복사하는 중...";
 
     public void Apply(SessionUpdate update)
     {
@@ -93,7 +106,7 @@ public partial class ResultWindow : Window
         }
 
         SetChatSendInProgress(true);
-        SetChatSendStatus("채팅을 중국어로 번역해서 클립보드에 복사하는 중...");
+        SetChatSendStatus(CreateChatSendProgress(chatTargetLanguageName));
         try
         {
             var copiedText = await translateAndCopyChatAsync(sourceText);

@@ -67,7 +67,7 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="ChatSendStatusText"
-                               Text="Enter로 중국어 번역 후 클립보드에 복사합니다. 줄바꿈은 Shift+Enter입니다."
+                               Text="Enter로 게임 언어 번역 후 클립보드에 복사합니다. 줄바꿈은 Shift+Enter입니다."
                                Foreground="#B7C6C2"
                                TextWrapping="Wrap"
                                VerticalAlignment="Center"

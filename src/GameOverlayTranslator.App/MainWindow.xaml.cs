@@ -1388,6 +1388,9 @@ public partial class MainWindow : Window
         }
         var ocrReady = IsOcrReady(ocrLanguage, out var ocrReadyText, out var ocrMissingText);
         var dictionaryReady = UserDictionaryStore.DefaultDictionary.Count > 0;
+        var usesDictionary = ocrLanguage is not null
+                             && targetLanguage is not null
+                             && LanguageCatalog.UsesChineseKoreanDictionary(ocrLanguage, targetLanguage);
 
         return
         [
@@ -1413,8 +1416,10 @@ public partial class MainWindow : Window
                 targetLanguage is null ? "번역 언어를 선택하세요." : translatorMissingText),
             new ReadinessItem(
                 ReadyDictionaryText,
-                dictionaryReady,
-                $"기본 사전 준비됨: {UserDictionaryStore.DefaultDictionary.Count}개 항목",
+                !usesDictionary || dictionaryReady,
+                usesDictionary
+                    ? $"기본 사전 준비됨: {UserDictionaryStore.DefaultDictionary.Count}개 항목"
+                    : "기본 사전 미적용: 중국어(간체) → 한국어 전용",
                 "기본 사전을 불러오지 못했습니다.")
         ];
     }
@@ -1753,6 +1758,8 @@ public partial class MainWindow : Window
         overlayWindow?.Close();
         overlayWindow = null;
         var result = EnsureResultWindow();
+        result.SetChatTargetLanguage(
+            (OcrLanguageComboBox.SelectedItem as OcrLanguage)?.DisplayName ?? "게임 언어");
         result.Show();
         result.Activate();
     }

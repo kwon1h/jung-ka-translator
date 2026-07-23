@@ -36,4 +36,10 @@ internal static class LanguageCatalog
         new("id", "인도네시아어"),
         new("tr", "튀르키예어")
     ];
+
+    public static bool UsesChineseKoreanDictionary(
+        OcrLanguage sourceLanguage,
+        TranslationLanguage targetLanguage) =>
+        sourceLanguage.Tag.StartsWith("zh-Hans", StringComparison.OrdinalIgnoreCase)
+        && targetLanguage.Code.StartsWith("ko", StringComparison.OrdinalIgnoreCase);
 }

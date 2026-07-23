@@ -65,11 +65,17 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         var totalTranslationRequests = 0;
         var totalTranslationCharacters = 0;
 
-        var dictExactEntries = options.UserDictionary
+        var applicableDictionary = LanguageCatalog.UsesChineseKoreanDictionary(
+            options.OcrLanguage,
+            options.TargetLanguage)
+            ? options.UserDictionary
+            : Array.Empty<UserDictEntry>();
+
+        var dictExactEntries = applicableDictionary
             .Select(entry => (Entry: entry, NormalizedSource: NormalizeForMatching(entry.Source)))
             .ToList();
 
-        var dictRegexes = options.UserDictionary
+        var dictRegexes = applicableDictionary
             .Select(entry => (Entry: entry, Regex: BuildFlexRegex(entry.Source)))
             .ToList();
 

@@ -21,12 +21,14 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Overlay defaults are readable", TestOverlayDefaults),
     ("PaddleOCR is the only OCR engine", TestPaddleOcrIsOnlyEngine),
     ("Translation target catalog includes major languages", TestTranslationTargetCatalog),
+    ("Quick-chat copy names the selected game language", TestResultWindowUsesSelectedGameLanguage),
     ("PaddleOCR bitmap conversion preserves BGR pixels", TestPaddleOcrBitmapConversion),
     ("PaddleOCR reuses only identical frames", TestPaddleOcrFrameCache),
     ("Translation session runs OCR off caller context", TestTranslationSessionRunsOcrOffCallerContext),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
     ("Dictionary screen line skips API", TestDictionaryOnlyScreenLineSkipsTranslation),
+    ("Chinese-Korean dictionary is not used for other targets", TestDictionaryIsScopedToChineseKorean),
     ("Rejected chat does not poison duplicate cache", TestRejectedChatDoesNotPoisonExactDuplicateCache),
     ("Repeated screen OCR uses cache", TestRepeatedScreenLineUsesCachedTranslation),
     ("Repeated chat translation uses cache", TestRepeatedChatLineUsesCachedTranslation),
@@ -310,6 +312,36 @@ static async Task TestRepeatedChatLineUsesCachedTranslation()
     Assert(translation.SingleRequests == 1, "Repeated chat request should call API once.");
     Assert(first.TranslatedText == second.TranslatedText, "Cached translation should match.");
     Assert((second.Usage?.OutboundRequestCount ?? -1) == 0, "Cache hit should report zero outbound requests.");
+}
+
+static async Task TestDictionaryIsScopedToChineseKorean()
+{
+    var translation = new CountingTranslationService();
+    var source = Chinese("4f60 597d 4e16 754c");
+    var ocr = new OcrResult(source, [new OcrLineResult(source, new Rect(0, 0, 120, 24))]);
+    var session = new TranslationSession(new FakeCaptureService(), new FakeOcrEngine(ocr), translation);
+    var options = CreateOptions(
+        TranslationMode.Screen,
+        [new UserDictEntry(source, "한국어 사전 결과", UserDictionaryStore.UserCategory)]) with
+    {
+        TargetLanguage = new TranslationLanguage("en-US", "English")
+    };
+
+    await RunSession(session, options);
+
+    Assert(translation.BatchRequests == 1, "A Chinese-Korean dictionary entry must not bypass an English translation request.");
+    Assert(translation.LastTargetLanguage == "en-US", "The selected non-Korean target language should reach the provider.");
+}
+
+static Task TestResultWindowUsesSelectedGameLanguage()
+{
+    Assert(
+        ResultWindow.CreateChatSendHint("일본어").Contains("일본어", StringComparison.Ordinal),
+        "The quick-chat hint should name the selected game language.");
+    Assert(
+        ResultWindow.CreateChatSendProgress("영어").Contains("영어", StringComparison.Ordinal),
+        "The quick-chat progress should name the selected game language.");
+    return Task.CompletedTask;
 }
 
 static Task TestTranslationTargetCatalog()
@@ -1727,6 +1759,7 @@ sealed class CountingTranslationService : ITranslationService
     public IReadOnlyList<string> LastSingleTexts => singleTexts;
     public IReadOnlyList<string> LastBatchTexts { get; private set; } = Array.Empty<string>();
     public string? LastBatchSourceLanguage { get; private set; }
+    public string? LastTargetLanguage { get; private set; }
 
     private readonly List<string> singleTexts = [];
 
@@ -1734,6 +1767,7 @@ sealed class CountingTranslationService : ITranslationService
     {
         SingleRequests++;
         singleTexts.Add(request.Text);
+        LastTargetLanguage = request.TargetLanguage;
         return Task.FromResult(new TranslationResult(request.Text, $"translated:{request.Text}", null));
     }
 
@@ -1742,6 +1776,7 @@ sealed class CountingTranslationService : ITranslationService
         BatchRequests++;
         LastBatchTexts = request.Texts.ToList();
         LastBatchSourceLanguage = request.SourceLanguage;
+        LastTargetLanguage = request.TargetLanguage;
         return Task.FromResult(new BatchTranslationResult(request.Texts.Select(text => $"translated:{text}").ToList()));
     }
 }
