@@ -53,17 +53,6 @@ public partial class MainWindow : Window
         public override string ToString() => Name;
     }
 
-    private sealed record OcrEngineChoice(OcrEngineType Engine, string Name)
-    {
-        public override string ToString() => Name;
-    }
-
-    private static readonly IReadOnlyList<OcrEngineChoice> OcrEngines =
-    [
-        new(OcrEngineType.Windows, "Windows OCR (기본)"),
-        new(OcrEngineType.PaddleOCR, "PaddleOCR (OpenVINO)")
-    ];
-
     private sealed record ColorChoice(string Hex, string Name)
     {
         public Brush HexBrush { get; } = CreateFrozenBrush(Hex);
@@ -143,9 +132,7 @@ public partial class MainWindow : Window
     ];
     private readonly IWindowSource windowSource = new Win32WindowSource();
     private readonly ICaptureService dictionaryCaptureService = new WindowCaptureService();
-    private readonly WindowsOcrEngine windowsOcrEngine = new();
     private readonly PaddleOcrEngine paddleOcrEngine = new();
-    private readonly IOcrEngine delegatingOcrEngine;
     private readonly IOcrEngine dictionaryOcrEngine;
     private static readonly CaptureRegion FullWindowRegion = new(0, 0, 1, 1);
     private readonly ApiKeyStore apiKeyStore = new();
@@ -195,8 +182,7 @@ public partial class MainWindow : Window
         settings = settingsStore.Load();
         InitializeComponent();
         SourceInitialized += MainWindowSourceInitialized;
-        delegatingOcrEngine = new DelegatingOcrEngine(() => settings.OcrEngineType, windowsOcrEngine, paddleOcrEngine);
-        dictionaryOcrEngine = delegatingOcrEngine;
+        dictionaryOcrEngine = paddleOcrEngine;
         var delegator = new TranslationServiceDelegator(
             httpClient,
             () => ApiKeyPasswordBox.Password,
@@ -204,11 +190,8 @@ public partial class MainWindow : Window
         );
         chatTranslationService = delegator;
         var cachingTranslationService = new CachingTranslationService(delegator, new ScreenTranslationCacheStore());
-        session = new TranslationSession(new WindowCaptureService(requireTargetForeground: true), delegatingOcrEngine, cachingTranslationService);
+        session = new TranslationSession(new WindowCaptureService(requireTargetForeground: true), paddleOcrEngine, cachingTranslationService);
         session.Updated += SessionUpdated;
-
-        OcrEngineComboBox.ItemsSource = OcrEngines;
-        OcrEngineComboBox.SelectedItem = OcrEngines.FirstOrDefault(e => e.Engine == settings.OcrEngineType) ?? OcrEngines[0];
 
         OcrLanguageComboBox.ItemsSource = OcrLanguages;
         var selectedOcr = OcrLanguages.FirstOrDefault(l => string.Equals(l.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase)) ?? OcrLanguages[0];
@@ -697,18 +680,6 @@ public partial class MainWindow : Window
         {
             settings = settings with { OcrLanguageTag = ocrLanguage.Tag };
             settingsStore.Save(settings);
-            UpdateStartReadiness();
-        }
-    }
-
-    private void OcrEngineSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-    {
-        if (settings == null) return;
-        if (OcrEngineComboBox.SelectedItem is OcrEngineChoice choice)
-        {
-            settings = settings with { OcrEngineType = choice.Engine };
-            settingsStore.Save(settings);
-            SetStatus($"OCR 엔진이 {choice.Name}으로 변경되었습니다.");
             UpdateStartReadiness();
         }
     }
@@ -1326,17 +1297,9 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (settings.OcrEngineType == OcrEngineType.PaddleOCR)
-        {
-            readyText = $"OCR 준비됨: PaddleOCR / {ocrLanguage.DisplayName}";
-            missingText = string.Empty;
-            return true;
-        }
-
-        var available = Windows.Media.Ocr.OcrEngine.TryCreateFromLanguage(new Windows.Globalization.Language(ocrLanguage.Tag)) is not null;
-        readyText = $"OCR 준비됨: Windows OCR / {ocrLanguage.DisplayName}";
-        missingText = $"{ocrLanguage.DisplayName} Windows OCR 언어 팩을 설치하세요.";
-        return available;
+        readyText = $"OCR 준비됨: PaddleOCR / {ocrLanguage.DisplayName}";
+        missingText = string.Empty;
+        return true;
     }
 
     private bool IsTranslatorReady(out string missingText)
@@ -1552,10 +1515,7 @@ public partial class MainWindow : Window
             resultWindow.Close();
         }
         overlayWindow?.Close();
-        if (delegatingOcrEngine is IDisposable disposableEngine)
-        {
-            disposableEngine.Dispose();
-        }
+        paddleOcrEngine.Dispose();
     }
 
     private void SetStatus(string status, bool isError = false)

@@ -721,7 +721,12 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
                                         <TextBlock Text="OCR 엔진" Style="{StaticResource FieldLabelStyle}" />
-                                        <ComboBox x:Name="OcrEngineComboBox" SelectionChanged="OcrEngineSelectionChanged" />
+                                        <Border Height="40" Padding="12,0" BorderBrush="#DDE3EC" BorderThickness="1" CornerRadius="7" Background="White">
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <TextBlock Text="PaddleOCR (OpenVINO)" FontWeight="SemiBold" Foreground="#273142" />
+                                                <TextBlock Text=" · Windows 중국어 언어 팩 불필요" Margin="5,0,0,0" Foreground="#6B7280" FontSize="11" />
+                                            </StackPanel>
+                                        </Border>
                                     </StackPanel>
                                     <StackPanel Grid.Column="2">
                                         <TextBlock Text="OCR 언어" Style="{StaticResource FieldLabelStyle}" />

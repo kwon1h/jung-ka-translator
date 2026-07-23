@@ -13,7 +13,6 @@ public enum TranslationServiceType
 
 public enum OcrEngineType
 {
-    Windows,
     PaddleOCR
 }
 
@@ -55,7 +54,7 @@ public sealed record AppSettings(
     string TargetLanguageCode = "ko",
     TranslationMode TranslationMode = TranslationMode.Chat,
     TranslationServiceType TranslatorType = TranslationServiceType.DeepL,
-    OcrEngineType OcrEngineType = OcrEngineType.Windows,
+    OcrEngineType OcrEngineType = OcrEngineType.PaddleOCR,
     string GoogleWebAppUrl = "",
     bool ShowOverlayInScreenShare = false,
     int CaptureGeometryVersion = 2,
@@ -145,7 +144,7 @@ public sealed class AppSettingsStore
                         SimilarityCacheSeconds = settings.SimilarityCacheSeconds < 1 ? 12 : settings.SimilarityCacheSeconds,
                         OcrLanguageTag = string.IsNullOrWhiteSpace(settings.OcrLanguageTag) ? "zh-Hans" : settings.OcrLanguageTag,
                         TargetLanguageCode = string.IsNullOrWhiteSpace(settings.TargetLanguageCode) ? "ko" : settings.TargetLanguageCode,
-                        OcrEngineType = settings.OcrEngineType,
+                        OcrEngineType = OcrEngineType.PaddleOCR,
                         GoogleWebAppUrl = settings.GoogleWebAppUrl ?? string.Empty,
                         ShowOverlayInScreenShare = settings.ShowOverlayInScreenShare,
                         OverlayDurationSeconds = settings.OverlayDurationSeconds is < 0.1 or > 5

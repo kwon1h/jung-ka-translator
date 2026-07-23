@@ -17,6 +17,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Concatenated chat does not translate embedded speaker", TestConcatenatedChatDoesNotTranslateEmbeddedSpeaker),
     ("User dictionary CSV round trip", TestUserDictionaryCsvRoundTrip),
     ("Overlay defaults are readable", TestOverlayDefaults),
+    ("PaddleOCR is the only OCR engine", TestPaddleOcrIsOnlyEngine),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
     ("Dictionary screen line skips API", TestDictionaryOnlyScreenLineSkipsTranslation),
@@ -740,6 +741,14 @@ static async Task TestChineseRatioBypassesChatFilter()
 
     Assert(translation.BatchRequests == 1, "Should bypass quality filter and request translation for Chinese chat line.");
     Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated), "Expected translated diagnostic.");
+}
+
+static Task TestPaddleOcrIsOnlyEngine()
+{
+    Assert(Enum.GetValues<OcrEngineType>().SequenceEqual([OcrEngineType.PaddleOCR]), "PaddleOCR must be the only selectable OCR engine.");
+    Assert(new AppSettings().OcrEngineType == OcrEngineType.PaddleOCR, "New settings must default to PaddleOCR.");
+    Assert(typeof(AppSettingsStore).Assembly.GetType("GameOverlayTranslator.App.Services.WindowsOcrEngine") is null, "Windows OCR implementation must not ship.");
+    return Task.CompletedTask;
 }
 
 static async Task TestEnglishOnlyScreenLinesAreHidden()
