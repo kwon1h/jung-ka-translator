@@ -666,7 +666,7 @@
                                                 <RowDefinition Height="30" />
                                                 <RowDefinition Height="30" />
                                             </Grid.RowDefinitions>
-                                            <TextBlock Text="OCR" Foreground="#6B7280" VerticalAlignment="Center" />
+                                            <TextBlock Text="게임 언어" Foreground="#6B7280" VerticalAlignment="Center" />
                                             <TextBlock Grid.Column="1" Text="{Binding SelectedItem, ElementName=OcrLanguageComboBox}" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" />
                                             <TextBlock Grid.Row="1" Text="번역" Foreground="#6B7280" VerticalAlignment="Center" />
                                             <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedItem, ElementName=TargetLanguageComboBox}" FontWeight="SemiBold" HorizontalAlignment="Right" VerticalAlignment="Center" />
@@ -741,7 +741,7 @@
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="300" />
+                                                <ColumnDefinition Width="360" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <StackPanel VerticalAlignment="Center">

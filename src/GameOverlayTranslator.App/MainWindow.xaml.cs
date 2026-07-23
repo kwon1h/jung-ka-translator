@@ -2673,7 +2673,7 @@ public partial class MainWindow : Window
 
         if (OcrLanguageComboBox.SelectedItem is not OcrLanguage ocrLanguage)
         {
-            SetStatus("OCR 언어를 먼저 선택하세요.", true);
+            SetStatus("게임 언어를 먼저 선택하세요.", true);
             return;
         }
 

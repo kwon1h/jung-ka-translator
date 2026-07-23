@@ -618,6 +618,12 @@ static Task TestOcrModelCatalog()
     Assert(modelKeys.Contains("cyrillic"), "The Cyrillic download option is missing.");
     Assert(modelKeys.Count == LanguageCatalog.OcrModelPackages.Count, "OCR download model keys must be unique.");
     Assert(
+        LanguageCatalog.OcrModelPackages.Single(model => model.Key == "latin").DisplayName.Contains("독일어"),
+        "Grouped model options should name representative game languages.");
+    Assert(
+        LanguageCatalog.OcrModelPackages.Single(model => model.Key == "cyrillic").DisplayName.Contains("우크라이나어"),
+        "Grouped model options should make their included languages clear.");
+    Assert(
         LanguageCatalog.OcrLanguages.All(language => modelKeys.Contains(PaddleOcrEngine.GetModelKey(language.Tag))),
         "Every game language must map to a downloadable OCR model package.");
 
