@@ -2275,11 +2275,32 @@ static Task TestOverlayTracksTargetZOrderChanges()
 {
     var target = (nint)42;
     Assert(
-        OverlayWindow.HasCompleteTargetTracking((nint)1, (nint)2),
-        "Both foreground and reorder hooks are required for complete z-order tracking.");
+        OverlayWindow.HasCompleteTargetTracking((nint)1, (nint)2, (nint)3),
+        "Foreground, reorder, and location hooks are required for complete overlay tracking.");
     Assert(
-        !OverlayWindow.HasCompleteTargetTracking((nint)1, nint.Zero),
+        !OverlayWindow.HasCompleteTargetTracking((nint)1, (nint)2, nint.Zero),
         "A partial hook installation must be retried rather than treated as complete.");
+    Assert(
+        OverlayWindow.ShouldRepositionForTrackedEvent(
+            NativeMethods.EventObjectLocationChange,
+            target,
+            NativeMethods.ObjIdWindow,
+            target),
+        "Moving or resizing the game window should reposition the overlay.");
+    Assert(
+        !OverlayWindow.ShouldRepositionForTrackedEvent(
+            NativeMethods.EventObjectLocationChange,
+            (nint)99,
+            NativeMethods.ObjIdWindow,
+            target),
+        "Location changes from another window must not move the overlay.");
+    Assert(
+        !OverlayWindow.ShouldRepositionForTrackedEvent(
+            NativeMethods.EventObjectLocationChange,
+            target,
+            objectId: 1,
+            targetHwnd: target),
+        "Child-object layout events must not trigger a full overlay reposition.");
     Assert(
         OverlayWindow.ReorderHookProcessId == 0,
         "Top-level z-order changes must be observed globally because the parent window raises reorder events.");

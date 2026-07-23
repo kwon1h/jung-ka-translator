@@ -38,8 +38,11 @@ public partial class OverlayWindow : Window
     private readonly NativeMethods.WinEventProc targetWindowEventProc;
     private nint targetForegroundHook;
     private nint targetReorderHook;
+    private nint targetLocationHook;
     private nint trackedTargetHandle;
-    private int targetPromotionPending;
+    private CapturableWindow? trackedTargetWindow;
+    private CaptureRegion trackedTargetRegion;
+    private int targetEventPending;
 
     public TranslationMode CurrentMode { get; set; } = TranslationMode.Chat;
     public TimeSpan DisplayDuration { get; set; } = TimeSpan.FromSeconds(AppSettingsDefaults.DefaultOverlayDurationSeconds);
@@ -159,17 +162,24 @@ public partial class OverlayWindow : Window
         }
     }
 
-    public void TrackTargetTopmost(CapturableWindow window)
+    public void TrackTarget(CapturableWindow window, CaptureRegion region)
     {
         if (trackedTargetHandle == window.Handle
-            && HasCompleteTargetTracking(targetForegroundHook, targetReorderHook))
+            && HasCompleteTargetTracking(targetForegroundHook, targetReorderHook, targetLocationHook))
         {
-            EnsureAboveTargetWhenForeground(window.Handle);
+            if (trackedTargetRegion != region)
+            {
+                trackedTargetRegion = region;
+                PositionOver(window, region);
+            }
             return;
         }
 
         StopTrackingTargetTopmost();
         trackedTargetHandle = window.Handle;
+        trackedTargetWindow = window;
+        trackedTargetRegion = region;
+        PositionOver(window, region);
         NativeMethods.GetWindowThreadProcessId(window.Handle, out var processId);
         if (processId == 0)
         {
@@ -194,15 +204,23 @@ public partial class OverlayWindow : Window
             ReorderHookProcessId,
             0,
             flags);
+        targetLocationHook = NativeMethods.SetWinEventHook(
+            NativeMethods.EventObjectLocationChange,
+            NativeMethods.EventObjectLocationChange,
+            nint.Zero,
+            targetWindowEventProc,
+            processId,
+            0,
+            flags);
 
-        if (targetForegroundHook == nint.Zero || targetReorderHook == nint.Zero)
+        if (!HasCompleteTargetTracking(targetForegroundHook, targetReorderHook, targetLocationHook))
         {
-            AppLog.Write("One or more game z-order event hooks could not be installed.");
+            AppLog.Write("One or more game overlay tracking hooks could not be installed.");
             ReleaseTargetEventHooks();
         }
         else
         {
-            AppLog.Write("Game foreground and global z-order tracking is active for the translation overlay.");
+            AppLog.Write("Game location, foreground, and global z-order tracking is active for the translation overlay.");
         }
 
         EnsureAboveTargetWhenForeground(window.Handle);
@@ -211,6 +229,8 @@ public partial class OverlayWindow : Window
     public void StopTrackingTargetTopmost()
     {
         trackedTargetHandle = nint.Zero;
+        trackedTargetWindow = null;
+        trackedTargetRegion = default;
         ReleaseTargetEventHooks();
     }
 
@@ -233,10 +253,33 @@ public partial class OverlayWindow : Window
             }
             targetReorderHook = nint.Zero;
         }
+
+        if (targetLocationHook != nint.Zero)
+        {
+            if (!NativeMethods.UnhookWinEvent(targetLocationHook))
+            {
+                AppLog.Write("Failed to remove the game location event hook.");
+            }
+            targetLocationHook = nint.Zero;
+        }
     }
 
-    internal static bool HasCompleteTargetTracking(nint foregroundHook, nint reorderHook) =>
-        foregroundHook != nint.Zero && reorderHook != nint.Zero;
+    internal static bool HasCompleteTargetTracking(
+        nint foregroundHook,
+        nint reorderHook,
+        nint locationHook) =>
+        foregroundHook != nint.Zero
+        && reorderHook != nint.Zero
+        && locationHook != nint.Zero;
+
+    internal static bool ShouldRepositionForTrackedEvent(
+        uint eventType,
+        nint eventHwnd,
+        int objectId,
+        nint targetHwnd) =>
+        eventType == NativeMethods.EventObjectLocationChange
+        && eventHwnd == targetHwnd
+        && objectId == NativeMethods.ObjIdWindow;
 
     internal static bool ShouldPromoteForTrackedEvent(
         uint eventType,
@@ -298,14 +341,19 @@ public partial class OverlayWindow : Window
         uint eventTime)
     {
         var observedTarget = trackedTargetHandle;
-        if (observedTarget == nint.Zero
-            || eventType == NativeMethods.EventSystemForeground && hwnd != observedTarget
-            || eventType != NativeMethods.EventSystemForeground
-               && eventType != NativeMethods.EventObjectReorder
+        var shouldReposition = ShouldRepositionForTrackedEvent(
+            eventType,
+            hwnd,
+            objectId,
+            observedTarget);
+        var shouldCheckZOrder =
+            eventType == NativeMethods.EventSystemForeground && hwnd == observedTarget
             || eventType == NativeMethods.EventObjectReorder
-               && NativeMethods.GetForegroundWindow() != observedTarget
+               && NativeMethods.GetForegroundWindow() == observedTarget;
+        if (observedTarget == nint.Zero
+            || !shouldReposition && !shouldCheckZOrder
             || Dispatcher.HasShutdownStarted
-            || Interlocked.CompareExchange(ref targetPromotionPending, 1, 0) != 0)
+            || Interlocked.CompareExchange(ref targetEventPending, 1, 0) != 0)
         {
             return;
         }
@@ -317,6 +365,11 @@ public partial class OverlayWindow : Window
                 if (trackedTargetHandle != observedTarget)
                 {
                     return;
+                }
+
+                if (shouldReposition && trackedTargetWindow is { } targetWindow)
+                {
+                    PositionOver(targetWindow, trackedTargetRegion);
                 }
 
                 var overlayHwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
@@ -332,7 +385,10 @@ public partial class OverlayWindow : Window
                         hwnd,
                         observedTarget,
                         foregroundHwnd,
-                        overlayIsAboveTarget))
+                        overlayIsAboveTarget)
+                    || shouldReposition
+                       && foregroundHwnd == observedTarget
+                       && !overlayIsAboveTarget)
                 {
                     EnsureTopmostWithoutActivation();
                     AppLog.Write($"Restored translation overlay z-order after WinEvent 0x{eventType:X4}.");
@@ -340,7 +396,7 @@ public partial class OverlayWindow : Window
             }
             finally
             {
-                Interlocked.Exchange(ref targetPromotionPending, 0);
+                Interlocked.Exchange(ref targetEventPending, 0);
             }
         }
 

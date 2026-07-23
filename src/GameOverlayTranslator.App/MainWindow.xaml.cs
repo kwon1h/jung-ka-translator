@@ -1803,9 +1803,8 @@ public partial class MainWindow : Window
         {
             var region = activeSessionRegion ?? SelectedRegion ?? FullWindowRegion;
             mode = activeSessionMode ?? settings.TranslationMode;
-            overlayWindow.PositionOver(window, region);
             overlayWindow.CurrentMode = mode.Value;
-            overlayWindow.TrackTargetTopmost(window);
+            overlayWindow.TrackTarget(window, region);
         }
 
         var overlayUpdate = mode is { } overlayMode
@@ -1975,7 +1974,6 @@ public partial class MainWindow : Window
             overlayWindow ??= new OverlayWindow();
             overlayWindow.ClearAll();
             overlayWindow.CurrentMode = mode;
-            overlayWindow.PositionOver(window, region);
             overlayWindow.FontFamily = new FontFamily(settings.FontFamily);
             overlayWindow.FontSize = settings.FontSize;
             overlayWindow.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(settings.TextColor));
@@ -1985,9 +1983,9 @@ public partial class MainWindow : Window
             overlayWindow.Opacity = settings.OverlayOpacity;
             overlayWindow.DisplayDuration = TimeSpan.FromSeconds(settings.OverlayDurationSeconds);
             overlayWindow.ExcludeFromCapture = !settings.ShowOverlayInScreenShare;
+            overlayWindow.TrackTarget(window, region);
             overlayWindow.Show();
             overlayWindow.UpdateDisplayAffinity();
-            overlayWindow.TrackTargetTopmost(window);
             return;
         }
 

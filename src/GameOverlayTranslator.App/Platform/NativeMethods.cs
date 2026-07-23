@@ -99,8 +99,10 @@ internal static class NativeMethods
     internal const uint SwpShowWindow = 0x0040;
     internal const uint EventSystemForeground = 0x0003;
     internal const uint EventObjectReorder = 0x8004;
+    internal const uint EventObjectLocationChange = 0x800B;
     internal const uint WinEventOutOfContext = 0x0000;
     internal const uint WinEventSkipOwnProcess = 0x0002;
+    internal const int ObjIdWindow = 0;
     internal const int SwMinimize = 6;
     internal const int SwShowNoActivate = 4;
 
