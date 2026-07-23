@@ -1072,6 +1072,7 @@
                                         <Button Grid.Column="2" Content="삭제" Click="DeleteApiKey" Margin="8,0,0,0" Width="68" Style="{StaticResource DangerButtonStyle}" />
                                     </Grid>
                                     <TextBlock Text="키 종류를 자동 판별하며, 인증 키는 로컬 PC에 안전하게 암호화되어 저장됩니다." Foreground="#6B7280" FontSize="11" Margin="0,8,0,0" />
+                                    <TextBlock Text="DeepL이 지원하지 않는 게임 언어는 Google 번역으로 자동 전환됩니다." Foreground="#6B7280" FontSize="11" Margin="0,3,0,0" />
                                 </StackPanel>
 
                                 <StackPanel x:Name="GoogleUnofficialSettingsPanel" Visibility="Collapsed">

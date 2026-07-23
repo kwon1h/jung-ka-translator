@@ -28,7 +28,7 @@ public sealed class TranslationServiceDelegator : ITranslationService
     public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
     {
         var settings = settingsProvider();
-        ITranslationService service = settings.TranslatorType switch
+        ITranslationService service = ResolveEffectiveTranslator(settings.TranslatorType, request.SourceLanguage) switch
         {
             TranslationServiceType.GoogleUnofficial => googleUnofficialService,
             TranslationServiceType.GoogleWebApp => googleWebAppService,
@@ -40,7 +40,7 @@ public sealed class TranslationServiceDelegator : ITranslationService
     public Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
     {
         var settings = settingsProvider();
-        ITranslationService service = settings.TranslatorType switch
+        ITranslationService service = ResolveEffectiveTranslator(settings.TranslatorType, request.SourceLanguage) switch
         {
             TranslationServiceType.GoogleUnofficial => googleUnofficialService,
             TranslationServiceType.GoogleWebApp => googleWebAppService,
@@ -48,4 +48,12 @@ public sealed class TranslationServiceDelegator : ITranslationService
         };
         return service.TranslateBatchAsync(request, ct);
     }
+
+    internal static TranslationServiceType ResolveEffectiveTranslator(
+        TranslationServiceType selectedTranslator,
+        string? sourceLanguage) =>
+        selectedTranslator == TranslationServiceType.DeepL
+        && !DeepLTranslationService.SupportsSourceLanguage(sourceLanguage)
+            ? TranslationServiceType.GoogleUnofficial
+            : selectedTranslator;
 }

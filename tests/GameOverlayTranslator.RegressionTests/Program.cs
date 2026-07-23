@@ -71,6 +71,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Translation connection test uses a cross-language probe", TestTranslationConnectionProbe),
     ("Translation connection test rejects empty results", TestTranslationConnectionRejectsEmptyResult),
     ("DeepL selects Free and Pro endpoints from the key", TestDeepLEndpointSelection),
+    ("DeepL normalizes source variants and omits unsupported sources", TestDeepLSourceLanguageHandling),
+    ("DeepL unsupported OCR languages fall back to Google", TestDeepLUnsupportedSourceFallback),
     ("Google batch translation posts long text once", TestGoogleBatchTranslationUsesPost),
     ("Google Web App fallback is bounded and ordered", TestGoogleWebAppFallbackConcurrency),
     ("Spaced-language screen segment keeps phrases", TestSpacedLanguageScreenSegmentKeepsPhrases),
@@ -1169,6 +1171,62 @@ static async Task TestDeepLEndpointSelection()
     Assert(
         handler.AuthorizationParameters.SequenceEqual(["free-key:fx", "pro-key"]),
         "DeepL authentication keys should be trimmed and sent in the authorization header.");
+    Assert(
+        handler.RequestBodies.All(body => body.Contains("source_lang=EN", StringComparison.Ordinal)),
+        "Supported source languages should be sent explicitly to DeepL.");
+}
+
+static async Task TestDeepLSourceLanguageHandling()
+{
+    var handler = new DeepLEndpointHandler();
+    using var client = new HttpClient(handler);
+    var service = new DeepLTranslationService(client, () => "test-key");
+
+    await service.TranslateAsync(
+        new TranslationRequest("नमस्ते", "ko", "hi"),
+        CancellationToken.None);
+    await service.TranslateBatchAsync(
+        new BatchTranslationRequest(["測試"], "ko", "zh-Hant"),
+        CancellationToken.None);
+
+    Assert(
+        !handler.RequestBodies[0].Contains("source_lang=", StringComparison.Ordinal),
+        "An unsupported DeepL source language should be omitted instead of causing a bad request.");
+    Assert(
+        handler.RequestBodies[1].Contains("source_lang=ZH", StringComparison.Ordinal),
+        "Chinese script variants should use DeepL's supported ZH source code.");
+}
+
+static async Task TestDeepLUnsupportedSourceFallback()
+{
+    Assert(
+        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "en")
+        == TranslationServiceType.DeepL,
+        "A DeepL-supported source language should keep the selected provider.");
+    Assert(
+        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "hi")
+        == TranslationServiceType.GoogleUnofficial,
+        "A DeepL-unsupported OCR language should automatically use the broad-language fallback.");
+    Assert(
+        TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.GoogleWebApp, "hi")
+        == TranslationServiceType.GoogleWebApp,
+        "Explicitly selected non-DeepL providers must not be changed.");
+
+    var handler = new ProviderRoutingHandler();
+    using var client = new HttpClient(handler);
+    var settings = new AppSettings(TranslatorType: TranslationServiceType.DeepL);
+    var service = new TranslationServiceDelegator(client, () => "test-key", () => settings);
+
+    await service.TranslateAsync(
+        new TranslationRequest("नमस्ते", "ko", "hi"),
+        CancellationToken.None);
+    await service.TranslateBatchAsync(
+        new BatchTranslationRequest(["hello"], "ko", "en"),
+        CancellationToken.None);
+
+    Assert(
+        handler.RequestHosts.SequenceEqual(["translate.googleapis.com", "api.deepl.com"]),
+        "Provider routing should use Google only for the unsupported source and retain DeepL otherwise.");
 }
 
 static async Task TestGoogleBatchTranslationUsesPost()
@@ -2279,12 +2337,34 @@ sealed class DeepLEndpointHandler : HttpMessageHandler
 {
     public List<Uri> RequestUris { get; } = [];
     public List<string> AuthorizationParameters { get; } = [];
+    public List<string> RequestBodies { get; } = [];
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         RequestUris.Add(request.RequestUri ?? throw new InvalidOperationException("DeepL request URI is missing."));
         AuthorizationParameters.Add(request.Headers.Authorization?.Parameter ?? string.Empty);
+        RequestBodies.Add(await (request.Content?.ReadAsStringAsync(cancellationToken)
+            ?? Task.FromResult(string.Empty)));
         const string json = """{"translations":[{"detected_source_language":"EN","text":"translated"}]}""";
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        };
+    }
+}
+
+sealed class ProviderRoutingHandler : HttpMessageHandler
+{
+    public List<string> RequestHosts { get; } = [];
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var host = request.RequestUri?.Host
+            ?? throw new InvalidOperationException("Translation request URI is missing.");
+        RequestHosts.Add(host);
+        var json = host == "translate.googleapis.com"
+            ? """[[["translated","source",null,null]],null,"hi"]"""
+            : """{"translations":[{"detected_source_language":"EN","text":"translated"}]}""";
         return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
         {
             Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")

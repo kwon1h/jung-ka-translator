@@ -11,6 +11,12 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
 {
     private const string FreeTranslateEndpoint = "https://api-free.deepl.com/v2/translate";
     private const string ProTranslateEndpoint = "https://api.deepl.com/v2/translate";
+    private static readonly HashSet<string> SupportedSourceLanguages = new(StringComparer.Ordinal)
+    {
+        "AR", "BG", "CS", "DA", "DE", "EL", "EN", "ES", "ET", "FI", "FR", "HE",
+        "HU", "ID", "IT", "JA", "KO", "LT", "LV", "NB", "NL", "PL", "PT", "RO",
+        "RU", "SK", "SL", "SV", "TH", "TR", "UK", "VI", "ZH"
+    };
 
     public async Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
     {
@@ -61,10 +67,11 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
         {
             parameters.Add(new("text", text));
         }
-        parameters.Add(new("target_lang", NormalizeLanguageCode(request.TargetLanguage)));
-        if (!string.IsNullOrWhiteSpace(request.SourceLanguage))
+        parameters.Add(new("target_lang", NormalizeTargetLanguageCode(request.TargetLanguage)));
+        var sourceLanguage = NormalizeSourceLanguageCode(request.SourceLanguage);
+        if (sourceLanguage is not null)
         {
-            parameters.Add(new("source_lang", NormalizeLanguageCode(request.SourceLanguage)));
+            parameters.Add(new("source_lang", sourceLanguage));
         }
         
         message.Content = new FormUrlEncodedContent(parameters);
@@ -93,23 +100,44 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
             ? FreeTranslateEndpoint
             : ProTranslateEndpoint;
 
+    internal static bool SupportsSourceLanguage(string? languageCode) =>
+        string.IsNullOrWhiteSpace(languageCode) || NormalizeSourceLanguageCode(languageCode) is not null;
+
     private static IEnumerable<KeyValuePair<string, string>> BuildParameters(TranslationRequest request)
     {
         yield return new("text", request.Text);
-        yield return new("target_lang", NormalizeLanguageCode(request.TargetLanguage));
-        if (!string.IsNullOrWhiteSpace(request.SourceLanguage))
+        yield return new("target_lang", NormalizeTargetLanguageCode(request.TargetLanguage));
+        var sourceLanguage = NormalizeSourceLanguageCode(request.SourceLanguage);
+        if (sourceLanguage is not null)
         {
-            yield return new("source_lang", NormalizeLanguageCode(request.SourceLanguage));
+            yield return new("source_lang", sourceLanguage);
         }
     }
 
-    private static string NormalizeLanguageCode(string languageCode) =>
+    private static string NormalizeTargetLanguageCode(string languageCode) =>
         languageCode.Trim().ToLowerInvariant() switch
         {
             "ko" => "KO",
             "zh-cn" or "zh-hans" => "ZH-HANS",
             _ => languageCode.Trim().ToUpperInvariant()
         };
+
+    internal static string? NormalizeSourceLanguageCode(string? languageCode)
+    {
+        if (string.IsNullOrWhiteSpace(languageCode))
+        {
+            return null;
+        }
+
+        var normalized = languageCode.Trim().ToLowerInvariant() switch
+        {
+            "zh-cn" or "zh-hans" or "zh-hant" => "ZH",
+            "en-us" or "en-gb" => "EN",
+            "pt-br" or "pt-pt" => "PT",
+            var code => code.ToUpperInvariant()
+        };
+        return SupportedSourceLanguages.Contains(normalized) ? normalized : null;
+    }
 
     private static string ReadError(string json)
     {
