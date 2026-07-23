@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Threading;
@@ -32,6 +33,11 @@ public partial class OverlayWindow : Window
     private readonly ConcurrentDictionary<string, CancellationTokenSource> activeTimers = new();
     private CancellationTokenSource? screenTimer;
     private bool chatSnapshotMode;
+    private readonly NativeMethods.WinEventProc targetWindowEventProc;
+    private nint targetForegroundHook;
+    private nint targetReorderHook;
+    private nint trackedTargetHandle;
+    private int targetPromotionPending;
 
     public TranslationMode CurrentMode { get; set; } = TranslationMode.Chat;
     public TimeSpan DisplayDuration { get; set; } = TimeSpan.FromSeconds(AppSettingsDefaults.DefaultOverlayDurationSeconds);
@@ -72,6 +78,7 @@ public partial class OverlayWindow : Window
         OverlayItems.ItemsSource = lines;
         activeCanvas = ScreenOverlayCanvas1;
         inactiveCanvas = ScreenOverlayCanvas2;
+        targetWindowEventProc = TargetWindowEvent;
     }
 
     public bool ExcludeFromCapture { get; set; } = true;
@@ -90,7 +97,7 @@ public partial class OverlayWindow : Window
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         if (hwnd == IntPtr.Zero) return;
 
-        uint affinity = ExcludeFromCapture ? Platform.NativeMethods.WDA_EXCLUDEFROMCAPTURE : 0;
+        var affinity = CaptureAffinityFor(ExcludeFromCapture);
         if (!Platform.NativeMethods.SetWindowDisplayAffinity(hwnd, affinity))
         {
             AppLog.Write($"Failed to set window display affinity to {affinity}.");
@@ -110,6 +117,229 @@ public partial class OverlayWindow : Window
         Top = (rect.Top + pixels.Y) / dpiScale;
         Width = pixels.Width / dpiScale;
         Height = pixels.Height / dpiScale;
+    }
+
+    internal static uint CaptureAffinityFor(bool excludeFromCapture) =>
+        excludeFromCapture ? NativeMethods.WDA_EXCLUDEFROMCAPTURE : 0;
+
+    internal const uint StableTopmostFlags =
+        NativeMethods.SwpNoMove
+        | NativeMethods.SwpNoSize
+        | NativeMethods.SwpNoActivate;
+
+    internal static nint StableTopmostInsertAfter => NativeMethods.HwndTopmost;
+
+    internal const uint ReorderHookProcessId = 0;
+
+    public void EnsureTopmostWithoutActivation()
+    {
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (hwnd == nint.Zero)
+        {
+            return;
+        }
+
+        if (!NativeMethods.SetWindowPos(
+                hwnd,
+                StableTopmostInsertAfter,
+                0,
+                0,
+                0,
+                0,
+                StableTopmostFlags))
+        {
+            AppLog.Write("Failed to keep the translation overlay above the game window.");
+        }
+    }
+
+    public void TrackTargetTopmost(CapturableWindow window)
+    {
+        if (trackedTargetHandle == window.Handle
+            && HasCompleteTargetTracking(targetForegroundHook, targetReorderHook))
+        {
+            EnsureAboveTargetWhenForeground(window.Handle);
+            return;
+        }
+
+        StopTrackingTargetTopmost();
+        trackedTargetHandle = window.Handle;
+        NativeMethods.GetWindowThreadProcessId(window.Handle, out var processId);
+        if (processId == 0)
+        {
+            AppLog.Write("Failed to identify the game process for overlay z-order tracking.");
+            return;
+        }
+
+        const uint flags = NativeMethods.WinEventOutOfContext | NativeMethods.WinEventSkipOwnProcess;
+        targetForegroundHook = NativeMethods.SetWinEventHook(
+            NativeMethods.EventSystemForeground,
+            NativeMethods.EventSystemForeground,
+            nint.Zero,
+            targetWindowEventProc,
+            processId,
+            0,
+            flags);
+        targetReorderHook = NativeMethods.SetWinEventHook(
+            NativeMethods.EventObjectReorder,
+            NativeMethods.EventObjectReorder,
+            nint.Zero,
+            targetWindowEventProc,
+            ReorderHookProcessId,
+            0,
+            flags);
+
+        if (targetForegroundHook == nint.Zero || targetReorderHook == nint.Zero)
+        {
+            AppLog.Write("One or more game z-order event hooks could not be installed.");
+            ReleaseTargetEventHooks();
+        }
+        else
+        {
+            AppLog.Write("Game foreground and global z-order tracking is active for the translation overlay.");
+        }
+
+        EnsureAboveTargetWhenForeground(window.Handle);
+    }
+
+    public void StopTrackingTargetTopmost()
+    {
+        trackedTargetHandle = nint.Zero;
+        ReleaseTargetEventHooks();
+    }
+
+    private void ReleaseTargetEventHooks()
+    {
+        if (targetForegroundHook != nint.Zero)
+        {
+            if (!NativeMethods.UnhookWinEvent(targetForegroundHook))
+            {
+                AppLog.Write("Failed to remove the game foreground event hook.");
+            }
+            targetForegroundHook = nint.Zero;
+        }
+
+        if (targetReorderHook != nint.Zero)
+        {
+            if (!NativeMethods.UnhookWinEvent(targetReorderHook))
+            {
+                AppLog.Write("Failed to remove the global z-order event hook.");
+            }
+            targetReorderHook = nint.Zero;
+        }
+    }
+
+    internal static bool HasCompleteTargetTracking(nint foregroundHook, nint reorderHook) =>
+        foregroundHook != nint.Zero && reorderHook != nint.Zero;
+
+    internal static bool ShouldPromoteForTrackedEvent(
+        uint eventType,
+        nint eventHwnd,
+        nint targetHwnd,
+        nint foregroundHwnd,
+        bool overlayIsAboveTarget) =>
+        targetHwnd != nint.Zero
+        && (eventType == NativeMethods.EventSystemForeground
+            ? eventHwnd == targetHwnd && foregroundHwnd == targetHwnd
+            : eventType == NativeMethods.EventObjectReorder
+              && foregroundHwnd == targetHwnd
+              && !overlayIsAboveTarget);
+
+    internal static bool IsWindowAbove(nint candidateHwnd, nint referenceHwnd)
+    {
+        if (candidateHwnd == nint.Zero
+            || referenceHwnd == nint.Zero
+            || candidateHwnd == referenceHwnd)
+        {
+            return false;
+        }
+
+        var visited = new HashSet<nint>();
+        for (var current = NativeMethods.GetWindow(referenceHwnd, NativeMethods.GwHwndPrev);
+             current != nint.Zero && visited.Add(current);
+             current = NativeMethods.GetWindow(current, NativeMethods.GwHwndPrev))
+        {
+            if (current == candidateHwnd)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void EnsureAboveTargetWhenForeground(nint targetHwnd)
+    {
+        if (targetHwnd == nint.Zero || NativeMethods.GetForegroundWindow() != targetHwnd)
+        {
+            return;
+        }
+
+        var overlayHwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (overlayHwnd != nint.Zero && !IsWindowAbove(overlayHwnd, targetHwnd))
+        {
+            EnsureTopmostWithoutActivation();
+        }
+    }
+
+    private void TargetWindowEvent(
+        nint hook,
+        uint eventType,
+        nint hwnd,
+        int objectId,
+        int childId,
+        uint eventThread,
+        uint eventTime)
+    {
+        var observedTarget = trackedTargetHandle;
+        if (observedTarget == nint.Zero
+            || eventType == NativeMethods.EventSystemForeground && hwnd != observedTarget
+            || eventType != NativeMethods.EventSystemForeground
+               && eventType != NativeMethods.EventObjectReorder
+            || eventType == NativeMethods.EventObjectReorder
+               && NativeMethods.GetForegroundWindow() != observedTarget
+            || Dispatcher.HasShutdownStarted
+            || Interlocked.CompareExchange(ref targetPromotionPending, 1, 0) != 0)
+        {
+            return;
+        }
+
+        void PromoteIfStillTracked()
+        {
+            try
+            {
+                if (trackedTargetHandle != observedTarget)
+                {
+                    return;
+                }
+
+                var overlayHwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                if (overlayHwnd == nint.Zero)
+                {
+                    return;
+                }
+
+                var foregroundHwnd = NativeMethods.GetForegroundWindow();
+                var overlayIsAboveTarget = IsWindowAbove(overlayHwnd, observedTarget);
+                if (ShouldPromoteForTrackedEvent(
+                        eventType,
+                        hwnd,
+                        observedTarget,
+                        foregroundHwnd,
+                        overlayIsAboveTarget))
+                {
+                    EnsureTopmostWithoutActivation();
+                    AppLog.Write($"Restored translation overlay z-order after WinEvent 0x{eventType:X4}.");
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref targetPromotionPending, 0);
+            }
+        }
+
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Send,
+            (Action)PromoteIfStillTracked);
     }
 
     public void Apply(SessionUpdate update)
@@ -515,13 +745,9 @@ public partial class OverlayWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        StopTrackingTargetTopmost();
         ClearAll();
         base.OnClosed(e);
-    }
-
-    public void SetCaptureVisibility(bool visible)
-    {
-        Visibility = visible ? Visibility.Visible : Visibility.Hidden;
     }
 
     private sealed record ScreenRenderItem(string Text, Rect Bounds);

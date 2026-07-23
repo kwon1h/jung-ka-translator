@@ -773,7 +773,7 @@
                                         </StackPanel>
                                     </Grid>
 
-                                    <CheckBox x:Name="ShowOverlayInScreenShareCheckBox" Content="화면 공유/방송 시 오버레이 표시 (캡처 시 깜빡임 발생)" Checked="ShowOverlayInScreenShareChanged" Unchecked="ShowOverlayInScreenShareChanged" Margin="0,14,0,14" FontWeight="SemiBold" Foreground="#374151" />
+                                    <CheckBox x:Name="ShowOverlayInScreenShareCheckBox" Content="화면 공유/방송 시 오버레이 표시" Checked="ShowOverlayInScreenShareChanged" Unchecked="ShowOverlayInScreenShareChanged" Margin="0,14,0,14" FontWeight="SemiBold" Foreground="#374151" />
 
                                     <Separator Margin="0,0,0,14" />
                                     <Grid>

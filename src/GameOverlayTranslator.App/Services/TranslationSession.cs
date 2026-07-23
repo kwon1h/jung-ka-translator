@@ -16,9 +16,6 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
     private Task? runTask;
 
     public event EventHandler<SessionUpdate>? Updated;
-    public Func<CancellationToken, Task>? BeforeCaptureAsync { get; set; }
-    public Func<CancellationToken, Task>? AfterCaptureAsync { get; set; }
-
     public bool IsRunning => runTask is { IsCompleted: false };
 
     public Task StartAsync(SessionOptions options, CancellationToken ct)
@@ -81,23 +78,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         {
             try
             {
-                if (BeforeCaptureAsync is not null)
-                {
-                    await BeforeCaptureAsync(ct);
-                }
-
-                CapturedFrame frame;
-                try
-                {
-                    frame = await captureService.CaptureAsync(options.Target, options.Region, ct);
-                }
-                finally
-                {
-                    if (AfterCaptureAsync is not null)
-                    {
-                        await AfterCaptureAsync(ct);
-                    }
-                }
+                var frame = await captureService.CaptureAsync(options.Target, options.Region, ct);
 
                 var frameForOcr = ApplyRegionMasks(frame, options);
                 var recognized = await ocrEngine.RecognizeAsync(frameForOcr, options.OcrLanguage, ct);

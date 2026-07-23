@@ -49,6 +49,11 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("English-only screen lines are hidden", TestEnglishOnlyScreenLinesAreHidden),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
     ("Foreground capture accepts only target window", TestForegroundCaptureAcceptsOnlyTargetWindow),
+    ("Capture reads the target window device context", TestCaptureUsesTargetWindowDeviceContext),
+    ("Overlay capture never hides the overlay", TestOverlayCaptureNeverHidesOverlay),
+    ("Overlay topmost promotion is non-activating", TestOverlayTopmostPromotionIsNonActivating),
+    ("Overlay tracks target z-order changes", TestOverlayTracksTargetZOrderChanges),
+    ("Broadcast option maps only capture affinity", TestBroadcastOptionMapsCaptureAffinity),
     ("Deferred capture resumes without error", TestDeferredCaptureResumesWithoutError),
     ("Chat translation keeps OCR position", TestChatTranslationKeepsOcrPosition),
     ("Chat snapshot replays translation at current position", TestChatSnapshotReplaysTranslationAtCurrentPosition),
@@ -793,6 +798,131 @@ static Task TestForegroundCaptureAcceptsOnlyTargetWindow()
     Assert(WindowCaptureService.IsTargetForeground((nint)42, (nint)42), "The selected game should be capturable while it is foreground.");
     Assert(!WindowCaptureService.IsTargetForeground((nint)42, (nint)84), "A covering foreground window must defer desktop capture.");
     Assert(!WindowCaptureService.IsTargetForeground(nint.Zero, nint.Zero), "A missing target window must never be considered foreground.");
+    return Task.CompletedTask;
+}
+
+static Task TestCaptureUsesTargetWindowDeviceContext()
+{
+    var targetHandle = (nint)42;
+    Assert(
+        WindowCaptureService.ResolveCaptureSourceHandle(targetHandle) == targetHandle,
+        "OCR capture must read the selected game HWND rather than the desktop HWND.");
+    Assert(
+        WindowCaptureService.ResolveCaptureSourceHandle(targetHandle) != nint.Zero,
+        "OCR capture must not fall back to the desktop device context.");
+    Assert(
+        WindowCaptureService.IsGdiSelectionFailure(nint.Zero),
+        "A null SelectObject result must stop capture cleanly.");
+    Assert(
+        WindowCaptureService.IsGdiSelectionFailure(NativeMethods.HgdiError),
+        "HGDI_ERROR from SelectObject must stop capture cleanly.");
+    Assert(
+        !WindowCaptureService.IsGdiSelectionFailure((nint)1),
+        "A valid previous GDI object must allow capture to continue.");
+    return Task.CompletedTask;
+}
+
+static Task TestOverlayCaptureNeverHidesOverlay()
+{
+    Assert(
+        typeof(TranslationSession).GetProperty("BeforeCaptureAsync") is null,
+        "Translation capture must not expose a pre-capture overlay hiding callback.");
+    Assert(
+        typeof(TranslationSession).GetProperty("AfterCaptureAsync") is null,
+        "Translation capture must not expose a post-capture overlay showing callback.");
+    Assert(
+        typeof(OverlayWindow).GetMethod("SetCaptureVisibility") is null,
+        "The overlay must remain visible throughout every OCR capture.");
+    return Task.CompletedTask;
+}
+
+static Task TestOverlayTopmostPromotionIsNonActivating()
+{
+    const uint showWindow = 0x0040;
+    const uint hideWindow = 0x0080;
+    var flags = OverlayWindow.StableTopmostFlags;
+
+    Assert(
+        OverlayWindow.StableTopmostInsertAfter == NativeMethods.HwndTopmost,
+        "Overlay promotion must use the topmost z-order band.");
+    Assert((flags & NativeMethods.SwpNoMove) != 0, "Topmost promotion must not move the overlay.");
+    Assert((flags & NativeMethods.SwpNoSize) != 0, "Topmost promotion must not resize the overlay.");
+    Assert((flags & NativeMethods.SwpNoActivate) != 0, "Topmost promotion must not steal game focus.");
+    Assert((flags & (showWindow | hideWindow)) == 0, "Topmost promotion must not change overlay visibility.");
+    return Task.CompletedTask;
+}
+
+static Task TestOverlayTracksTargetZOrderChanges()
+{
+    var target = (nint)42;
+    Assert(
+        OverlayWindow.HasCompleteTargetTracking((nint)1, (nint)2),
+        "Both foreground and reorder hooks are required for complete z-order tracking.");
+    Assert(
+        !OverlayWindow.HasCompleteTargetTracking((nint)1, nint.Zero),
+        "A partial hook installation must be retried rather than treated as complete.");
+    Assert(
+        OverlayWindow.ReorderHookProcessId == 0,
+        "Top-level z-order changes must be observed globally because the parent window raises reorder events.");
+    Assert(
+        OverlayWindow.ShouldPromoteForTrackedEvent(
+            NativeMethods.EventSystemForeground,
+            target,
+            target,
+            target,
+            overlayIsAboveTarget: true),
+        "The overlay must be promoted as soon as the game becomes foreground.");
+    Assert(
+        !OverlayWindow.ShouldPromoteForTrackedEvent(
+            NativeMethods.EventSystemForeground,
+            target,
+            target,
+            (nint)99,
+            overlayIsAboveTarget: false),
+        "A stale foreground callback must not raise the overlay above a newer foreground app.");
+    Assert(
+        OverlayWindow.ShouldPromoteForTrackedEvent(
+            NativeMethods.EventObjectReorder,
+            (nint)84,
+            target,
+            target,
+            overlayIsAboveTarget: false),
+        "A parent/global reorder event must restore the overlay when the foreground game moved above it.");
+    Assert(
+        !OverlayWindow.ShouldPromoteForTrackedEvent(
+            NativeMethods.EventObjectReorder,
+            (nint)84,
+            target,
+            target,
+            overlayIsAboveTarget: true),
+        "A reorder event must not loop when the overlay is already above the game.");
+    Assert(
+        !OverlayWindow.ShouldPromoteForTrackedEvent(
+            NativeMethods.EventObjectReorder,
+            (nint)84,
+            target,
+            (nint)99,
+            overlayIsAboveTarget: false),
+        "A reorder event must not raise the overlay while another app is foreground.");
+    Assert(
+        !OverlayWindow.ShouldPromoteForTrackedEvent(
+            0,
+            target,
+            target,
+            target,
+            overlayIsAboveTarget: false),
+        "Unrelated game events must not trigger overlay promotion.");
+    return Task.CompletedTask;
+}
+
+static Task TestBroadcastOptionMapsCaptureAffinity()
+{
+    Assert(
+        OverlayWindow.CaptureAffinityFor(excludeFromCapture: false) == 0,
+        "Broadcast-visible overlays must use WDA_NONE.");
+    Assert(
+        OverlayWindow.CaptureAffinityFor(excludeFromCapture: true) == NativeMethods.WDA_EXCLUDEFROMCAPTURE,
+        "Private overlays must use WDA_EXCLUDEFROMCAPTURE.");
     return Task.CompletedTask;
 }
 

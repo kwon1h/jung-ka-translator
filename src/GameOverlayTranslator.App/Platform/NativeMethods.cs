@@ -6,6 +6,14 @@ namespace GameOverlayTranslator.App.Platform;
 internal static class NativeMethods
 {
     internal delegate bool EnumWindowsProc(nint hwnd, nint lParam);
+    internal delegate void WinEventProc(
+        nint hook,
+        uint eventType,
+        nint hwnd,
+        int objectId,
+        int childId,
+        uint eventThread,
+        uint eventTime);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct NativeRect
@@ -48,7 +56,23 @@ internal static class NativeMethods
     internal static extern bool BringWindowToTop(nint hwnd);
 
     [DllImport("user32.dll")]
+    internal static extern nint GetWindow(nint hwnd, uint command);
+
+    [DllImport("user32.dll")]
     internal static extern bool SetWindowPos(nint hwnd, nint insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll")]
+    internal static extern nint SetWinEventHook(
+        uint eventMin,
+        uint eventMax,
+        nint eventHookModule,
+        WinEventProc eventProc,
+        uint processId,
+        uint threadId,
+        uint flags);
+
+    [DllImport("user32.dll")]
+    internal static extern bool UnhookWinEvent(nint eventHook);
 
     [DllImport("user32.dll")]
     internal static extern nint SetActiveWindow(nint hwnd);
@@ -67,10 +91,16 @@ internal static class NativeMethods
 
     internal static readonly nint HwndTop = nint.Zero;
     internal static readonly nint HwndTopmost = new(-1);
+    internal static readonly nint HgdiError = new(-1);
+    internal const uint GwHwndPrev = 3;
     internal const uint SwpNoSize = 0x0001;
     internal const uint SwpNoMove = 0x0002;
     internal const uint SwpNoActivate = 0x0010;
     internal const uint SwpShowWindow = 0x0040;
+    internal const uint EventSystemForeground = 0x0003;
+    internal const uint EventObjectReorder = 0x8004;
+    internal const uint WinEventOutOfContext = 0x0000;
+    internal const uint WinEventSkipOwnProcess = 0x0002;
     internal const int SwMinimize = 6;
     internal const int SwShowNoActivate = 4;
 

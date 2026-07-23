@@ -205,8 +205,6 @@ public partial class MainWindow : Window
         chatTranslationService = delegator;
         var cachingTranslationService = new CachingTranslationService(delegator, new ScreenTranslationCacheStore());
         session = new TranslationSession(new WindowCaptureService(requireTargetForeground: true), delegatingOcrEngine, cachingTranslationService);
-        session.BeforeCaptureAsync = SetOverlayCaptureVisibilityAsync(false);
-        session.AfterCaptureAsync = SetOverlayCaptureVisibilityAsync(true);
         session.Updated += SessionUpdated;
 
         OcrEngineComboBox.ItemsSource = OcrEngines;
@@ -1479,6 +1477,7 @@ public partial class MainWindow : Window
         StartStopButtonLabel.Text = "번역 시작";
         StartStopButtonIcon.Text = "\uE768";
         System.Windows.Automation.AutomationProperties.SetName(StartStopButton, "번역 시작");
+        overlayWindow?.StopTrackingTargetTopmost();
         overlayWindow?.ClearAll();
         UpdateStartReadiness();
     }
@@ -1493,8 +1492,7 @@ public partial class MainWindow : Window
             var mode = activeSessionMode ?? settings.TranslationMode;
             overlayWindow.PositionOver(window, region);
             overlayWindow.CurrentMode = mode;
-            overlayWindow.Topmost = false;
-            overlayWindow.Topmost = true;
+            overlayWindow.TrackTargetTopmost(window);
         }
         overlayWindow?.Apply(update);
 
@@ -1537,26 +1535,6 @@ public partial class MainWindow : Window
             ApiUsageText.Text = $"이번 세션 {totalTranslationRequestCount}건 / {totalTranslationCharacterCount}자";
         }
     }
-
-    private Func<CancellationToken, Task> SetOverlayCaptureVisibilityAsync(bool visible, bool force = false) =>
-        async ct =>
-        {
-            if (overlayWindow is null)
-            {
-                return;
-            }
-
-            if (!force && !settings.ShowOverlayInScreenShare)
-            {
-                return;
-            }
-
-            await Dispatcher.InvokeAsync(() => overlayWindow.SetCaptureVisibility(visible));
-            if (!visible)
-            {
-                await Task.Delay(60, ct);
-            }
-        };
 
     private async void OnClosed(object? sender, EventArgs e)
     {
@@ -1621,6 +1599,7 @@ public partial class MainWindow : Window
             overlayWindow.ExcludeFromCapture = !settings.ShowOverlayInScreenShare;
             overlayWindow.Show();
             overlayWindow.UpdateDisplayAffinity();
+            overlayWindow.TrackTargetTopmost(window);
             return;
         }
 

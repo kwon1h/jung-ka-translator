@@ -33,29 +33,82 @@ public sealed class WindowCaptureService(bool requireTargetForeground = false) :
         }
 
         var crop = region.ToPixels(rect.Width, rect.Height);
-        var screenDc = NativeMethods.GetDC(nint.Zero);
-        var memoryDc = NativeMethods.CreateCompatibleDC(screenDc);
-        var bitmap = NativeMethods.CreateCompatibleBitmap(screenDc, crop.Width, crop.Height);
-        var oldBitmap = NativeMethods.SelectObject(memoryDc, bitmap);
+        var captureSourceHandle = ResolveCaptureSourceHandle(target.Window.Handle);
+        var windowDc = NativeMethods.GetDC(captureSourceHandle);
+        if (windowDc == nint.Zero)
+        {
+            throw new CaptureException("게임 창의 화면을 읽을 수 없습니다.");
+        }
+
         try
         {
-            const int SourceCopy = 0x00CC0020;
-            if (!NativeMethods.BitBlt(memoryDc, 0, 0, crop.Width, crop.Height, screenDc, rect.Left + crop.X, rect.Top + crop.Y, SourceCopy))
+            var memoryDc = NativeMethods.CreateCompatibleDC(windowDc);
+            if (memoryDc == nint.Zero)
             {
-                throw new CaptureException("창 프레임 캡처에 실패했습니다.");
+                throw new CaptureException("게임 창 캡처 버퍼를 만들 수 없습니다.");
             }
-            var source = Imaging.CreateBitmapSourceFromHBitmap(bitmap, nint.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
-            source.Freeze();
-            return Task.FromResult(new CapturedFrame(source));
+
+            try
+            {
+                var bitmap = NativeMethods.CreateCompatibleBitmap(windowDc, crop.Width, crop.Height);
+                if (bitmap == nint.Zero)
+                {
+                    throw new CaptureException("게임 창 캡처 이미지를 만들 수 없습니다.");
+                }
+
+                var oldBitmap = NativeMethods.SelectObject(memoryDc, bitmap);
+                if (IsGdiSelectionFailure(oldBitmap))
+                {
+                    NativeMethods.DeleteObject(bitmap);
+                    throw new CaptureException("게임 창 캡처 이미지를 선택할 수 없습니다.");
+                }
+
+                try
+                {
+                    const int SourceCopy = 0x00CC0020;
+                    if (!NativeMethods.BitBlt(
+                            memoryDc,
+                            0,
+                            0,
+                            crop.Width,
+                            crop.Height,
+                            windowDc,
+                            crop.X,
+                            crop.Y,
+                            SourceCopy))
+                    {
+                        throw new CaptureException("창 프레임 캡처에 실패했습니다.");
+                    }
+
+                    var source = Imaging.CreateBitmapSourceFromHBitmap(
+                        bitmap,
+                        nint.Zero,
+                        Int32Rect.Empty,
+                        BitmapSizeOptions.FromEmptyOptions());
+                    source.Freeze();
+                    return Task.FromResult(new CapturedFrame(source));
+                }
+                finally
+                {
+                    NativeMethods.SelectObject(memoryDc, oldBitmap);
+                    NativeMethods.DeleteObject(bitmap);
+                }
+            }
+            finally
+            {
+                NativeMethods.DeleteDC(memoryDc);
+            }
         }
         finally
         {
-            NativeMethods.SelectObject(memoryDc, oldBitmap);
-            NativeMethods.DeleteObject(bitmap);
-            NativeMethods.DeleteDC(memoryDc);
-            NativeMethods.ReleaseDC(nint.Zero, screenDc);
+            NativeMethods.ReleaseDC(captureSourceHandle, windowDc);
         }
     }
+
+    internal static nint ResolveCaptureSourceHandle(nint targetHandle) => targetHandle;
+
+    internal static bool IsGdiSelectionFailure(nint selectedObject) =>
+        selectedObject == nint.Zero || selectedObject == NativeMethods.HgdiError;
 
     internal static bool IsTargetForeground(nint targetHandle, nint foregroundHandle) =>
         targetHandle != nint.Zero && targetHandle == foregroundHandle;
