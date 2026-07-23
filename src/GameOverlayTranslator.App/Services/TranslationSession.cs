@@ -26,7 +26,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         }
 
         runCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        runTask = RunAsync(options, runCancellation.Token);
+        runTask = Task.Run(() => RunAsync(options, runCancellation.Token));
         Publish("Translation running");
         return Task.CompletedTask;
     }

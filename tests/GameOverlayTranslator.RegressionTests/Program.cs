@@ -22,6 +22,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("PaddleOCR is the only OCR engine", TestPaddleOcrIsOnlyEngine),
     ("PaddleOCR bitmap conversion preserves BGR pixels", TestPaddleOcrBitmapConversion),
     ("PaddleOCR reuses only identical frames", TestPaddleOcrFrameCache),
+    ("Translation session runs OCR off caller context", TestTranslationSessionRunsOcrOffCallerContext),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
     ("Dictionary screen line skips API", TestDictionaryOnlyScreenLineSkipsTranslation),
@@ -765,6 +766,40 @@ static Task TestPaddleOcrFrameCache()
     return Task.CompletedTask;
 }
 
+static async Task TestTranslationSessionRunsOcrOffCallerContext()
+{
+    var previousContext = SynchronizationContext.Current;
+    var callerContext = new SynchronizationContext();
+    var ocr = new ContextRecordingOcrEngine();
+    var session = new TranslationSession(
+        new FakeCaptureService(),
+        ocr,
+        new CountingTranslationService());
+
+    try
+    {
+        SynchronizationContext.SetSynchronizationContext(callerContext);
+        _ = session.StartAsync(CreateOptions(TranslationMode.Screen), CancellationToken.None);
+    }
+    finally
+    {
+        SynchronizationContext.SetSynchronizationContext(previousContext);
+    }
+
+    try
+    {
+        await ocr.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+    finally
+    {
+        await session.StopAsync();
+    }
+
+    Assert(
+        !ReferenceEquals(ocr.ObservedContext, callerContext),
+        "OCR inference must not run on the UI caller synchronization context.");
+}
+
 static Task TestSpacedLanguageScreenSegmentKeepsPhrases()
 {
     var segments = ScreenTranslationSegmenter.Split("hello world test", new OcrLanguage("en", "English"));
@@ -1451,6 +1486,20 @@ sealed class FakeOcrEngine(OcrResult result) : IOcrEngine
 {
     public Task<OcrResult> RecognizeAsync(CapturedFrame frame, OcrLanguage language, CancellationToken ct) =>
         Task.FromResult(result);
+}
+
+sealed class ContextRecordingOcrEngine : IOcrEngine
+{
+    public TaskCompletionSource<bool> Started { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public SynchronizationContext? ObservedContext { get; private set; }
+
+    public Task<OcrResult> RecognizeAsync(CapturedFrame frame, OcrLanguage language, CancellationToken ct)
+    {
+        ObservedContext = SynchronizationContext.Current;
+        Started.TrySetResult(true);
+        return Task.FromResult(new OcrResult(string.Empty, []));
+    }
 }
 
 sealed class SequencedOcrEngine(params OcrResult[] results) : IOcrEngine
