@@ -55,6 +55,12 @@ public sealed class TranslationServiceDelegator : ITranslationService
         return service.TranslateBatchAsync(request, ct);
     }
 
+    internal string GetCacheNamespace(string? sourceLanguage, string targetLanguage) =>
+        ResolveEffectiveTranslator(
+            settingsProvider().TranslatorType,
+            sourceLanguage,
+            targetLanguage).ToString();
+
     internal static TranslationServiceType ResolveEffectiveTranslator(
         TranslationServiceType selectedTranslator,
         string? sourceLanguage,

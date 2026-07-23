@@ -199,7 +199,10 @@ public partial class MainWindow : Window
             () => settings
         );
         chatTranslationService = delegator;
-        cachingTranslationService = new CachingTranslationService(delegator, new ScreenTranslationCacheStore());
+        cachingTranslationService = new CachingTranslationService(
+            delegator,
+            new ScreenTranslationCacheStore(),
+            cacheNamespaceProvider: delegator.GetCacheNamespace);
         session = new TranslationSession(new WindowCaptureService(requireTargetForeground: true), paddleOcrEngine, cachingTranslationService);
         session.Updated += SessionUpdated;
 

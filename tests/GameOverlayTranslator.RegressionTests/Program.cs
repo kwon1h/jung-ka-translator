@@ -40,6 +40,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Rejected chat does not poison duplicate cache", TestRejectedChatDoesNotPoisonExactDuplicateCache),
     ("Repeated screen OCR uses cache", TestRepeatedScreenLineUsesCachedTranslation),
     ("Repeated chat translation uses cache", TestRepeatedChatLineUsesCachedTranslation),
+    ("Translation cache is isolated by effective provider", TestTranslationCacheIsolatedByEffectiveProvider),
+    ("Translation circuit is isolated by effective provider", TestTranslationCircuitIsolatedByEffectiveProvider),
     ("Translation cache evicts oldest entries", TestTranslationCacheEvictsOldestEntries),
     ("Translation cache flushes deferred entries", TestTranslationCacheFlushesDeferredEntries),
     ("Application logs rotate and expire", TestApplicationLogMaintenance),
@@ -339,6 +341,91 @@ static async Task TestRepeatedChatLineUsesCachedTranslation()
     Assert(translation.SingleRequests == 1, "Repeated chat request should call API once.");
     Assert(first.TranslatedText == second.TranslatedText, "Cached translation should match.");
     Assert((second.Usage?.OutboundRequestCount ?? -1) == 0, "Cache hit should report zero outbound requests.");
+}
+
+static async Task TestTranslationCacheIsolatedByEffectiveProvider()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"game-overlay-translator-provider-cache-{Guid.NewGuid():N}");
+    var cachePath = Path.Combine(directory, "cache.json");
+    Directory.CreateDirectory(directory);
+
+    try
+    {
+        var request = new TranslationRequest("provider-specific-result", "ko", "en");
+        var legacySource = new CountingTranslationService();
+        var legacyCache = new CachingTranslationService(
+            legacySource,
+            new ScreenTranslationCacheStore(cachePath),
+            cacheSaveInterval: TimeSpan.Zero);
+        await legacyCache.TranslateAsync(request, CancellationToken.None);
+
+        var provider = "DeepL";
+        var source = new CountingTranslationService();
+        var cached = new CachingTranslationService(
+            source,
+            new ScreenTranslationCacheStore(cachePath),
+            cacheSaveInterval: TimeSpan.Zero,
+            cacheNamespaceProvider: (_, _) => provider);
+
+        await cached.TranslateAsync(request, CancellationToken.None);
+        await cached.TranslateAsync(request, CancellationToken.None);
+        Assert(source.SingleRequests == 1, "The same provider should reuse its own cache entry.");
+
+        provider = "GoogleUnofficial";
+        await cached.TranslateAsync(request, CancellationToken.None);
+        Assert(source.SingleRequests == 2, "Changing the effective provider must bypass the previous provider's cache.");
+
+        provider = "DeepL";
+        await cached.TranslateAsync(request, CancellationToken.None);
+        Assert(source.SingleRequests == 2, "Switching back should reuse the original provider's scoped cache.");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+static async Task TestTranslationCircuitIsolatedByEffectiveProvider()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"game-overlay-translator-provider-circuit-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        var provider = "DeepL";
+        var source = new SwitchableTranslationService { ShouldFail = true };
+        var cached = new CachingTranslationService(
+            source,
+            new ScreenTranslationCacheStore(Path.Combine(directory, "cache.json")),
+            cacheNamespaceProvider: (_, _) => provider);
+
+        for (var index = 0; index < 3; index++)
+        {
+            try
+            {
+                await cached.TranslateAsync(
+                    new TranslationRequest($"provider-failure-{index}-{Guid.NewGuid():N}", "ko", "en"),
+                    CancellationToken.None);
+                Assert(false, "The failing provider should throw.");
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        provider = "GoogleUnofficial";
+        source.ShouldFail = false;
+        var result = await cached.TranslateAsync(
+            new TranslationRequest($"provider-recovery-{Guid.NewGuid():N}", "ko", "en"),
+            CancellationToken.None);
+
+        Assert(
+            result.TranslatedText.StartsWith("translated:", StringComparison.Ordinal),
+            "A healthy provider should work immediately after another provider opens its circuit.");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
 }
 
 static async Task TestDictionaryIsScopedToChineseKorean()
@@ -2558,5 +2645,31 @@ sealed class FailingTranslationService : ITranslationService
     {
         CallCount++;
         throw new InvalidOperationException("API Error Mock");
+    }
+}
+
+sealed class SwitchableTranslationService : ITranslationService
+{
+    public bool ShouldFail { get; set; }
+
+    public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
+    {
+        if (ShouldFail)
+        {
+            throw new InvalidOperationException("API Error Mock");
+        }
+
+        return Task.FromResult(new TranslationResult(request.Text, $"translated:{request.Text}", request.SourceLanguage));
+    }
+
+    public Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
+    {
+        if (ShouldFail)
+        {
+            throw new InvalidOperationException("API Error Mock");
+        }
+
+        return Task.FromResult(new BatchTranslationResult(
+            request.Texts.Select(text => $"translated:{text}").ToArray()));
     }
 }

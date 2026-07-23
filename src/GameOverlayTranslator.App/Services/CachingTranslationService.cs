@@ -14,13 +14,13 @@ public sealed class CachingTranslationService : ITranslationService
     private readonly Queue<string> cacheInsertionOrder;
     private readonly int maxCacheEntries;
     private readonly TimeSpan cacheSaveInterval;
+    private readonly Func<string?, string, string>? cacheNamespaceProvider;
     private readonly object cacheLock = new();
     private DateTime nextCacheSaveUtc = DateTime.MinValue;
     private bool cacheDirty;
 
     private readonly Dictionary<string, DateTime> failedTexts = new(StringComparer.Ordinal);
-    private int continuousFailures;
-    private DateTime blockUntil = DateTime.MinValue;
+    private readonly Dictionary<string, ProviderFailureState> providerFailures = new(StringComparer.Ordinal);
     private readonly TimeSpan negativeCacheDuration = TimeSpan.FromSeconds(10);
     private readonly TimeSpan circuitBreakerDuration = TimeSpan.FromSeconds(15);
     private const int FailureThreshold = 3;
@@ -29,10 +29,12 @@ public sealed class CachingTranslationService : ITranslationService
         ITranslationService innerService,
         ScreenTranslationCacheStore cacheStore,
         int maxCacheEntries = DefaultMaxCacheEntries,
-        TimeSpan? cacheSaveInterval = null)
+        TimeSpan? cacheSaveInterval = null,
+        Func<string?, string, string>? cacheNamespaceProvider = null)
     {
         this.innerService = innerService ?? throw new ArgumentNullException(nameof(innerService));
         this.cacheStore = cacheStore ?? throw new ArgumentNullException(nameof(cacheStore));
+        this.cacheNamespaceProvider = cacheNamespaceProvider;
         if (maxCacheEntries <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(maxCacheEntries));
@@ -52,13 +54,15 @@ public sealed class CachingTranslationService : ITranslationService
 
     public async Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
     {
-        var cacheKey = GetCacheKey(request.Text, request.TargetLanguage, request.SourceLanguage);
-        var legacyKey = GetLegacyCacheKey(request.Text, request.TargetLanguage);
+        var cacheNamespace = GetCacheNamespace(request.SourceLanguage, request.TargetLanguage);
+        var failureScope = cacheNamespace ?? string.Empty;
+        var cacheKey = GetCacheKey(request.Text, request.TargetLanguage, request.SourceLanguage, cacheNamespace);
+        var legacyKey = cacheNamespace is null ? GetLegacyCacheKey(request.Text, request.TargetLanguage) : null;
 
         lock (cacheLock)
         {
             PruneFailedTexts(DateTime.UtcNow);
-            if (DateTime.UtcNow < blockUntil)
+            if (IsProviderBlocked(failureScope, DateTime.UtcNow))
             {
                 throw new TranslationTemporarilyUnavailableException();
             }
@@ -82,7 +86,7 @@ public sealed class CachingTranslationService : ITranslationService
 
             lock (cacheLock)
             {
-                continuousFailures = 0;
+                providerFailures.Remove(failureScope);
                 failedTexts.Remove(cacheKey);
                 SetCachedTranslation(cacheKey, result.TranslatedText);
                 SaveCacheIfDue();
@@ -100,11 +104,7 @@ public sealed class CachingTranslationService : ITranslationService
             {
                 failedTexts[cacheKey] = DateTime.UtcNow;
                 PruneFailedTexts(DateTime.UtcNow);
-                continuousFailures++;
-                if (continuousFailures >= FailureThreshold)
-                {
-                    blockUntil = DateTime.UtcNow + circuitBreakerDuration;
-                }
+                RecordProviderFailure(failureScope, DateTime.UtcNow);
             }
             throw;
         }
@@ -114,6 +114,8 @@ public sealed class CachingTranslationService : ITranslationService
     {
         var targetLanguage = request.TargetLanguage;
         var texts = request.Texts;
+        var cacheNamespace = GetCacheNamespace(request.SourceLanguage, targetLanguage);
+        var failureScope = cacheNamespace ?? string.Empty;
         var results = new string[texts.Count];
         var missTexts = new List<string>();
         var missKeys = new List<string>();
@@ -124,13 +126,13 @@ public sealed class CachingTranslationService : ITranslationService
         lock (cacheLock)
         {
             PruneFailedTexts(DateTime.UtcNow);
-            var isBlocked = DateTime.UtcNow < blockUntil;
+            var isBlocked = IsProviderBlocked(failureScope, DateTime.UtcNow);
 
             for (var index = 0; index < texts.Count; index++)
             {
                 var text = texts[index];
-                var key = GetCacheKey(text, targetLanguage, request.SourceLanguage);
-                var legacyKey = GetLegacyCacheKey(text, targetLanguage);
+                var key = GetCacheKey(text, targetLanguage, request.SourceLanguage, cacheNamespace);
+                var legacyKey = cacheNamespace is null ? GetLegacyCacheKey(text, targetLanguage) : null;
 
                 if (isBlocked)
                 {
@@ -178,7 +180,7 @@ public sealed class CachingTranslationService : ITranslationService
 
                 lock (cacheLock)
                 {
-                    continuousFailures = 0;
+                    providerFailures.Remove(failureScope);
 
                     for (var index = 0; index < missTexts.Count; index++)
                     {
@@ -211,11 +213,7 @@ public sealed class CachingTranslationService : ITranslationService
                     }
                     PruneFailedTexts(DateTime.UtcNow);
 
-                    continuousFailures++;
-                    if (continuousFailures >= FailureThreshold)
-                    {
-                        blockUntil = DateTime.UtcNow + circuitBreakerDuration;
-                    }
+                    RecordProviderFailure(failureScope, DateTime.UtcNow);
                 }
                 throw;
             }
@@ -265,14 +263,14 @@ public sealed class CachingTranslationService : ITranslationService
         }
     }
 
-    private bool TryGetCachedTranslation(string cacheKey, string legacyKey, out string translatedText)
+    private bool TryGetCachedTranslation(string cacheKey, string? legacyKey, out string translatedText)
     {
         if (cache.TryGetValue(cacheKey, out translatedText!))
         {
             return true;
         }
 
-        if (!cache.TryGetValue(legacyKey, out translatedText!))
+        if (legacyKey is null || !cache.TryGetValue(legacyKey, out translatedText!))
         {
             return false;
         }
@@ -333,10 +331,49 @@ public sealed class CachingTranslationService : ITranslationService
         }
     }
 
-    private static string GetCacheKey(string text, string targetLanguage, string? sourceLanguage)
+    private bool IsProviderBlocked(string failureScope, DateTime now) =>
+        providerFailures.TryGetValue(failureScope, out var failure)
+        && now < failure.BlockUntil;
+
+    private void RecordProviderFailure(string failureScope, DateTime now)
+    {
+        if (!providerFailures.TryGetValue(failureScope, out var failure))
+        {
+            failure = new ProviderFailureState();
+            providerFailures[failureScope] = failure;
+        }
+
+        failure.ContinuousFailures++;
+        if (failure.ContinuousFailures >= FailureThreshold)
+        {
+            failure.BlockUntil = now + circuitBreakerDuration;
+        }
+    }
+
+    private string? GetCacheNamespace(string? sourceLanguage, string targetLanguage)
+    {
+        if (cacheNamespaceProvider is null)
+        {
+            return null;
+        }
+
+        var cacheNamespace = cacheNamespaceProvider(sourceLanguage, targetLanguage);
+        return string.IsNullOrWhiteSpace(cacheNamespace)
+            ? throw new InvalidOperationException("번역 캐시 공급자 식별자가 비어 있습니다.")
+            : cacheNamespace.Trim().ToLowerInvariant();
+    }
+
+    private static string GetCacheKey(
+        string text,
+        string targetLanguage,
+        string? sourceLanguage,
+        string? cacheNamespace)
     {
         var source = string.IsNullOrWhiteSpace(sourceLanguage) ? "auto" : sourceLanguage.Trim().ToLowerInvariant();
-        return $"v2\u001f{targetLanguage}\u001f{source}\u001f{TranslationTextNormalizer.CanonicalizeCacheText(text)}";
+        var normalizedText = TranslationTextNormalizer.CanonicalizeCacheText(text);
+        return cacheNamespace is null
+            ? $"v2\u001f{targetLanguage}\u001f{source}\u001f{normalizedText}"
+            : $"v3\u001f{cacheNamespace}\u001f{targetLanguage.Trim().ToLowerInvariant()}\u001f{source}\u001f{normalizedText}";
     }
 
     private static string GetLegacyCacheKey(string text, string targetLanguage)
@@ -352,6 +389,12 @@ public sealed class CachingTranslationService : ITranslationService
         }
 
         return string.Join(' ', value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
+    }
+
+    private sealed class ProviderFailureState
+    {
+        public int ContinuousFailures { get; set; }
+        public DateTime BlockUntil { get; set; }
     }
 }
 
