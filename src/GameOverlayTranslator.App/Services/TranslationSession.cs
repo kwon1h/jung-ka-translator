@@ -290,6 +290,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     pendingScreenTotals = totals;
                 }
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 AppLog.Write("Batch translation failed, falling back to raw texts", ex);

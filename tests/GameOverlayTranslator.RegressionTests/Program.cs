@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -62,6 +63,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Translation failure cooldown bypasses API", TestTranslationFailureCooldown),
     ("Malformed batch response is not cached", TestMalformedBatchResponseIsNotCached),
     ("Cancellation does not trip translation circuit", TestCancellationDoesNotTripTranslationCircuit),
+    ("Stopping screen translation does not publish canceled text", TestScreenStopDoesNotPublishCanceledText),
+    ("Translation HTTP timeout is suitable for real-time use", TestTranslationHttpTimeout),
     ("Spaced-language screen segment keeps phrases", TestSpacedLanguageScreenSegmentKeepsPhrases),
     ("CJK screen segment separates OCR chunks", TestCjkScreenSegmentSeparatesOcrChunks),
     ("Supported OCR scripts pass screen filter", TestSupportedOcrScriptsPassScreenFilter),
@@ -1003,6 +1006,35 @@ static async Task TestCancellationDoesNotTripTranslationCircuit()
         CancellationToken.None);
     Assert(service.SuccessfulRequests == 1, "Canceled requests must not open the translation circuit.");
     Assert(result.TranslatedText == $"translated:{source}", "Translation should resume immediately after cancellation.");
+}
+
+static async Task TestScreenStopDoesNotPublishCanceledText()
+{
+    var source = Chinese("505c 6b62 540e 4e0d 5e94 663e 793a");
+    var translation = new BlockingBatchTranslationService();
+    var session = ScreenSession(source, translation);
+    var updates = Collect(session);
+
+    await session.StartAsync(CreateOptions(TranslationMode.Screen), CancellationToken.None);
+    await translation.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+    await session.StopAsync();
+
+    Assert(
+        !updates.Any(update => update.ScreenItems is { Count: > 0 }),
+        "Stopping during an API request must not publish raw or stale screen text.");
+}
+
+static Task TestTranslationHttpTimeout()
+{
+    var field = typeof(MainWindow).GetField(
+        "httpClient",
+        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+    var client = field?.GetValue(null) as HttpClient;
+
+    Assert(client is not null, "The shared translation HTTP client should exist.");
+    Assert(client!.Timeout <= TimeSpan.FromSeconds(15), "Translation requests should not freeze a live game overlay for the default 100-second timeout.");
+    Assert(client.Timeout >= TimeSpan.FromSeconds(5), "Translation timeout should still allow normal network latency.");
+    return Task.CompletedTask;
 }
 
 static SessionOptions CreateOptions(TranslationMode mode, IReadOnlyList<UserDictEntry>? dictionary = null) =>
@@ -1967,6 +1999,22 @@ sealed class CancellationAwareTranslationService : ITranslationService
         ct.ThrowIfCancellationRequested();
         return Task.FromResult(new BatchTranslationResult(
             request.Texts.Select(text => $"translated:{text}").ToList()));
+    }
+}
+
+sealed class BlockingBatchTranslationService : ITranslationService
+{
+    public TaskCompletionSource<bool> Started { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct) =>
+        Task.FromResult(new TranslationResult(request.Text, $"translated:{request.Text}", request.SourceLanguage));
+
+    public async Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
+    {
+        Started.TrySetResult(true);
+        await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        throw new InvalidOperationException("Unreachable");
     }
 }
 

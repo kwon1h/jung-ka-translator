@@ -137,7 +137,10 @@ public partial class MainWindow : Window
     private static readonly CaptureRegion FullWindowRegion = new(0, 0, 1, 1);
     private readonly ApiKeyStore apiKeyStore = new();
     private readonly AppSettingsStore settingsStore = new();
-    private static readonly HttpClient httpClient = new();
+    private static readonly HttpClient httpClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(12)
+    };
     private readonly TranslationSession session;
     private readonly CachingTranslationService cachingTranslationService;
     private readonly ITranslationService chatTranslationService;
