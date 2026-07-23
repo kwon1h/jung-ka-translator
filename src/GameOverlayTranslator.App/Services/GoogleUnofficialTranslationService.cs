@@ -12,6 +12,8 @@ namespace GameOverlayTranslator.App.Services;
 
 public sealed class GoogleUnofficialTranslationService(HttpClient httpClient) : ITranslationService
 {
+    private const string TranslateEndpoint = "https://translate.googleapis.com/translate_a/single";
+
     public async Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Text))
@@ -20,9 +22,15 @@ public sealed class GoogleUnofficialTranslationService(HttpClient httpClient) : 
         }
 
         var source = string.IsNullOrWhiteSpace(request.SourceLanguage) ? "auto" : request.SourceLanguage;
-        var url = $"https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl={Uri.EscapeDataString(source)}&tl={Uri.EscapeDataString(request.TargetLanguage)}&q={Uri.EscapeDataString(request.Text)}";
-
-        using var response = await httpClient.GetAsync(url, ct);
+        using var content = new FormUrlEncodedContent(
+        [
+            new("client", "gtx"),
+            new("dt", "t"),
+            new("sl", source),
+            new("tl", request.TargetLanguage),
+            new("q", request.Text)
+        ]);
+        using var response = await httpClient.PostAsync(TranslateEndpoint, content, ct);
         if (!response.IsSuccessStatusCode)
         {
             throw new InvalidOperationException($"Google 번역 요청 실패: {(int)response.StatusCode} {response.ReasonPhrase}");

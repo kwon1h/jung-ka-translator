@@ -65,6 +65,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Cancellation does not trip translation circuit", TestCancellationDoesNotTripTranslationCircuit),
     ("Stopping screen translation does not publish canceled text", TestScreenStopDoesNotPublishCanceledText),
     ("Translation HTTP timeout is suitable for real-time use", TestTranslationHttpTimeout),
+    ("Google batch translation posts long text once", TestGoogleBatchTranslationUsesPost),
     ("Spaced-language screen segment keeps phrases", TestSpacedLanguageScreenSegmentKeepsPhrases),
     ("CJK screen segment separates OCR chunks", TestCjkScreenSegmentSeparatesOcrChunks),
     ("Supported OCR scripts pass screen filter", TestSupportedOcrScriptsPassScreenFilter),
@@ -1035,6 +1036,24 @@ static Task TestTranslationHttpTimeout()
     Assert(client!.Timeout <= TimeSpan.FromSeconds(15), "Translation requests should not freeze a live game overlay for the default 100-second timeout.");
     Assert(client.Timeout >= TimeSpan.FromSeconds(5), "Translation timeout should still allow normal network latency.");
     return Task.CompletedTask;
+}
+
+static async Task TestGoogleBatchTranslationUsesPost()
+{
+    var handler = new EchoGoogleTranslationHandler();
+    using var client = new HttpClient(handler);
+    var service = new GoogleUnofficialTranslationService(client);
+    var texts = new[] { "hello world", new string('x', 12_000) };
+
+    var result = await service.TranslateBatchAsync(
+        new BatchTranslationRequest(texts, "ko", "en"),
+        CancellationToken.None);
+
+    Assert(handler.RequestCount == 1, "A delimiter-preserving Google batch should use one outbound request.");
+    Assert(handler.LastMethod == HttpMethod.Post, "Long game-screen text should be sent in a POST body instead of the URL.");
+    Assert(string.IsNullOrEmpty(handler.LastRequestUri?.Query), "The translation text must not be placed in the request URL.");
+    Assert(handler.LastBody?.Length > texts[1].Length, "The POST body should contain the complete long translation batch.");
+    Assert(result.TranslatedTexts.SequenceEqual(texts), "The packed Google batch should split back into its original rows.");
 }
 
 static SessionOptions CreateOptions(TranslationMode mode, IReadOnlyList<UserDictEntry>? dictionary = null) =>
@@ -2015,6 +2034,44 @@ sealed class BlockingBatchTranslationService : ITranslationService
         Started.TrySetResult(true);
         await Task.Delay(Timeout.InfiniteTimeSpan, ct);
         throw new InvalidOperationException("Unreachable");
+    }
+}
+
+sealed class EchoGoogleTranslationHandler : HttpMessageHandler
+{
+    public int RequestCount { get; private set; }
+    public HttpMethod? LastMethod { get; private set; }
+    public Uri? LastRequestUri { get; private set; }
+    public string? LastBody { get; private set; }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        RequestCount++;
+        LastMethod = request.Method;
+        LastRequestUri = request.RequestUri;
+        LastBody = request.Content is null
+            ? string.Empty
+            : await request.Content.ReadAsStringAsync(cancellationToken);
+
+        var translatedText = LastBody
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .Where(parts => parts.Length == 2)
+            .Where(parts => Uri.UnescapeDataString(parts[0]) == "q")
+            .Select(parts => Uri.UnescapeDataString(parts[1].Replace("+", " ", StringComparison.Ordinal)))
+            .Single();
+        var json = System.Text.Json.JsonSerializer.Serialize(
+            new object?[]
+            {
+                new object?[] { new object?[] { translatedText } },
+                null,
+                "en"
+            });
+
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(json)
+        };
     }
 }
 
