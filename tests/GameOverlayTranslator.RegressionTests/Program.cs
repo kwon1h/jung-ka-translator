@@ -47,6 +47,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Chinese ratio bypasses screen filter", TestChineseRatioBypassesScreenFilter),
     ("Chinese ratio bypasses chat filter", TestChineseRatioBypassesChatFilter),
     ("English-only screen lines are hidden", TestEnglishOnlyScreenLinesAreHidden),
+    ("Screen overlay keeps individual OCR positions", TestScreenOverlayKeepsIndividualOcrPositions),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
     ("Foreground capture accepts only target window", TestForegroundCaptureAcceptsOnlyTargetWindow),
     ("Capture reads the target window device context", TestCaptureUsesTargetWindowDeviceContext),
@@ -757,6 +758,23 @@ static async Task TestEnglishOnlyScreenLinesAreHidden()
     Assert(translation.BatchRequests == 0, "English-only screen text should not call translation.");
     Assert(!updates.Any(update => update.ScreenItems is { Count: > 0 }), "English-only screen text should not be shown.");
     Assert(updates.Any(update => update.FilterRule == "EnglishOnly" && update.ScreenItems is { Count: 0 }), "English-only OCR should clear an existing overlay.");
+}
+
+static Task TestScreenOverlayKeepsIndividualOcrPositions()
+{
+    var firstBounds = new Rect(12, 40, 160, 24);
+    var secondBounds = new Rect(18, 44, 150, 24);
+    var rendered = OverlayWindow.BuildScreenRenderItems(
+    [
+        new ScreenTranslationItem("first", "첫 번째", firstBounds),
+        new ScreenTranslationItem("second", "두 번째", secondBounds)
+    ],
+    dpiScale: 1);
+
+    Assert(rendered.Count == 2, "Nearby or overlapping OCR lines must not be merged into one overlay box.");
+    Assert(rendered[0].Bounds == firstBounds, "The first screen translation must use its own OCR rectangle.");
+    Assert(rendered[1].Bounds == secondBounds, "The second screen translation must use its own OCR rectangle.");
+    return Task.CompletedTask;
 }
 
 static async Task TestMultipleIncludeRegionsFilterOcrLines()

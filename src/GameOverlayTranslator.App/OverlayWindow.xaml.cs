@@ -372,12 +372,19 @@ public partial class OverlayWindow : Window
 
                 var borders = new List<Border>();
                 var desiredBoxes = new List<Rect>();
-                foreach (var cluster in BuildScreenClusters(update.ScreenItems, dpiScale))
+                foreach (var renderItem in BuildScreenRenderItems(update.ScreenItems, dpiScale))
                 {
-                    var stack = new StackPanel();
-                    foreach (var renderItem in cluster.Items)
+                    var x = ClampToCanvas(renderItem.Bounds.Left, ActualWidth);
+                    var y = ClampToCanvas(renderItem.Bounds.Top, ActualHeight);
+                    var availableWidth = Math.Max(1, ActualWidth - x);
+
+                    var border = new Border
                     {
-                        stack.Children.Add(new OutlinedTextBlock
+                        Background = Brushes.Transparent,
+                        Padding = new Thickness(4, 2, 4, 2),
+                        CornerRadius = new CornerRadius(4),
+                        ClipToBounds = true,
+                        Child = new OutlinedTextBlock
                         {
                             Text = renderItem.Text,
                             FontFamily = this.FontFamily,
@@ -387,27 +394,14 @@ public partial class OverlayWindow : Window
                             StrokeThickness = this.StrokeThicknessValue,
                             FontWeight = FontWeights.Bold,
                             HorizontalAlignment = HorizontalAlignment.Left
-                        });
-                    }
-
-                    var x = ClampToCanvas(cluster.Bounds.Left, ActualWidth);
-                    var y = ClampToCanvas(cluster.Bounds.Top, ActualHeight);
-                    var availableWidth = Math.Max(1, ActualWidth - x);
-
-                    var border = new Border
-                    {
-                        Background = Brushes.Transparent,
-                        Padding = new Thickness(4, 2, 4, 2),
-                        CornerRadius = new CornerRadius(4),
-                        ClipToBounds = true,
-                        Child = stack,
-                        MinWidth = Math.Min(cluster.Bounds.Width, availableWidth),
+                        },
+                        MinWidth = Math.Min(renderItem.Bounds.Width, availableWidth),
                         MaxWidth = availableWidth
                     };
 
                     border.Measure(new Size(availableWidth, double.PositiveInfinity));
                     var width = Math.Min(availableWidth, Math.Max(border.MinWidth, border.DesiredSize.Width));
-                    var height = Math.Max(cluster.Bounds.Height, border.DesiredSize.Height);
+                    var height = Math.Max(renderItem.Bounds.Height, border.DesiredSize.Height);
                     border.Width = width;
                     border.Height = height;
 
@@ -570,41 +564,21 @@ public partial class OverlayWindow : Window
         }
     }
 
-    private IReadOnlyList<ScreenCluster> BuildScreenClusters(
+    internal static IReadOnlyList<ScreenRenderItem> BuildScreenRenderItems(
         IReadOnlyList<ScreenTranslationItem> items,
         double dpiScale)
     {
-        var clusters = new List<ScreenCluster>();
-        foreach (var item in items
-                     .Select(item => new ScreenRenderItem(
-                         item.TranslatedText,
-                         new Rect(
-                             item.BoundingRect.X / dpiScale,
-                             item.BoundingRect.Y / dpiScale,
-                             item.BoundingRect.Width / dpiScale,
-                             item.BoundingRect.Height / dpiScale)))
-                     .Where(item => item.Bounds.Width > 0 && item.Bounds.Height > 0)
-                     .OrderBy(item => item.Bounds.Top)
-                     .ThenBy(item => item.Bounds.Left))
-        {
-            var cluster = clusters.LastOrDefault(candidate => AreNearby(candidate.Bounds, item.Bounds));
-            if (cluster is null)
-            {
-                clusters.Add(new ScreenCluster(item));
-            }
-            else
-            {
-                cluster.Add(item);
-            }
-        }
-        return clusters;
-    }
-
-    private bool AreNearby(Rect first, Rect second)
-    {
-        var horizontalGap = Math.Max(0, Math.Max(first.Left, second.Left) - Math.Min(first.Right, second.Right));
-        var verticalGap = Math.Max(0, Math.Max(first.Top, second.Top) - Math.Min(first.Bottom, second.Bottom));
-        return horizontalGap <= 20 && verticalGap <= Math.Max(8, FontSize * 0.8);
+        var scale = Math.Max(1, dpiScale);
+        return items
+            .Select(item => new ScreenRenderItem(
+                item.TranslatedText,
+                new Rect(
+                    item.BoundingRect.X / scale,
+                    item.BoundingRect.Y / scale,
+                    item.BoundingRect.Width / scale,
+                    item.BoundingRect.Height / scale)))
+            .Where(item => item.Bounds.Width > 0 && item.Bounds.Height > 0)
+            .ToArray();
     }
 
     private ChatBoxMetrics MeasureChatBox(string text, double minWidth, double maxWidth, double sourceHeight)
@@ -739,23 +713,10 @@ public partial class OverlayWindow : Window
         base.OnClosed(e);
     }
 
-    private sealed record ScreenRenderItem(string Text, Rect Bounds);
+    internal sealed record ScreenRenderItem(string Text, Rect Bounds);
 
     private sealed record ChatBoxMetrics(double Width, double Height, double FontSize);
 
-    private sealed class ScreenCluster(ScreenRenderItem first)
-    {
-        public List<ScreenRenderItem> Items { get; } = [first];
-        public Rect Bounds { get; private set; } = first.Bounds;
-
-        public void Add(ScreenRenderItem item)
-        {
-            Items.Add(item);
-            var bounds = Bounds;
-            bounds.Union(item.Bounds);
-            Bounds = bounds;
-        }
-    }
 }
 
 internal static class OverlayLayout
