@@ -29,6 +29,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("PaddleOCR bitmap conversion preserves BGR pixels", TestPaddleOcrBitmapConversion),
     ("PaddleOCR reuses only identical frames", TestPaddleOcrFrameCache),
     ("Translation session runs OCR off caller context", TestTranslationSessionRunsOcrOffCallerContext),
+    ("Slow OCR polling yields CPU time back to the game", TestSlowOcrPollingYieldsToGame),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("App settings flush the latest debounced value", TestAppSettingsFlushesLatestValue),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
@@ -1299,6 +1300,24 @@ static Task TestPaddleOcrFrameCache()
     changed.Set(0, 0, new CvVec3b(1, 0, 0));
     Assert(!cache.TryGet(changed, "en", out _), "Any pixel change must invalidate the OCR result.");
     Assert(!cache.TryGet(identical, "ja", out _), "A language change must invalidate the OCR result.");
+    return Task.CompletedTask;
+}
+
+static Task TestSlowOcrPollingYieldsToGame()
+{
+    var normalDelay = TranslationSession.CalculateNextPollDelay(
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromMilliseconds(240));
+    Assert(
+        normalDelay == TimeSpan.FromMilliseconds(760),
+        "A fast OCR pass should preserve the configured start-to-start polling interval.");
+
+    var overrunDelay = TranslationSession.CalculateNextPollDelay(
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromMilliseconds(1250));
+    Assert(
+        overrunDelay >= TimeSpan.FromMilliseconds(100),
+        "An OCR pass that exceeds its interval must yield CPU time before the next capture.");
     return Task.CompletedTask;
 }
 

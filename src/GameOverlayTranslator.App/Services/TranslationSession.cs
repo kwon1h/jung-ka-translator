@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,6 +14,7 @@ namespace GameOverlayTranslator.App.Services;
 public sealed class TranslationSession(ICaptureService captureService, IOcrEngine ocrEngine, ITranslationService translationService) : ITranslationSession
 {
     private const int MaxChatTranslationMemoryEntries = 1024;
+    private static readonly TimeSpan OverrunCooldown = TimeSpan.FromMilliseconds(100);
     private CancellationTokenSource? runCancellation;
     private Task? runTask;
 
@@ -80,10 +82,9 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             .Select(entry => (Entry: entry, Regex: BuildFlexRegex(entry.Source)))
             .ToList();
 
-        using var timer = new PeriodicTimer(options.Interval);
-
-        do
+        while (true)
         {
+            var iterationStartedAt = Stopwatch.GetTimestamp();
             try
             {
                 var frame = await captureService.CaptureAsync(options.Target, options.Region, ct);
@@ -111,23 +112,24 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                             return (totalTranslationRequests, totalTranslationCharacters);
                         },
                         ct);
-                    continue;
                 }
-
-                await HandleChatTranslationAsync(
-                    options,
-                    recognizedForTranslation,
-                    recentChat,
-                    chatTranslationMemory,
-                    dictExactEntries,
-                    dictRegexes,
-                    usage =>
-                    {
-                        totalTranslationRequests += usage.OutboundRequestCount;
-                        totalTranslationCharacters += usage.OutboundCharacterCount;
-                        return (totalTranslationRequests, totalTranslationCharacters);
-                    },
-                    ct);
+                else
+                {
+                    await HandleChatTranslationAsync(
+                        options,
+                        recognizedForTranslation,
+                        recentChat,
+                        chatTranslationMemory,
+                        dictExactEntries,
+                        dictRegexes,
+                        usage =>
+                        {
+                            totalTranslationRequests += usage.OutboundRequestCount;
+                            totalTranslationCharacters += usage.OutboundCharacterCount;
+                            return (totalTranslationRequests, totalTranslationCharacters);
+                        },
+                        ct);
+                }
             }
             catch (CaptureDeferredException ex)
             {
@@ -156,8 +158,29 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             {
                 Publish(ex.Message, isError: true);
             }
+
+            await WaitForNextPollAsync(options.Interval, iterationStartedAt, ct);
         }
-        while (await timer.WaitForNextTickAsync(ct));
+    }
+
+    private static async Task WaitForNextPollAsync(
+        TimeSpan interval,
+        long iterationStartedAt,
+        CancellationToken ct)
+    {
+        var elapsed = Stopwatch.GetElapsedTime(iterationStartedAt);
+        await Task.Delay(CalculateNextPollDelay(interval, elapsed), ct);
+    }
+
+    internal static TimeSpan CalculateNextPollDelay(TimeSpan interval, TimeSpan elapsed)
+    {
+        if (interval <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(interval));
+        }
+
+        var remaining = interval - elapsed;
+        return remaining > TimeSpan.Zero ? remaining : OverrunCooldown;
     }
 
     private async Task HandleScreenTranslationAsync(
