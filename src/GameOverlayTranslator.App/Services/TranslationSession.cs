@@ -69,6 +69,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         var recentChat = new RecentChatFilter();
         var chatTranslationMemory = new Dictionary<string, ChatTranslationMemoryEntry>(StringComparer.Ordinal);
         var screenTranslationMemory = new ScreenTranslationMemory();
+        var screenFrameReplay = new ScreenFrameReplayState();
+        var chatFrameReplay = new ChatFrameReplayState();
         var totalTranslationRequests = 0;
         var totalTranslationCharacters = 0;
 
@@ -102,6 +104,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         recognizedForTranslation,
                         dictionaryMatcher,
                         screenTranslationMemory,
+                        screenFrameReplay,
                         usage =>
                         {
                             totalTranslationRequests += usage.OutboundRequestCount;
@@ -118,6 +121,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         recentChat,
                         chatTranslationMemory,
                         dictionaryMatcher,
+                        chatFrameReplay,
                         usage =>
                         {
                             totalTranslationRequests += usage.OutboundRequestCount;
@@ -201,11 +205,30 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         OcrResult recognized,
         UserDictionaryMatcher dictionaryMatcher,
         ScreenTranslationMemory screenTranslationMemory,
+        ScreenFrameReplayState frameReplay,
         Func<TranslationUsage, (int TotalRequests, int TotalCharacters)> addUsage,
         CancellationToken ct)
     {
+        if (recognized.IsFrameCacheHit && frameReplay.Items is { } replayItems)
+        {
+            Publish(
+                "스킵",
+                ocrRawText: recognized.Text,
+                filterReason: "Identical frame reused the completed screen result",
+                filterRule: "FrameCacheHit",
+                screenItems: replayItems.Count > 0 ? replayItems : null,
+                diagnosticKind: DiagnosticKind.OcrSkipped);
+            return;
+        }
+
+        if (!recognized.IsFrameCacheHit)
+        {
+            frameReplay.Items = null;
+        }
+
         if (recognized.Lines.Count == 0)
         {
+            frameReplay.Items = Array.Empty<ScreenTranslationItem>();
             Publish(
                 "스킵",
                 ocrRawText: recognized.Text,
@@ -217,6 +240,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
         if (ShouldSuppressEnglishOnly(options, string.Join(" ", recognized.Lines.Select(line => line.Text))))
         {
+            frameReplay.Items = Array.Empty<ScreenTranslationItem>();
             Publish(
                 "스킵",
                 ocrRawText: recognized.Text,
@@ -355,6 +379,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
         if (screenItems.Count > 0)
         {
+            frameReplay.Items = screenItems;
             if (pendingScreenUsage.OutboundRequestCount > 0 || pendingScreenUsage.OutboundCharacterCount > 0)
             {
                 Publish(
@@ -380,6 +405,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     screenItems: screenItems,
                     diagnosticKind: DiagnosticKind.OcrSkipped);
             }
+        }
+        else
+        {
+            frameReplay.Items = Array.Empty<ScreenTranslationItem>();
         }
     }
 
@@ -435,7 +464,8 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
         return new OcrResult(includedText, includedLines)
         {
-            Words = includedWords
+            Words = includedWords,
+            IsFrameCacheHit = recognized.IsFrameCacheHit
         };
     }
 
@@ -512,9 +542,27 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         RecentChatFilter recentChat,
         Dictionary<string, ChatTranslationMemoryEntry> chatTranslationMemory,
         UserDictionaryMatcher dictionaryMatcher,
+        ChatFrameReplayState frameReplay,
         Func<TranslationUsage, (int TotalRequests, int TotalCharacters)> addUsage,
         CancellationToken ct)
     {
+        if (recognized.IsFrameCacheHit && frameReplay.Items is { } replayItems)
+        {
+            Publish(
+                "스킵",
+                ocrRawText: recognized.Text,
+                filterReason: "Identical frame reused the completed chat result",
+                filterRule: "FrameCacheHit",
+                chatItems: replayItems.Count > 0 ? replayItems : null,
+                diagnosticKind: DiagnosticKind.OcrSkipped);
+            return;
+        }
+
+        if (!recognized.IsFrameCacheHit)
+        {
+            frameReplay.Items = null;
+        }
+
         var recentChatState = recentChat.CaptureState();
         var positionedChatLines = ParsePositionedChatLines(recognized, options.OcrLanguage);
         AppLog.WriteThrottled(
@@ -523,6 +571,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             TimeSpan.FromSeconds(30));
         if (positionedChatLines.Count == 0)
         {
+            frameReplay.Items = Array.Empty<ChatTranslationItem>();
             Publish(
                 "스킵",
                 ocrRawText: recognized.Text,
@@ -717,10 +766,11 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             catch
             {
                 recentChat.RestoreState(recentChatState);
+                var failedSnapshot = BuildChatSnapshot(pollLines, chatTranslationMemory);
                 Publish(
                     "번역",
                     ocrRawText: recognized.Text,
-                    chatItems: BuildChatSnapshot(pollLines, chatTranslationMemory));
+                    chatItems: failedSnapshot);
                 throw;
             }
             var usage = batchResult.Usage ?? TranslationUsage.Outbound(1, batchCharacters);
@@ -797,10 +847,12 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                 pendingAlias.ChatLineId);
         }
 
+        var snapshot = BuildChatSnapshot(pollLines, chatTranslationMemory);
+        frameReplay.Items = snapshot;
         Publish(
             "번역",
             ocrRawText: recognized.Text,
-            chatItems: BuildChatSnapshot(pollLines, chatTranslationMemory));
+            chatItems: snapshot);
     }
 
     private static IReadOnlyList<ChatPollLine> GroupChatOccurrences(
@@ -1058,6 +1110,16 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         ChatPollLine PollLine,
         ChatLine ActiveLine,
         string ChatLineId);
+
+    private sealed class ScreenFrameReplayState
+    {
+        public IReadOnlyList<ScreenTranslationItem>? Items { get; set; }
+    }
+
+    private sealed class ChatFrameReplayState
+    {
+        public IReadOnlyList<ChatTranslationItem>? Items { get; set; }
+    }
 
     private sealed record ScreenLinePlan(OcrLineResult OcrLine, IReadOnlyList<ScreenSegmentPlan> Segments);
 

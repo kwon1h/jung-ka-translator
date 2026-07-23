@@ -194,7 +194,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
             pixels.ApplyMasks(frame.IncludedOcrRects, frame.ExcludedOcrRects);
             if (frameCache.TryGet(pixels, language.Tag, out var cachedResult))
             {
-                return cachedResult;
+                return cachedResult with { IsFrameCacheHit = true };
             }
 
             using var mat = PixelsToMat(pixels);

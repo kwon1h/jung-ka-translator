@@ -54,6 +54,7 @@ public sealed record OcrLineResult(string Text, Rect BoundingRect);
 public sealed record OcrResult(string Text, IReadOnlyList<OcrLineResult> Lines)
 {
     public IReadOnlyList<OcrWordResult> Words { get; init; } = Array.Empty<OcrWordResult>();
+    public bool IsFrameCacheHit { get; init; }
 }
 
 public sealed record TranslationRequest(string Text, string TargetLanguage, string? SourceLanguage = null);

@@ -43,6 +43,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Rejected chat does not poison duplicate cache", TestRejectedChatDoesNotPoisonExactDuplicateCache),
     ("Repeated screen OCR uses cache", TestRepeatedScreenLineUsesCachedTranslation),
     ("Repeated chat translation uses cache", TestRepeatedChatLineUsesCachedTranslation),
+    ("Identical chat frames replay completed layout", TestIdenticalChatFrameReplaysCompletedLayout),
     ("Translation cache is isolated by effective provider", TestTranslationCacheIsolatedByEffectiveProvider),
     ("Translation circuit is isolated by effective provider", TestTranslationCircuitIsolatedByEffectiveProvider),
     ("Translation cache evicts oldest entries", TestTranslationCacheEvictsOldestEntries),
@@ -361,11 +362,18 @@ static async Task TestRepeatedScreenLineUsesCachedTranslation()
     var cached = new CachingTranslationService(translation, new ScreenTranslationCacheStore());
     var source = Chinese("7f13 5b58 6d4b 8bd5 6587 672c 7532 4e59 4e19");
     var ocr = new OcrResult(source, [new OcrLineResult(source, new Rect(12, 34, 160, 24))]);
-    var session = new TranslationSession(new FakeCaptureService(), new FakeOcrEngine(ocr), cached);
+    var session = new TranslationSession(
+        new FakeCaptureService(),
+        new SequencedOcrEngine(ocr, ocr with { IsFrameCacheHit = true }),
+        cached);
+    var updates = Collect(session);
 
-    await RunSession(session, CreateOptions(TranslationMode.Screen), 110);
+    await RunSession(session, CreateOptions(TranslationMode.Screen), 250);
 
     Assert(translation.BatchRequests == 1, "Repeated screen OCR should call API once.");
+    Assert(
+        updates.Any(update => update.FilterRule == "FrameCacheHit" && update.ScreenItems is { Count: > 0 }),
+        "An identical screen frame should replay the completed positioned result without rebuilding its translation plan.");
 }
 
 static async Task TestRepeatedChatLineUsesCachedTranslation()
@@ -379,6 +387,31 @@ static async Task TestRepeatedChatLineUsesCachedTranslation()
     Assert(translation.SingleRequests == 1, "Repeated chat request should call API once.");
     Assert(first.TranslatedText == second.TranslatedText, "Cached translation should match.");
     Assert((second.Usage?.OutboundRequestCount ?? -1) == 0, "Cache hit should report zero outbound requests.");
+}
+
+static async Task TestIdenticalChatFrameReplaysCompletedLayout()
+{
+    var translation = new CountingTranslationService();
+    var message = Chinese("5feb 901f 5f00 59cb 6e38 620f");
+    var sourceLine = $"racer: {message}";
+    var ocr = new OcrResult(
+        sourceLine,
+        [new OcrLineResult(sourceLine, new Rect(14, 120, 220, 24))]);
+    var session = new TranslationSession(
+        new FakeCaptureService(),
+        new SequencedOcrEngine(ocr, ocr with { IsFrameCacheHit = true }),
+        translation);
+    var updates = Collect(session);
+
+    await RunSession(session, CreateOptions(TranslationMode.Chat), 250);
+
+    Assert(translation.BatchRequests == 1, "An identical chat frame should not repeat translation work.");
+    Assert(
+        updates.Any(update =>
+            update.FilterRule == "FrameCacheHit"
+            && update.ChatItems is { Count: > 0 }
+            && update.ChatItems[0].BoundingRect == new Rect(14, 120, 220, 24)),
+        "An identical chat frame should replay the completed translation at its OCR position.");
 }
 
 static async Task TestTranslationCacheIsolatedByEffectiveProvider()
@@ -820,15 +853,17 @@ static async Task TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems()
 {
     var translation = new CountingTranslationService();
     var source = Chinese("7f13 5b58 6d4b 8bd5 6587 672c");
+    var empty = new OcrResult(string.Empty, []);
     var session = new TranslationSession(
         new FakeCaptureService(),
         new SequencedOcrEngine(
             new OcrResult(source, [new OcrLineResult(source, new Rect(12, 34, 160, 24))]),
-            new OcrResult(string.Empty, [])),
+            empty,
+            empty with { IsFrameCacheHit = true }),
         translation);
     var updates = Collect(session);
 
-    await RunSession(session, CreateOptions(TranslationMode.Screen), 110);
+    await RunSession(session, CreateOptions(TranslationMode.Screen), 350);
 
     Assert(updates.Any(update => update.ScreenItems is { Count: > 0 }), "Expected initial overlay items.");
     Assert(updates.All(update => update.ScreenItems is null || update.ScreenItems.Count > 0), "Empty OCR must not publish empty overlay items.");
@@ -1311,13 +1346,16 @@ static async Task TestChatRetriesAfterTransientFailure()
     var message = Chinese("4e00 6b21 5931 8d25 540e 91cd 8bd5");
     var sourceLine = $"racer: {message}";
     var translation = new FailOnceThenSucceedBatchTranslationService();
+    var ocr = new OcrResult(
+        sourceLine,
+        [new OcrLineResult(sourceLine, new Rect(0, 0, 180, 24))]);
     var session = new TranslationSession(
         new FakeCaptureService(),
-        new FakeOcrEngine(new OcrResult(sourceLine, [new OcrLineResult(sourceLine, new Rect(0, 0, 180, 24))])),
+        new SequencedOcrEngine(ocr, ocr with { IsFrameCacheHit = true }),
         translation);
     var updates = Collect(session);
 
-    await RunSession(session, CreateOptions(TranslationMode.Chat), 110);
+    await RunSession(session, CreateOptions(TranslationMode.Chat), 250);
 
     Assert(translation.BatchRequests >= 2, "A transiently failed chat line should be sent again.");
     Assert(
