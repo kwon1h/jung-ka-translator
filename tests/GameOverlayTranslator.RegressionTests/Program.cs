@@ -35,6 +35,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Session updates coalesce into one UI dispatch", TestSessionUpdateBuffer),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("App settings flush the latest debounced value", TestAppSettingsFlushesLatestValue),
+    ("Dictionary matcher filters impossible regex work", TestUserDictionaryMatcher),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
     ("Dictionary screen line skips API", TestDictionaryOnlyScreenLineSkipsTranslation),
     ("Chinese-Korean dictionary is not used for other targets", TestDictionaryIsScopedToChineseKorean),
@@ -293,6 +294,33 @@ static async Task TestExactDictionarySkipsTranslation()
 
     Assert(translation.BatchRequests == 0, "Dictionary chat should not call API.");
     Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrSkipped && update.FilterRule == "Dictionary"), "Expected dictionary skip diagnostic.");
+}
+
+static Task TestUserDictionaryMatcher()
+{
+    var entries = Enumerable.Range(0, 500)
+        .Select(index => new UserDictEntry($"unused{index}", $"미사용{index}"))
+        .Append(new UserDictEntry("快使用天使", "빨리 천사"))
+        .Append(new UserDictEntry("abc", "xyz"))
+        .Append(new UserDictEntry("xyz", "완료"))
+        .ToList();
+    var matcher = new UserDictionaryMatcher(entries);
+
+    Assert(
+        matcher.TryGetExact("快 使，用!天使", out var exact)
+        && exact.Target == "빨리 천사",
+        "Exact dictionary lookup should keep the existing punctuation-tolerant behavior.");
+
+    var replacedText = matcher.ReplaceSubstrings("请 快 使，用!天使 吧", out var replaced);
+    Assert(replaced, "A punctuation-noisy dictionary substring should still be replaced.");
+    Assert(replacedText == "请 빨리 천사 吧", "The optimized matcher changed substring replacement output.");
+
+    var chainedText = matcher.ReplaceSubstrings("abc", out var chained);
+    Assert(chained && chainedText == "완료", "Dictionary replacements must preserve existing ordered chaining.");
+
+    var unchanged = matcher.ReplaceSubstrings("completely unrelated text", out var unrelatedReplaced);
+    Assert(!unrelatedReplaced && unchanged == "completely unrelated text", "Unrelated text must bypass dictionary replacement.");
+    return Task.CompletedTask;
 }
 
 static async Task TestDictionaryOnlyScreenLineSkipsTranslation()

@@ -1,7 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
-using System.Text;
-using System.Text.RegularExpressions;
 using System.Windows;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
@@ -74,13 +71,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                 options.TargetLanguage))
             .ToList();
 
-        var dictExactEntries = applicableDictionary
-            .Select(entry => (Entry: entry, NormalizedSource: NormalizeForMatching(entry.Source)))
-            .ToList();
-
-        var dictRegexes = applicableDictionary
-            .Select(entry => (Entry: entry, Regex: BuildFlexRegex(entry.Source)))
-            .ToList();
+        var dictionaryMatcher = new UserDictionaryMatcher(applicableDictionary);
 
         while (true)
         {
@@ -101,8 +92,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     await HandleScreenTranslationAsync(
                         options,
                         recognizedForTranslation,
-                        dictExactEntries,
-                        dictRegexes,
+                        dictionaryMatcher,
                         screenTranslationMemory,
                         usage =>
                         {
@@ -119,8 +109,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                         recognizedForTranslation,
                         recentChat,
                         chatTranslationMemory,
-                        dictExactEntries,
-                        dictRegexes,
+                        dictionaryMatcher,
                         usage =>
                         {
                             totalTranslationRequests += usage.OutboundRequestCount;
@@ -185,8 +174,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
     private async Task HandleScreenTranslationAsync(
         SessionOptions options,
         OcrResult recognized,
-        IReadOnlyList<(UserDictEntry Entry, string NormalizedSource)> dictExactEntries,
-        IReadOnlyList<(UserDictEntry Entry, Regex Regex)> dictRegexes,
+        UserDictionaryMatcher dictionaryMatcher,
         ScreenTranslationMemory screenTranslationMemory,
         Func<TranslationUsage, (int TotalRequests, int TotalCharacters)> addUsage,
         CancellationToken ct)
@@ -233,12 +221,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             foreach (var segment in ScreenTranslationSegmenter.Split(line.Text, options.OcrLanguage))
             {
                 var segmentText = segment.Text.Trim();
-                var normalizedSegment = NormalizeForMatching(segmentText);
-                var exactEntry = dictExactEntries
-                    .FirstOrDefault(entry => string.Equals(entry.NormalizedSource, normalizedSegment, StringComparison.OrdinalIgnoreCase))
-                    .Entry;
-
-                if (exactEntry is not null)
+                if (dictionaryMatcher.TryGetExact(segmentText, out var exactEntry))
                 {
                     var canonicalExact = TranslationTextNormalizer.CanonicalizeCacheText(segmentText);
                     screenTranslationMemory.Remember(canonicalExact, segmentText, exactEntry.Target);
@@ -246,11 +229,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                     continue;
                 }
 
-                var processed = segmentText;
-                foreach (var (entry, regex) in dictRegexes)
-                {
-                    processed = regex.Replace(processed, entry.Target);
-                }
+                var processed = dictionaryMatcher.ReplaceSubstrings(segmentText, out _);
 
                 var canonical = TranslationTextNormalizer.CanonicalizeCacheText(processed);
                 if (string.IsNullOrWhiteSpace(canonical))
@@ -507,8 +486,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         OcrResult recognized,
         RecentChatFilter recentChat,
         Dictionary<string, ChatTranslationMemoryEntry> chatTranslationMemory,
-        IReadOnlyList<(UserDictEntry Entry, string NormalizedSource)> dictExactEntries,
-        IReadOnlyList<(UserDictEntry Entry, Regex Regex)> dictRegexes,
+        UserDictionaryMatcher dictionaryMatcher,
         Func<TranslationUsage, (int TotalRequests, int TotalCharacters)> addUsage,
         CancellationToken ct)
     {
@@ -552,12 +530,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             var normalizedMessage = NormalizeTextForTranslation(line.Message, options.OcrLanguage);
             var activeLine = new ChatLine(line.Speaker, normalizedMessage);
 
-            var normalizedMsg = NormalizeForMatching(activeLine.Message.Trim());
-            var exactEntry = dictExactEntries
-                .FirstOrDefault(entry => string.Equals(entry.NormalizedSource, normalizedMsg, StringComparison.OrdinalIgnoreCase))
-                .Entry;
-
-            if (exactEntry is not null)
+            if (dictionaryMatcher.TryGetExact(activeLine.Message.Trim(), out var exactEntry))
             {
                 AppLog.WriteThrottled(
                     "chat-dictionary-exact",
@@ -623,14 +596,7 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
                 continue;
             }
 
-            var processedMessage = activeLine.Message;
-            var replaced = false;
-            foreach (var (entry, regex) in dictRegexes)
-            {
-                var before = processedMessage;
-                processedMessage = regex.Replace(processedMessage, entry.Target);
-                replaced |= processedMessage != before;
-            }
+            var processedMessage = dictionaryMatcher.ReplaceSubstrings(activeLine.Message, out var replaced);
 
             if (replaced)
             {
@@ -971,9 +937,9 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
 
     private static Rect? FindChatBoundingRect(string sourceLine, IReadOnlyList<OcrLineResult> ocrLines)
     {
-        var normalizedSource = NormalizeForMatching(sourceLine);
+        var normalizedSource = TranslationTextNormalizer.NormalizeForDictionaryMatch(sourceLine);
         return ocrLines
-            .Select(line => (Line: line, Normalized: NormalizeForMatching(line.Text)))
+            .Select(line => (Line: line, Normalized: TranslationTextNormalizer.NormalizeForDictionaryMatch(line.Text)))
             .Where(candidate => candidate.Normalized.Length > 0
                                 && candidate.Normalized.Contains(normalizedSource, StringComparison.Ordinal))
             .OrderByDescending(candidate => string.Equals(candidate.Normalized, normalizedSource, StringComparison.Ordinal))
@@ -1028,64 +994,6 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         options.SuppressEnglishOnlyScreenLines
         && !options.OcrLanguage.Tag.StartsWith("en", StringComparison.OrdinalIgnoreCase)
         && IsEnglishOnly(text);
-
-    private static string NormalizeForMatching(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        var builder = new StringBuilder(value.Length);
-        foreach (var character in value.Normalize(NormalizationForm.FormKC))
-        {
-            if (char.IsWhiteSpace(character) || IsIgnoredPunctuation(character))
-            {
-                continue;
-            }
-
-            builder.Append(char.ToLowerInvariant(character));
-        }
-
-        return builder.ToString();
-    }
-
-    private static bool IsIgnoredPunctuation(char character)
-    {
-        var category = CharUnicodeInfo.GetUnicodeCategory(character);
-        return category is UnicodeCategory.ConnectorPunctuation
-            or UnicodeCategory.DashPunctuation
-            or UnicodeCategory.OpenPunctuation
-            or UnicodeCategory.ClosePunctuation
-            or UnicodeCategory.InitialQuotePunctuation
-            or UnicodeCategory.FinalQuotePunctuation
-            or UnicodeCategory.OtherPunctuation
-            or UnicodeCategory.MathSymbol
-            or UnicodeCategory.CurrencySymbol
-            or UnicodeCategory.ModifierSymbol
-            or UnicodeCategory.OtherSymbol;
-    }
-
-    private static Regex BuildFlexRegex(string source)
-    {
-        var coreChars = new List<string>();
-        foreach (var character in source.Normalize(NormalizationForm.FormKC))
-        {
-            if (char.IsWhiteSpace(character) || IsIgnoredPunctuation(character))
-            {
-                continue;
-            }
-            coreChars.Add(Regex.Escape(character.ToString()));
-        }
-
-        if (coreChars.Count == 0)
-        {
-            return new Regex(Regex.Escape(source), RegexOptions.IgnoreCase);
-        }
-
-        const string noiseClass = @"[\s\p{P}\p{S}]*";
-        return new Regex(string.Join(noiseClass, coreChars), RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-    }
 
     private static string NormalizeTextForTranslation(string text, OcrLanguage language) =>
         TranslationTextNormalizer.NormalizeForTranslation(text, language);

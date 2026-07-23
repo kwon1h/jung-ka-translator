@@ -56,6 +56,27 @@ internal static partial class TranslationTextNormalizer
         return HanZeroNoiseRegex.Replace(builder.ToString(), "");
     }
 
+    public static string NormalizeForDictionaryMatch(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value.Normalize(NormalizationForm.FormKC))
+        {
+            if (char.IsWhiteSpace(character) || IsIgnorablePunctuation(character))
+            {
+                continue;
+            }
+
+            builder.Append(char.ToLowerInvariant(character));
+        }
+
+        return builder.ToString();
+    }
+
     public static bool HasExpectedSourceScript(string message, OcrLanguage language)
     {
         return message.Any(character => IsExpectedSourceCharacter(character, language));
@@ -223,7 +244,7 @@ internal static partial class TranslationTextNormalizer
 
     private static bool IsHan(char character) => character is >= '\u3400' and <= '\u9FFF';
 
-    private static bool IsIgnorablePunctuation(char character)
+    internal static bool IsIgnorablePunctuation(char character)
     {
         var category = CharUnicodeInfo.GetUnicodeCategory(character);
         return category is UnicodeCategory.ConnectorPunctuation
