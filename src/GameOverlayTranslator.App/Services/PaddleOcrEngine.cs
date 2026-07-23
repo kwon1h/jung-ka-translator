@@ -4,6 +4,8 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
@@ -150,14 +152,27 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         }
     }
 
-    private static Mat BitmapSourceToMat(BitmapSource bitmap)
+    internal static Mat BitmapSourceToMat(BitmapSource bitmap)
     {
-        var encoder = new BmpBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var memory = new MemoryStream();
-        encoder.Save(memory);
-        var bytes = memory.ToArray();
-        return Cv2.ImDecode(bytes, ImreadModes.Color);
+        BitmapSource source = bitmap;
+        if (bitmap.Format != PixelFormats.Bgra32)
+        {
+            var converted = new FormatConvertedBitmap();
+            converted.BeginInit();
+            converted.Source = bitmap;
+            converted.DestinationFormat = PixelFormats.Bgra32;
+            converted.EndInit();
+            converted.Freeze();
+            source = converted;
+        }
+
+        using var bgra = new Mat(source.PixelHeight, source.PixelWidth, MatType.CV_8UC4);
+        var stride = checked((int)bgra.Step());
+        source.CopyPixels(Int32Rect.Empty, bgra.Data, checked(stride * source.PixelHeight), stride);
+
+        var bgr = new Mat();
+        Cv2.CvtColor(bgra, bgr, ColorConversionCodes.BGRA2BGR);
+        return bgr;
     }
 
     public void Dispose()

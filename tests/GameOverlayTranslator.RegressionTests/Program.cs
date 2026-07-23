@@ -7,6 +7,8 @@ using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Platform;
 using GameOverlayTranslator.App.Services;
+using CvMatType = OpenCvSharp.MatType;
+using CvVec3b = OpenCvSharp.Vec3b;
 
 var tests = new List<(string Name, Func<Task> Run)>
 {
@@ -18,6 +20,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("User dictionary CSV round trip", TestUserDictionaryCsvRoundTrip),
     ("Overlay defaults are readable", TestOverlayDefaults),
     ("PaddleOCR is the only OCR engine", TestPaddleOcrIsOnlyEngine),
+    ("PaddleOCR bitmap conversion preserves BGR pixels", TestPaddleOcrBitmapConversion),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
     ("Dictionary screen line skips API", TestDictionaryOnlyScreenLineSkipsTranslation),
@@ -708,6 +711,34 @@ static void Assert(bool condition, string message)
     {
         throw new InvalidOperationException(message);
     }
+}
+
+static Task TestPaddleOcrBitmapConversion()
+{
+    var pixels = new byte[]
+    {
+        10, 20, 30, 255,
+        40, 50, 60, 255
+    };
+    var bitmap = BitmapSource.Create(
+        2,
+        1,
+        96,
+        96,
+        PixelFormats.Bgra32,
+        null,
+        pixels,
+        8);
+
+    using var mat = PaddleOcrEngine.BitmapSourceToMat(bitmap);
+    Assert(mat.Width == 2 && mat.Height == 1, "Converted OCR image dimensions changed.");
+    Assert(mat.Type() == CvMatType.CV_8UC3, $"Expected a 3-channel BGR matrix, got {mat.Type()}.");
+
+    var first = mat.At<CvVec3b>(0, 0);
+    var second = mat.At<CvVec3b>(0, 1);
+    Assert(first.Item0 == 10 && first.Item1 == 20 && first.Item2 == 30, "First BGR pixel changed during conversion.");
+    Assert(second.Item0 == 40 && second.Item1 == 50 && second.Item2 == 60, "Second BGR pixel changed during conversion.");
+    return Task.CompletedTask;
 }
 
 static Task TestSpacedLanguageScreenSegmentKeepsPhrases()
