@@ -17,7 +17,7 @@
             <ItemsControl.ItemContainerStyle>
                 <Style TargetType="ContentPresenter">
                     <Setter Property="Canvas.Left" Value="{Binding Left}" />
-                    <Setter Property="Canvas.Top" Value="{Binding Top}" />
+                    <Setter Property="Canvas.Top" Value="{Binding AnchorTop}" />
                 </Style>
             </ItemsControl.ItemContainerStyle>
             <ItemsControl.ItemTemplate>

@@ -18,7 +18,6 @@ public sealed record OverlayChatItem(
     string DisplayText,
     double Left,
     double AnchorTop,
-    double Top,
     double MinWidth,
     double MaxWidth,
     double RenderedWidth,
@@ -507,7 +506,6 @@ public partial class OverlayWindow : Window
             displayText,
             left,
             anchorTop,
-            anchorTop,
             minWidth,
             maxWidth,
             boxSize.Width,
@@ -536,7 +534,7 @@ public partial class OverlayWindow : Window
         var cts = new CancellationTokenSource();
         activeTimers[id] = cts;
         _ = RemoveAfterDelayAsync(id, cts);
-        LayoutChatLines();
+        RefreshChatBackground();
     }
 
     private async Task RemoveAfterDelayAsync(string id, CancellationTokenSource timer)
@@ -557,7 +555,7 @@ public partial class OverlayWindow : Window
                 if (existing is not null)
                 {
                     lines.Remove(existing);
-                    LayoutChatLines();
+                    RefreshChatBackground();
                 }
 
                 if (activeTimers.TryRemove(id, out var completedTimer))
@@ -650,7 +648,7 @@ public partial class OverlayWindow : Window
         return new ChatBoxMetrics(renderedWidth, sourceHeight, fittedFontSize);
     }
 
-    private void LayoutChatLines()
+    private void RefreshChatBackground()
     {
         if (lines.Count == 0)
         {
@@ -658,17 +656,8 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        var placed = OverlayLayout.PlaceChatAtOcrRows(lines);
-        for (var index = 0; index < lines.Count; index++)
-        {
-            if (Math.Abs(lines[index].Top - placed[index].Top) > 0.1)
-            {
-                lines[index] = lines[index] with { Top = placed[index].Top };
-            }
-        }
-
         ChatBackgroundPath.Data = OverlayBackgroundGeometry.Create(
-            lines.Select(line => new Rect(line.Left, line.Top, line.RenderedWidth, line.Height)),
+            lines.Select(line => new Rect(line.Left, line.AnchorTop, line.RenderedWidth, line.Height)),
             3);
     }
 

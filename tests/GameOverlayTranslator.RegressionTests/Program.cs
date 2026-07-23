@@ -1185,8 +1185,8 @@ static Task TestChatOverlayKeepsOcrRowPositions()
 {
     var placed = OverlayLayout.PlaceChatAtOcrRows(
     [
-        new OverlayChatItem("first", "first", 10, 80, 80, 80, 480, 80, 30),
-        new OverlayChatItem("second", "second", 160, 80, 80, 80, 330, 80, 30)
+        new OverlayChatItem("first", "first", 10, 80, 80, 480, 80, 30),
+        new OverlayChatItem("second", "second", 160, 80, 80, 330, 80, 30)
     ]);
 
     Assert(placed[0].Top == 80, "First chat translation should keep its OCR top.");
@@ -1198,8 +1198,8 @@ static Task TestChatOverlayDoesNotMoveDenseRows()
 {
     var placed = OverlayLayout.PlaceChatAtOcrRows(
     [
-        new OverlayChatItem("first", "first", 10, 80, 80, 80, 480, 100, 30),
-        new OverlayChatItem("second", "second", 60, 80, 80, 80, 430, 100, 30)
+        new OverlayChatItem("first", "first", 10, 80, 80, 480, 100, 30),
+        new OverlayChatItem("second", "second", 60, 80, 80, 430, 100, 30)
     ]);
 
     Assert(placed[0].Top == 80 && placed[1].Top == 80, "Dense chat translations must stay on their OCR rows instead of being shifted.");
@@ -1210,8 +1210,8 @@ static Task TestOverlappingChatTranslationsKeepOcrPositions()
 {
     var placed = OverlayLayout.PlaceChatAtOcrRows(
     [
-        new OverlayChatItem("first", "first", 10, 20, 20, 80, 180, 160, 28),
-        new OverlayChatItem("second", "second", 18, 24, 24, 80, 180, 160, 28)
+        new OverlayChatItem("first", "first", 10, 20, 80, 180, 160, 28),
+        new OverlayChatItem("second", "second", 18, 24, 80, 180, 160, 28)
     ]);
     Assert(placed[0].Top == 20 && placed[1].Top == 24, "Overlapping chat translations must retain their individual OCR rows.");
     return Task.CompletedTask;
