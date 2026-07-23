@@ -3,10 +3,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Threading;
-using System.Threading.Tasks;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Platform;
 using GameOverlayTranslator.App.Services;
@@ -29,8 +27,10 @@ public sealed record OverlayChatItem(
 public partial class OverlayWindow : Window
 {
     private readonly ObservableCollection<OverlayChatItem> lines = [];
-    private readonly ConcurrentDictionary<string, CancellationTokenSource> activeTimers = new();
-    private CancellationTokenSource? screenTimer;
+    private readonly Dictionary<string, DateTimeOffset> chatExpirations = new(StringComparer.Ordinal);
+    private readonly List<string> expiredChatIds = [];
+    private readonly DispatcherTimer expirationTimer;
+    private DateTimeOffset? screenExpiration;
     private IReadOnlyList<ScreenRenderItem>? lastScreenRenderItems;
     private ScreenRenderStyle? lastScreenRenderStyle;
     private bool chatSnapshotMode;
@@ -80,6 +80,11 @@ public partial class OverlayWindow : Window
         activeCanvas = ScreenOverlayCanvas1;
         inactiveCanvas = ScreenOverlayCanvas2;
         targetWindowEventProc = TargetWindowEvent;
+        expirationTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(100)
+        };
+        expirationTimer.Tick += ExpirationTimerTick;
     }
 
     public bool ExcludeFromCapture { get; set; } = true;
@@ -547,47 +552,51 @@ public partial class OverlayWindow : Window
 
     private void ResetChatTimer(string id)
     {
-        if (activeTimers.TryRemove(id, out var prevCts))
-        {
-            prevCts.Cancel();
-            prevCts.Dispose();
-        }
-
-        var cts = new CancellationTokenSource();
-        activeTimers[id] = cts;
-        _ = RemoveAfterDelayAsync(id, cts);
+        chatExpirations[id] = DateTimeOffset.UtcNow + DisplayDuration;
+        EnsureExpirationTimerRunning();
     }
 
-    private async Task RemoveAfterDelayAsync(string id, CancellationTokenSource timer)
+    private void ExpirationTimerTick(object? sender, EventArgs e)
     {
-        try
+        var now = DateTimeOffset.UtcNow;
+        var chatChanged = false;
+        expiredChatIds.Clear();
+        CollectExpiredChatIds(chatExpirations, now, expiredChatIds);
+        foreach (var id in expiredChatIds)
         {
-            await Task.Delay(DisplayDuration, timer.Token);
-            await Dispatcher.InvokeAsync(() =>
+            chatExpirations.Remove(id);
+            var existing = lines.FirstOrDefault(line => line.Id == id);
+            if (existing is not null)
             {
-                if (timer.IsCancellationRequested
-                    || !activeTimers.TryGetValue(id, out var currentTimer)
-                    || !ReferenceEquals(currentTimer, timer))
-                {
-                    return;
-                }
-
-                var existing = lines.FirstOrDefault(line => line.Id == id);
-                if (existing is not null)
-                {
-                    lines.Remove(existing);
-                    RefreshChatBackground();
-                }
-
-                if (activeTimers.TryRemove(id, out var completedTimer))
-                {
-                    completedTimer.Dispose();
-                }
-            });
+                lines.Remove(existing);
+                chatChanged = true;
+            }
         }
-        catch (TaskCanceledException)
+
+        if (chatChanged)
         {
-            // Expected cancellation
+            RefreshChatBackground();
+        }
+
+        if (screenExpiration is { } expiration && expiration <= now)
+        {
+            ClearScreenItems();
+        }
+
+        StopExpirationTimerIfIdle();
+    }
+
+    internal static void CollectExpiredChatIds(
+        IReadOnlyDictionary<string, DateTimeOffset> expirations,
+        DateTimeOffset now,
+        ICollection<string> destination)
+    {
+        foreach (var entry in expirations)
+        {
+            if (entry.Value <= now)
+            {
+                destination.Add(entry.Key);
+            }
         }
     }
 
@@ -664,23 +673,20 @@ public partial class OverlayWindow : Window
 
     private void ResetScreenTimer()
     {
-        screenTimer?.Cancel();
-        screenTimer?.Dispose();
-        screenTimer = new CancellationTokenSource();
-        _ = ClearScreenAfterDelayAsync(screenTimer.Token);
+        screenExpiration = DateTimeOffset.UtcNow + DisplayDuration;
+        EnsureExpirationTimerRunning();
     }
 
     private void ClearScreenItems()
     {
-        screenTimer?.Cancel();
-        screenTimer?.Dispose();
-        screenTimer = null;
+        screenExpiration = null;
         ScreenOverlayCanvas1.Children.Clear();
         ScreenOverlayCanvas2.Children.Clear();
         ScreenOverlayCanvas1.Visibility = Visibility.Collapsed;
         ScreenOverlayCanvas2.Visibility = Visibility.Collapsed;
         lastScreenRenderItems = null;
         lastScreenRenderStyle = null;
+        StopExpirationTimerIfIdle();
     }
 
     private ScreenRenderStyle CaptureScreenRenderStyle() => new(
@@ -702,18 +708,19 @@ public partial class OverlayWindow : Window
         && previousStyle == currentStyle
         && previousItems.SequenceEqual(currentItems);
 
-    private async Task ClearScreenAfterDelayAsync(CancellationToken token)
+    private void EnsureExpirationTimerRunning()
     {
-        try
+        if (!expirationTimer.IsEnabled)
         {
-            await Task.Delay(DisplayDuration, token);
-            await Dispatcher.InvokeAsync(() =>
-            {
-                ClearScreenItems();
-            });
+            expirationTimer.Start();
         }
-        catch (TaskCanceledException)
+    }
+
+    private void StopExpirationTimerIfIdle()
+    {
+        if (chatExpirations.Count == 0 && screenExpiration is null)
         {
+            expirationTimer.Stop();
         }
     }
 
@@ -746,18 +753,16 @@ public partial class OverlayWindow : Window
     {
         lines.Clear();
         ChatBackgroundPath.Data = Geometry.Empty;
-        foreach (var cts in activeTimers.Values)
-        {
-            cts.Cancel();
-            cts.Dispose();
-        }
-        activeTimers.Clear();
+        chatExpirations.Clear();
+        StopExpirationTimerIfIdle();
     }
 
     protected override void OnClosed(EventArgs e)
     {
         StopTrackingTargetTopmost();
         ClearAll();
+        expirationTimer.Stop();
+        expirationTimer.Tick -= ExpirationTimerTick;
         base.OnClosed(e);
     }
 

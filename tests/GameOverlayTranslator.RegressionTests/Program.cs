@@ -89,6 +89,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Same translation language is rejected", TestSameTranslationLanguageIsRejected),
     ("Screen overlay keeps individual OCR positions", TestScreenOverlayKeepsIndividualOcrPositions),
     ("Screen overlay reuses unchanged visual tree", TestScreenOverlayReusesUnchangedVisualTree),
+    ("Overlay expiration uses one shared schedule", TestOverlayExpirationSchedule),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
     ("Foreground capture accepts only target window", TestForegroundCaptureAcceptsOnlyTargetWindow),
     ("Capture reads the target window device context", TestCaptureUsesTargetWindowDeviceContext),
@@ -1686,6 +1687,32 @@ static Task TestScreenOverlayReusesUnchangedVisualTree()
             style,
             style),
         "A position change must force a screen visual rebuild.");
+    return Task.CompletedTask;
+}
+
+static Task TestOverlayExpirationSchedule()
+{
+    var now = new DateTimeOffset(2026, 7, 24, 0, 0, 10, TimeSpan.Zero);
+    IReadOnlyDictionary<string, DateTimeOffset> expirations = new Dictionary<string, DateTimeOffset>
+    {
+        ["expired"] = now.AddMilliseconds(-1),
+        ["boundary"] = now,
+        ["active"] = now.AddMilliseconds(100)
+    };
+    var expired = new List<string>();
+    OverlayWindow.CollectExpiredChatIds(expirations, now, expired);
+    Assert(
+        expired.Order().SequenceEqual(["boundary", "expired"]),
+        "The shared overlay timer should remove only rows whose display duration has elapsed.");
+
+    var instanceFields = typeof(OverlayWindow).GetFields(
+        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+    Assert(
+        instanceFields.Count(field => field.FieldType == typeof(System.Windows.Threading.DispatcherTimer)) == 1,
+        "Chat and screen overlay expiration should share one dispatcher timer.");
+    Assert(
+        instanceFields.All(field => field.FieldType != typeof(CancellationTokenSource)),
+        "Overlay rows should not allocate one cancellation timer per OCR refresh.");
     return Task.CompletedTask;
 }
 
