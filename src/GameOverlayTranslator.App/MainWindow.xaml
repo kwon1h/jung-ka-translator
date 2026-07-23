@@ -1089,6 +1089,13 @@
                                     </Grid>
                                     <TextBlock Text="개인 Google Apps Script 웹 앱을 배포한 뒤 URL을 입력하세요." Foreground="#6B7280" FontSize="11" Margin="0,8,0,0" />
                                 </StackPanel>
+
+                                <Button x:Name="TestTranslationServiceButton"
+                                        Content="연결 테스트"
+                                        Click="TestTranslationService"
+                                        HorizontalAlignment="Right"
+                                        Margin="0,16,0,0"
+                                        MinWidth="110" />
                             </StackPanel>
                         </Border>
                     </StackPanel>

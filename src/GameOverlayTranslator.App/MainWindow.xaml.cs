@@ -164,6 +164,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? previewCancellation;
     private CancellationTokenSource? ocrModelDownloadCancellation;
     private Task? ocrModelDownloadTask;
+    private CancellationTokenSource? translationTestCancellation;
     private bool isClosing;
     private nint previewWindowHandle;
     private HwndSource? mainWindowSource;
@@ -550,6 +551,93 @@ public partial class MainWindow : Window
         settingsStore.Save(settings);
         SetStatus("Google Web App URL을 저장했습니다.");
         UpdateStartReadiness();
+    }
+
+    private async void TestTranslationService(object sender, RoutedEventArgs e)
+    {
+        if (translationTestCancellation is not null)
+        {
+            return;
+        }
+        if (session.IsRunning)
+        {
+            SetStatus("번역을 정지한 뒤 연결을 테스트하세요.", true);
+            return;
+        }
+        if (TargetLanguageComboBox.SelectedItem is not TranslationLanguage targetLanguage)
+        {
+            SetStatus("번역 언어를 먼저 선택하세요.", true);
+            return;
+        }
+
+        ITranslationService service;
+        switch (settings.TranslatorType)
+        {
+            case TranslationServiceType.DeepL:
+                if (string.IsNullOrWhiteSpace(ApiKeyPasswordBox.Password))
+                {
+                    SetStatus("DeepL API 키를 입력하세요.", true);
+                    return;
+                }
+                service = new DeepLTranslationService(httpClient, () => ApiKeyPasswordBox.Password);
+                break;
+            case TranslationServiceType.GoogleWebApp:
+                var webAppUrl = GoogleWebAppUrlTextBox.Text?.Trim();
+                if (!IsValidHttpUrl(webAppUrl))
+                {
+                    SetStatus("올바른 Google Apps Script 웹 앱 URL을 입력하세요.", true);
+                    return;
+                }
+                service = new GoogleWebAppTranslationService(httpClient, () => webAppUrl);
+                break;
+            default:
+                service = new GoogleUnofficialTranslationService(httpClient);
+                break;
+        }
+
+        var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        translationTestCancellation = cancellation;
+        TranslatorTypeComboBox.IsEnabled = false;
+        TestTranslationServiceButton.IsEnabled = false;
+        TestTranslationServiceButton.Content = "테스트 중…";
+        SetStatus("번역 서비스 연결을 확인하는 중입니다...");
+        try
+        {
+            var result = await TranslationConnectionTester.TestAsync(service, targetLanguage, cancellation.Token);
+            if (!isClosing)
+            {
+                SetStatus($"연결 성공: {result.SourceText} → {result.TranslatedText}");
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            if (!isClosing)
+            {
+                SetStatus("연결 테스트가 12초 안에 완료되지 않았습니다.", true);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Translation service connection test failed", ex);
+            if (!isClosing)
+            {
+                SetStatus($"연결 실패: {ex.Message}", true);
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(translationTestCancellation, cancellation))
+            {
+                translationTestCancellation = null;
+                cancellation.Dispose();
+            }
+            if (!isClosing)
+            {
+                TranslatorTypeComboBox.IsEnabled = true;
+                TestTranslationServiceButton.Content = "연결 테스트";
+                TestTranslationServiceButton.IsEnabled = true;
+            }
+        }
     }
 
     private void OpenDeepLApiKeysPage(object sender, RoutedEventArgs e)
@@ -1690,6 +1778,7 @@ public partial class MainWindow : Window
         previewCancellation?.Cancel();
         previewCancellation?.Dispose();
         previewCancellation = null;
+        translationTestCancellation?.Cancel();
         var pendingModelDownload = ocrModelDownloadTask;
         ocrModelDownloadCancellation?.Cancel();
         if (pendingModelDownload is not null)

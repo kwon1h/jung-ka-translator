@@ -65,6 +65,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Cancellation does not trip translation circuit", TestCancellationDoesNotTripTranslationCircuit),
     ("Stopping screen translation does not publish canceled text", TestScreenStopDoesNotPublishCanceledText),
     ("Translation HTTP timeout is suitable for real-time use", TestTranslationHttpTimeout),
+    ("Translation connection test uses a cross-language probe", TestTranslationConnectionProbe),
+    ("Translation connection test rejects empty results", TestTranslationConnectionRejectsEmptyResult),
     ("DeepL selects Free and Pro endpoints from the key", TestDeepLEndpointSelection),
     ("Google batch translation posts long text once", TestGoogleBatchTranslationUsesPost),
     ("Google Web App fallback is bounded and ordered", TestGoogleWebAppFallbackConcurrency),
@@ -1038,6 +1040,35 @@ static Task TestTranslationHttpTimeout()
     Assert(client!.Timeout <= TimeSpan.FromSeconds(15), "Translation requests should not freeze a live game overlay for the default 100-second timeout.");
     Assert(client.Timeout >= TimeSpan.FromSeconds(5), "Translation timeout should still allow normal network latency.");
     return Task.CompletedTask;
+}
+
+static async Task TestTranslationConnectionProbe()
+{
+    var service = new CountingTranslationService();
+    var result = await TranslationConnectionTester.TestAsync(
+        service,
+        new TranslationLanguage("en-US", "English"),
+        CancellationToken.None);
+
+    Assert(service.LastSingleTexts.SequenceEqual(["연결 테스트"]), "An English target should use a Korean source probe.");
+    Assert(service.LastTargetLanguage == "en-US", "The connection probe should use the selected target language.");
+    Assert(result.TranslatedText.StartsWith("translated:", StringComparison.Ordinal), "The connection test should return the provider result.");
+}
+
+static async Task TestTranslationConnectionRejectsEmptyResult()
+{
+    try
+    {
+        await TranslationConnectionTester.TestAsync(
+            new EmptyTranslationService(),
+            new TranslationLanguage("ko", "Korean"),
+            CancellationToken.None);
+        Assert(false, "An empty provider response should fail the connection test.");
+    }
+    catch (InvalidOperationException ex)
+    {
+        Assert(ex.Message.Contains("빈 결과", StringComparison.Ordinal), "The empty-result error should explain the provider response.");
+    }
 }
 
 static async Task TestDeepLEndpointSelection()
@@ -2064,6 +2095,15 @@ sealed class CancellationAwareTranslationService : ITranslationService
         return Task.FromResult(new BatchTranslationResult(
             request.Texts.Select(text => $"translated:{text}").ToList()));
     }
+}
+
+sealed class EmptyTranslationService : ITranslationService
+{
+    public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct) =>
+        Task.FromResult(new TranslationResult(request.Text, string.Empty, request.SourceLanguage));
+
+    public Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct) =>
+        Task.FromResult(new BatchTranslationResult(request.Texts.Select(_ => string.Empty).ToArray()));
 }
 
 sealed class BlockingBatchTranslationService : ITranslationService
