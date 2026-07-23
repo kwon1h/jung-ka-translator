@@ -27,6 +27,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("PaddleOCR reuses only identical frames", TestPaddleOcrFrameCache),
     ("Translation session runs OCR off caller context", TestTranslationSessionRunsOcrOffCallerContext),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
+    ("App settings flush the latest debounced value", TestAppSettingsFlushesLatestValue),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
     ("Dictionary screen line skips API", TestDictionaryOnlyScreenLineSkipsTranslation),
     ("Chinese-Korean dictionary is not used for other targets", TestDictionaryIsScopedToChineseKorean),
@@ -368,6 +369,37 @@ static Task TestResultWindowUsesSelectedGameLanguage()
     Assert(
         ResultWindow.CreateChatSendProgress("영어").Contains("영어", StringComparison.Ordinal),
         "The quick-chat progress should name the selected game language.");
+    return Task.CompletedTask;
+}
+
+static Task TestAppSettingsFlushesLatestValue()
+{
+    var directory = Path.Combine(Path.GetTempPath(), "GameOverlayTranslatorTests", Guid.NewGuid().ToString("N"));
+    var settingsPath = Path.Combine(directory, "settings.json");
+    try
+    {
+        using (var store = new AppSettingsStore(settingsPath, TimeSpan.FromHours(1)))
+        {
+            store.Save(new AppSettings(FontSize: 18));
+            store.Save(new AppSettings(FontSize: 31, OverlayDurationSeconds: 2.7));
+            Assert(!File.Exists(settingsPath), "Debounced settings should wait for the save window or explicit flush.");
+            store.Flush();
+        }
+
+        using var reloadedStore = new AppSettingsStore(settingsPath, TimeSpan.Zero);
+        var reloaded = reloadedStore.Load();
+        Assert(reloaded.FontSize == 31, "Flush should persist the latest font size.");
+        Assert(reloaded.OverlayDurationSeconds == 2.7, "Flush should persist the latest overlay duration.");
+        Assert(!File.Exists($"{settingsPath}.tmp"), "Atomic settings save should not leave a temporary file.");
+    }
+    finally
+    {
+        if (Directory.Exists(directory))
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     return Task.CompletedTask;
 }
 

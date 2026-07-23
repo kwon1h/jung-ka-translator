@@ -1679,6 +1679,7 @@ public partial class MainWindow : Window
     private async void OnClosed(object? sender, EventArgs e)
     {
         isClosing = true;
+        settingsStore.Flush();
         SetPreviewEditorNoActivate(false);
         ResumeGameWindowAfterPreviewEditing();
         mainWindowSource?.RemoveHook(MainWindowMessageHook);
@@ -1711,6 +1712,7 @@ public partial class MainWindow : Window
         }
         overlayWindow?.Close();
         paddleOcrEngine.Dispose();
+        settingsStore.Dispose();
     }
 
     private void SetStatus(string status, bool isError = false)

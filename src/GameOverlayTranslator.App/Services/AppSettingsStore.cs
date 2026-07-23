@@ -86,14 +86,39 @@ public static class AppSettingsDefaults
     public const double DefaultOverlayDurationSeconds = 4;
 }
 
-public sealed class AppSettingsStore
+public sealed class AppSettingsStore : IDisposable
 {
     private const int CurrentCaptureGeometryVersion = 2;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-    private readonly string settingsPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "GameOverlayTranslator",
-        "settings.json");
+    private static readonly TimeSpan DefaultSaveDelay = TimeSpan.FromMilliseconds(250);
+    private readonly object saveLock = new();
+    private readonly string settingsPath;
+    private readonly TimeSpan saveDelay;
+    private Timer? saveTimer;
+    private AppSettings? pendingSettings;
+    private bool disposed;
+
+    public AppSettingsStore()
+        : this(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "GameOverlayTranslator",
+                "settings.json"),
+            DefaultSaveDelay)
+    {
+    }
+
+    internal AppSettingsStore(string settingsPath, TimeSpan saveDelay)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(settingsPath);
+        if (saveDelay < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(saveDelay));
+        }
+
+        this.settingsPath = settingsPath;
+        this.saveDelay = saveDelay;
+    }
 
     public AppSettings Load()
     {
@@ -191,14 +216,47 @@ public sealed class AppSettingsStore
 
     public void Save(AppSettings settings)
     {
-        try
+        lock (saveLock)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
-            File.WriteAllText(settingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+            ObjectDisposedException.ThrowIf(disposed, this);
+            pendingSettings = settings;
+            saveTimer ??= new Timer(_ => Flush(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            saveTimer.Change(saveDelay, Timeout.InfiniteTimeSpan);
         }
-        catch (Exception ex)
+    }
+
+    public void Flush()
+    {
+        lock (saveLock)
         {
-            AppLog.Write("Settings save failed", ex);
+            if (pendingSettings is null)
+            {
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
+                var temporaryPath = $"{settingsPath}.tmp";
+                File.WriteAllText(temporaryPath, JsonSerializer.Serialize(pendingSettings, JsonOptions));
+                File.Move(temporaryPath, settingsPath, true);
+                pendingSettings = null;
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("Settings save failed", ex);
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        Flush();
+        lock (saveLock)
+        {
+            disposed = true;
+            saveTimer?.Dispose();
+            saveTimer = null;
         }
     }
 }
