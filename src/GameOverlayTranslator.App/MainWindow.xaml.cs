@@ -183,6 +183,7 @@ public partial class MainWindow : Window
     private readonly UserDictionaryStore userDictStore = new();
     private readonly System.Collections.ObjectModel.ObservableCollection<DiagnosticLogItem> diagnosticLogs = new();
     private readonly List<UserDictEntry> userDictionaryEntries = new();
+    private readonly ObservableCollection<OcrModelInstallOption> ocrModelOptions = [];
     private int totalTranslationRequestCount;
     private int totalTranslationCharacterCount;
 
@@ -203,14 +204,7 @@ public partial class MainWindow : Window
         session.Updated += SessionUpdated;
 
         OcrLanguageComboBox.ItemsSource = installedOcrLanguages;
-        OcrModelLanguageComboBox.ItemsSource = LanguageCatalog.OcrModelPackages;
-        var savedLanguage = LanguageCatalog.OcrLanguages.FirstOrDefault(
-            language => string.Equals(language.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase));
-        var savedModelKey = savedLanguage is null
-            ? LanguageCatalog.OcrModelPackages[0].Key
-            : PaddleOcrEngine.GetModelKey(savedLanguage.Tag);
-        OcrModelLanguageComboBox.SelectedItem = LanguageCatalog.OcrModelPackages.FirstOrDefault(model => model.Key == savedModelKey)
-            ?? LanguageCatalog.OcrModelPackages[0];
+        OcrModelLanguageComboBox.ItemsSource = ocrModelOptions;
         RefreshInstalledOcrLanguages();
 
         TargetLanguageComboBox.ItemsSource = LanguageCatalog.TargetLanguages;
@@ -797,6 +791,25 @@ public partial class MainWindow : Window
     private void RefreshInstalledOcrLanguages()
     {
         var selectedTag = (OcrLanguageComboBox.SelectedItem as OcrLanguage)?.Tag ?? settings.OcrLanguageTag;
+        var selectedModelKey = (OcrModelLanguageComboBox.SelectedItem as OcrModelInstallOption)?.Key;
+        if (selectedModelKey is null)
+        {
+            var savedLanguage = LanguageCatalog.OcrLanguages.FirstOrDefault(
+                language => string.Equals(language.Tag, selectedTag, StringComparison.OrdinalIgnoreCase));
+            selectedModelKey = savedLanguage is null
+                ? LanguageCatalog.OcrModelPackages[0].Key
+                : PaddleOcrEngine.GetModelKey(savedLanguage.Tag);
+        }
+
+        ocrModelOptions.Clear();
+        foreach (var model in LanguageCatalog.OcrModelPackages)
+        {
+            ocrModelOptions.Add(new OcrModelInstallOption(model, PaddleOcrEngine.IsModelAvailable(model.Key)));
+        }
+
+        OcrModelLanguageComboBox.SelectedItem = ocrModelOptions.FirstOrDefault(model => model.Key == selectedModelKey)
+            ?? ocrModelOptions[0];
+
         installedOcrLanguages.Clear();
         foreach (var language in LanguageCatalog.OcrLanguages.Where(PaddleOcrEngine.IsModelAvailable))
         {
@@ -821,17 +834,18 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (OcrModelLanguageComboBox.SelectedItem is not OcrModelPackage model)
+        if (OcrModelLanguageComboBox.SelectedItem is not OcrModelInstallOption model)
         {
             DownloadOcrModelButton.Content = "다운로드";
             DownloadOcrModelButton.IsEnabled = false;
             return;
         }
 
-        var isReady = PaddleOcrEngine.IsModelAvailable(model.Key);
-        DownloadOcrModelButton.Content = isReady ? "준비됨" : "다운로드";
-        DownloadOcrModelButton.IsEnabled = !isReady && !session.IsRunning;
-        DownloadOcrModelButton.ToolTip = session.IsRunning && !isReady
+        DownloadOcrModelButton.Content = model.IsInstalled ? "설치됨" : "다운로드";
+        DownloadOcrModelButton.IsEnabled = !model.IsInstalled && !session.IsRunning;
+        DownloadOcrModelButton.ToolTip = model.IsInstalled
+            ? "이미 설치된 OCR 모델입니다."
+            : session.IsRunning
             ? "번역을 정지한 뒤 OCR 모델을 다운로드할 수 있습니다."
             : null;
     }
@@ -1051,7 +1065,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (OcrModelLanguageComboBox.SelectedItem is not OcrModelPackage model)
+        if (OcrModelLanguageComboBox.SelectedItem is not OcrModelInstallOption model)
         {
             SetStatus("먼저 내려받을 언어를 선택하세요.", true);
             return;

@@ -11,10 +11,10 @@ internal static class LanguageCatalog
         new("en", "영어"),
         new("ja", "일본어"),
         new("ko", "한국어"),
-        new("latin", "유럽·라틴 문자 언어"),
-        new("cyrillic", "러시아어·키릴 문자 언어"),
-        new("ar", "아랍 문자 언어"),
-        new("hi", "힌디어·데바나가리 문자"),
+        new("latin", "유럽·라틴 문자 언어 10개"),
+        new("cyrillic", "러시아어·키릴 문자 언어 3개"),
+        new("ar", "아랍 문자 언어 3개"),
+        new("hi", "힌디어·데바나가리 문자 3개"),
         new("ta", "타밀어"),
         new("te", "텔루구어"),
         new("kn", "칸나다어")
@@ -82,4 +82,13 @@ internal static class LanguageCatalog
 internal sealed record OcrModelPackage(string Key, string DisplayName)
 {
     public override string ToString() => DisplayName;
+}
+
+internal sealed record OcrModelInstallOption(OcrModelPackage Package, bool IsInstalled)
+{
+    public string Key => Package.Key;
+    public string DisplayName => Package.DisplayName;
+
+    public override string ToString() =>
+        $"{DisplayName}  ·  {(IsInstalled ? "설치됨" : "다운로드 가능")}";
 }

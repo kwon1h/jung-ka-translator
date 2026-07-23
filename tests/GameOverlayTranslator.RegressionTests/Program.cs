@@ -489,6 +489,14 @@ static Task TestOcrModelCatalog()
     Assert(modelKeys.Contains("latin"), "The Latin-script download option is missing.");
     Assert(modelKeys.Contains("cyrillic"), "The Cyrillic download option is missing.");
     Assert(modelKeys.Count == LanguageCatalog.OcrModelPackages.Count, "OCR download model keys must be unique.");
+    Assert(
+        LanguageCatalog.OcrLanguages.All(language => modelKeys.Contains(PaddleOcrEngine.GetModelKey(language.Tag))),
+        "Every game language must map to a downloadable OCR model package.");
+
+    var installedOption = new OcrModelInstallOption(LanguageCatalog.OcrModelPackages[0], true);
+    var downloadableOption = new OcrModelInstallOption(LanguageCatalog.OcrModelPackages[1], false);
+    Assert(installedOption.ToString().Contains("설치됨"), "Installed model options must identify their state.");
+    Assert(downloadableOption.ToString().Contains("다운로드 가능"), "Missing model options must identify their state.");
     return Task.CompletedTask;
 }
 
