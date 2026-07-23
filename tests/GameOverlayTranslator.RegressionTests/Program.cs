@@ -66,6 +66,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Chat translation forwards game language", TestChatTranslationForwardsGameLanguage),
     ("Same translation language is rejected", TestSameTranslationLanguageIsRejected),
     ("Screen overlay keeps individual OCR positions", TestScreenOverlayKeepsIndividualOcrPositions),
+    ("Screen overlay reuses unchanged visual tree", TestScreenOverlayReusesUnchangedVisualTree),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
     ("Foreground capture accepts only target window", TestForegroundCaptureAcceptsOnlyTargetWindow),
     ("Capture reads the target window device context", TestCaptureUsesTargetWindowDeviceContext),
@@ -1135,6 +1136,44 @@ static Task TestScreenOverlayKeepsIndividualOcrPositions()
     Assert(rendered.Count == 2, "Nearby or overlapping OCR lines must not be merged into one overlay box.");
     Assert(rendered[0].Bounds == firstBounds, "The first screen translation must use its own OCR rectangle.");
     Assert(rendered[1].Bounds == secondBounds, "The second screen translation must use its own OCR rectangle.");
+    return Task.CompletedTask;
+}
+
+static Task TestScreenOverlayReusesUnchangedVisualTree()
+{
+    var items = new[]
+    {
+        new OverlayWindow.ScreenRenderItem("first", new Rect(10, 20, 100, 24)),
+        new OverlayWindow.ScreenRenderItem("second", new Rect(10, 50, 120, 24))
+    };
+    var sameItems = items.Select(item => item with { }).ToArray();
+    var style = new OverlayWindow.ScreenRenderStyle(
+        "Test Font",
+        25,
+        "#FFFFFFFF",
+        "#FF000000",
+        0.5,
+        "#99000000",
+        1280,
+        720);
+
+    Assert(
+        OverlayWindow.CanReuseScreenRender(items, sameItems, style, style with { }),
+        "Identical screen items and style should reuse the existing visual tree.");
+    Assert(
+        !OverlayWindow.CanReuseScreenRender(
+            items,
+            sameItems,
+            style,
+            style with { FontSize = 26 }),
+        "A style change must force a screen visual rebuild.");
+    Assert(
+        !OverlayWindow.CanReuseScreenRender(
+            items,
+            [sameItems[0], sameItems[1] with { Bounds = new Rect(11, 50, 120, 24) }],
+            style,
+            style),
+        "A position change must force a screen visual rebuild.");
     return Task.CompletedTask;
 }
 

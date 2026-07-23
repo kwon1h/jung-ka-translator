@@ -31,6 +31,8 @@ public partial class OverlayWindow : Window
     private readonly ObservableCollection<OverlayChatItem> lines = [];
     private readonly ConcurrentDictionary<string, CancellationTokenSource> activeTimers = new();
     private CancellationTokenSource? screenTimer;
+    private IReadOnlyList<ScreenRenderItem>? lastScreenRenderItems;
+    private ScreenRenderStyle? lastScreenRenderStyle;
     private bool chatSnapshotMode;
     private readonly NativeMethods.WinEventProc targetWindowEventProc;
     private nint targetForegroundHook;
@@ -364,15 +366,26 @@ public partial class OverlayWindow : Window
                 OverlayItems.Visibility = Visibility.Collapsed;
                 ChatBackgroundPath.Data = Geometry.Empty;
 
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                var dpiScale = Math.Max(1, NativeMethods.GetDpiForWindow(hwnd) / 96d);
+                var renderItems = BuildScreenRenderItems(update.ScreenItems, dpiScale);
+                var renderStyle = CaptureScreenRenderStyle();
+                if (CanReuseScreenRender(
+                        lastScreenRenderItems,
+                        renderItems,
+                        lastScreenRenderStyle,
+                        renderStyle))
+                {
+                    ResetScreenTimer();
+                    return;
+                }
+
                 // Clear the inactive canvas first (it is currently hidden, so no flicker)
                 inactiveCanvas.Children.Clear();
 
-                var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-                var dpiScale = Math.Max(1, NativeMethods.GetDpiForWindow(hwnd) / 96d);
-
                 var borders = new List<Border>();
                 var desiredBoxes = new List<Rect>();
-                foreach (var renderItem in BuildScreenRenderItems(update.ScreenItems, dpiScale))
+                foreach (var renderItem in renderItems)
                 {
                     var x = ClampToCanvas(renderItem.Bounds.Left, ActualWidth);
                     var y = ClampToCanvas(renderItem.Bounds.Top, ActualHeight);
@@ -431,6 +444,8 @@ public partial class OverlayWindow : Window
                 var temp = activeCanvas;
                 activeCanvas = inactiveCanvas;
                 inactiveCanvas = temp;
+                lastScreenRenderItems = renderItems;
+                lastScreenRenderStyle = renderStyle;
                 ResetScreenTimer();
             }
             catch (Exception ex)
@@ -443,6 +458,8 @@ public partial class OverlayWindow : Window
         OverlayItems.Visibility = Visibility.Visible;
         ScreenOverlayCanvas1.Visibility = Visibility.Collapsed;
         ScreenOverlayCanvas2.Visibility = Visibility.Collapsed;
+        lastScreenRenderItems = null;
+        lastScreenRenderStyle = null;
 
         if (update.ChatItems is { } chatItems)
         {
@@ -511,6 +528,12 @@ public partial class OverlayWindow : Window
         
         if (existing is not null)
         {
+            if (existing.line == item)
+            {
+                ResetChatTimer(id);
+                return;
+            }
+
             lines[existing.index] = item;
         }
         else
@@ -518,7 +541,12 @@ public partial class OverlayWindow : Window
             lines.Add(item);
         }
 
-        // Cancel existing timer for this item if it was updated
+        ResetChatTimer(id);
+        RefreshChatBackground();
+    }
+
+    private void ResetChatTimer(string id)
+    {
         if (activeTimers.TryRemove(id, out var prevCts))
         {
             prevCts.Cancel();
@@ -528,7 +556,6 @@ public partial class OverlayWindow : Window
         var cts = new CancellationTokenSource();
         activeTimers[id] = cts;
         _ = RemoveAfterDelayAsync(id, cts);
-        RefreshChatBackground();
     }
 
     private async Task RemoveAfterDelayAsync(string id, CancellationTokenSource timer)
@@ -652,7 +679,28 @@ public partial class OverlayWindow : Window
         ScreenOverlayCanvas2.Children.Clear();
         ScreenOverlayCanvas1.Visibility = Visibility.Collapsed;
         ScreenOverlayCanvas2.Visibility = Visibility.Collapsed;
+        lastScreenRenderItems = null;
+        lastScreenRenderStyle = null;
     }
+
+    private ScreenRenderStyle CaptureScreenRenderStyle() => new(
+        FontFamily.Source,
+        FontSize,
+        Foreground?.ToString() ?? string.Empty,
+        StrokeBrush?.ToString() ?? string.Empty,
+        StrokeThicknessValue,
+        OverlayBackgroundBrush?.ToString() ?? string.Empty,
+        Width,
+        Height);
+
+    internal static bool CanReuseScreenRender(
+        IReadOnlyList<ScreenRenderItem>? previousItems,
+        IReadOnlyList<ScreenRenderItem> currentItems,
+        ScreenRenderStyle? previousStyle,
+        ScreenRenderStyle currentStyle) =>
+        previousItems is not null
+        && previousStyle == currentStyle
+        && previousItems.SequenceEqual(currentItems);
 
     private async Task ClearScreenAfterDelayAsync(CancellationToken token)
     {
@@ -714,6 +762,16 @@ public partial class OverlayWindow : Window
     }
 
     internal sealed record ScreenRenderItem(string Text, Rect Bounds);
+
+    internal sealed record ScreenRenderStyle(
+        string FontFamily,
+        double FontSize,
+        string Foreground,
+        string Stroke,
+        double StrokeThickness,
+        string Background,
+        double Width,
+        double Height);
 
     private sealed record ChatBoxMetrics(double Width, double Height, double FontSize);
 
