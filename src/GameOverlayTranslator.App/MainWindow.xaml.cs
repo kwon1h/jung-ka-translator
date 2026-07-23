@@ -599,6 +599,7 @@ public partial class MainWindow : Window
         translationTestCancellation = cancellation;
         TranslatorTypeComboBox.IsEnabled = false;
         TestTranslationServiceButton.IsEnabled = false;
+        StartStopButton.IsEnabled = false;
         TestTranslationServiceButton.Content = "테스트 중…";
         SetStatus("번역 서비스 연결을 확인하는 중입니다...");
         try
@@ -636,6 +637,7 @@ public partial class MainWindow : Window
                 TranslatorTypeComboBox.IsEnabled = true;
                 TestTranslationServiceButton.Content = "연결 테스트";
                 TestTranslationServiceButton.IsEnabled = true;
+                UpdateStartReadiness();
             }
         }
     }
@@ -1697,6 +1699,7 @@ public partial class MainWindow : Window
         DeepLSettingsPanel.IsEnabled = enabled;
         GoogleUnofficialSettingsPanel.IsEnabled = enabled;
         GoogleWebAppSettingsPanel.IsEnabled = enabled;
+        TestTranslationServiceButton.IsEnabled = enabled && translationTestCancellation is null;
 
         var tooltip = enabled ? null : "번역을 정지한 뒤 변경할 수 있습니다.";
         WindowComboBox.ToolTip = tooltip;
@@ -1706,6 +1709,7 @@ public partial class MainWindow : Window
         TargetLanguageComboBox.ToolTip = tooltip;
         OcrModelLanguageComboBox.ToolTip = tooltip;
         TranslatorTypeComboBox.ToolTip = tooltip;
+        TestTranslationServiceButton.ToolTip = tooltip;
 
         if (enabled)
         {
