@@ -132,7 +132,8 @@ public partial class MainWindow : Window
     private readonly IWindowSource windowSource = new Win32WindowSource();
     private readonly ObservableCollection<OcrLanguage> installedOcrLanguages = [];
     private readonly SessionStatusTracker sessionStatusTracker = new();
-    private readonly ICaptureService dictionaryCaptureService = new WindowCaptureService();
+    private readonly WindowCaptureService dictionaryCaptureService = new();
+    private readonly WindowCaptureService sessionCaptureService = new(requireTargetForeground: true);
     private readonly PaddleOcrEngine paddleOcrEngine = new();
     private readonly IOcrEngine dictionaryOcrEngine;
     private static readonly CaptureRegion FullWindowRegion = new(0, 0, 1, 1);
@@ -203,7 +204,7 @@ public partial class MainWindow : Window
             delegator,
             new ScreenTranslationCacheStore(),
             cacheNamespaceProvider: delegator.GetCacheNamespace);
-        session = new TranslationSession(new WindowCaptureService(requireTargetForeground: true), paddleOcrEngine, cachingTranslationService);
+        session = new TranslationSession(sessionCaptureService, paddleOcrEngine, cachingTranslationService);
         session.Updated += SessionUpdated;
 
         OcrLanguageComboBox.ItemsSource = installedOcrLanguages;
@@ -1836,6 +1837,8 @@ public partial class MainWindow : Window
             resultWindow.Close();
         }
         overlayWindow?.Close();
+        sessionCaptureService.Dispose();
+        dictionaryCaptureService.Dispose();
         paddleOcrEngine.Dispose();
         settingsStore.Dispose();
     }

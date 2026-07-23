@@ -96,6 +96,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
     ("Foreground capture accepts only target window", TestForegroundCaptureAcceptsOnlyTargetWindow),
     ("Capture reads the target window device context", TestCaptureUsesTargetWindowDeviceContext),
+    ("Capture buffer reuse requires the same source and size", TestCaptureBufferReuseRequirements),
     ("Overlay capture never hides the overlay", TestOverlayCaptureNeverHidesOverlay),
     ("Overlay topmost promotion is non-activating", TestOverlayTopmostPromotionIsNonActivating),
     ("Overlay tracks target z-order changes", TestOverlayTracksTargetZOrderChanges),
@@ -1941,6 +1942,40 @@ static Task TestCaptureUsesTargetWindowDeviceContext()
     Assert(
         !WindowCaptureService.IsGdiSelectionFailure((nint)1),
         "A valid previous GDI object must allow capture to continue.");
+    return Task.CompletedTask;
+}
+
+static Task TestCaptureBufferReuseRequirements()
+{
+    var source = new nint(101);
+    Assert(
+        WindowCaptureService.CanReuseCaptureBuffer(source, 1280, 720, source, 1280, 720),
+        "An unchanged target and crop size should reuse the GDI capture buffer.");
+    Assert(
+        !WindowCaptureService.CanReuseCaptureBuffer(source, 1280, 720, source, 1024, 768),
+        "A capture size change must recreate the GDI bitmap.");
+    Assert(
+        !WindowCaptureService.CanReuseCaptureBuffer(source, 1280, 720, new nint(202), 1280, 720),
+        "A target window change must recreate the compatible bitmap.");
+    Assert(
+        !WindowCaptureService.CanReuseCaptureBuffer(nint.Zero, 1280, 720, source, 1280, 720),
+        "An uninitialized capture buffer must not be treated as reusable.");
+
+    var disposed = new WindowCaptureService();
+    disposed.Dispose();
+    disposed.Dispose();
+    try
+    {
+        _ = disposed.CaptureAsync(
+            new CaptureTarget(new CapturableWindow(source, "Disposed", "Test")),
+            new CaptureRegion(0, 0, 1, 1),
+            CancellationToken.None);
+        Assert(false, "A disposed capture service should reject further captures.");
+    }
+    catch (ObjectDisposedException)
+    {
+    }
+
     return Task.CompletedTask;
 }
 
