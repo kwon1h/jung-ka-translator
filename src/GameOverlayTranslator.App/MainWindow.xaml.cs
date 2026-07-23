@@ -1556,6 +1556,7 @@ public partial class MainWindow : Window
         StartStopButtonLabel.Text = "번역 정지";
         StartStopButtonIcon.Text = "\uE71A";
         System.Windows.Automation.AutomationProperties.SetName(StartStopButton, "번역 정지");
+        SetSessionConfigurationEnabled(false);
         UpdateOcrModelDownloadState();
         if (settings.DisplayMode == TranslationDisplayMode.TransparentOverlay)
         {
@@ -1574,10 +1575,43 @@ public partial class MainWindow : Window
         StartStopButtonLabel.Text = "번역 시작";
         StartStopButtonIcon.Text = "\uE768";
         System.Windows.Automation.AutomationProperties.SetName(StartStopButton, "번역 시작");
+        SetSessionConfigurationEnabled(true);
         overlayWindow?.StopTrackingTargetTopmost();
         overlayWindow?.ClearAll();
         UpdateStartReadiness();
         UpdateOcrModelDownloadState();
+    }
+
+    private void SetSessionConfigurationEnabled(bool enabled)
+    {
+        WindowComboBox.IsEnabled = enabled;
+        RefreshWindowButton.IsEnabled = enabled;
+        ChatTranslationRadioButton.IsEnabled = enabled;
+        ScreenTranslationRadioButton.IsEnabled = enabled;
+        DisplayModeComboBox.IsEnabled = enabled && ScreenTranslationRadioButton.IsChecked != true;
+        SelectRegionButton.IsEnabled = enabled;
+        ClearRegionButton.IsEnabled = enabled && SelectedRegion is not null;
+        OcrLanguageComboBox.IsEnabled = enabled;
+        TargetLanguageComboBox.IsEnabled = enabled;
+        OcrModelLanguageComboBox.IsEnabled = enabled;
+        TranslatorTypeComboBox.IsEnabled = enabled;
+        DeepLSettingsPanel.IsEnabled = enabled;
+        GoogleUnofficialSettingsPanel.IsEnabled = enabled;
+        GoogleWebAppSettingsPanel.IsEnabled = enabled;
+
+        var tooltip = enabled ? null : "번역을 정지한 뒤 변경할 수 있습니다.";
+        WindowComboBox.ToolTip = tooltip;
+        ChatTranslationRadioButton.ToolTip = tooltip;
+        ScreenTranslationRadioButton.ToolTip = tooltip;
+        OcrLanguageComboBox.ToolTip = tooltip;
+        TargetLanguageComboBox.ToolTip = tooltip;
+        OcrModelLanguageComboBox.ToolTip = tooltip;
+        TranslatorTypeComboBox.ToolTip = tooltip;
+
+        if (enabled)
+        {
+            UpdateTranslationModeUI();
+        }
     }
 
     private void SessionUpdated(object? sender, SessionUpdate update) => Dispatcher.Invoke(() =>
