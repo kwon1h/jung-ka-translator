@@ -21,6 +21,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Legacy user dictionary CSV gets default language pair", TestLegacyUserDictionaryCsvMigration),
     ("Overlay defaults are readable", TestOverlayDefaults),
     ("PaddleOCR is the only OCR engine", TestPaddleOcrIsOnlyEngine),
+    ("OCR model catalog includes downloadable languages", TestOcrModelCatalog),
+    ("Installed OCR languages require their cached model", TestInstalledOcrLanguageDetection),
     ("Translation target catalog includes major languages", TestTranslationTargetCatalog),
     ("Quick-chat copy names the selected game language", TestResultWindowUsesSelectedGameLanguage),
     ("PaddleOCR bitmap conversion preserves BGR pixels", TestPaddleOcrBitmapConversion),
@@ -446,6 +448,52 @@ static Task TestTranslationTargetCatalog()
             new OcrLanguage("zh-Hans", "Simplified Chinese"),
             new TranslationLanguage("zh-Hant", "Traditional Chinese")),
         "Simplified-to-Traditional Chinese should remain selectable.");
+    return Task.CompletedTask;
+}
+
+static Task TestOcrModelCatalog()
+{
+    var tags = LanguageCatalog.OcrLanguages
+        .Select(language => language.Tag)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    Assert(tags.Contains("zh-Hans"), "Simplified Chinese OCR model is missing.");
+    Assert(tags.Contains("en"), "English OCR model is missing.");
+    Assert(tags.Contains("ja"), "Japanese OCR model is missing.");
+    Assert(tags.Contains("ko"), "Korean OCR model is missing.");
+    Assert(tags.Count >= 8, "OCR model catalog should expose the available multilingual models.");
+    Assert(tags.Count == LanguageCatalog.OcrLanguages.Count, "OCR model language tags must be unique.");
+    return Task.CompletedTask;
+}
+
+static Task TestInstalledOcrLanguageDetection()
+{
+    var directory = Path.Combine(Path.GetTempPath(), "GameOverlayTranslatorTests", Guid.NewGuid().ToString("N"));
+    try
+    {
+        foreach (var modelDirectory in new[] { "ch_PP-OCRv4_det", "ch_PP-OCRv4_rec", "ch_ppocr_mobile_v2.0_cls" })
+        {
+            var modelPath = Path.Combine(directory, modelDirectory);
+            Directory.CreateDirectory(modelPath);
+            File.WriteAllText(Path.Combine(modelPath, "inference.pdmodel"), "model");
+            File.WriteAllText(Path.Combine(modelPath, "inference.pdiparams"), "parameters");
+        }
+
+        Assert(
+            PaddleOcrEngine.IsModelAvailable(new OcrLanguage("zh-Hans", "Simplified Chinese"), directory),
+            "A complete cached OCR model should appear in the installed game-language list.");
+        Assert(
+            !PaddleOcrEngine.IsModelAvailable(new OcrLanguage("ja", "Japanese"), directory),
+            "A language without its recognition model must not appear as installed.");
+    }
+    finally
+    {
+        if (Directory.Exists(directory))
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     return Task.CompletedTask;
 }
 

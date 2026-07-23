@@ -27,12 +27,19 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
     private PaddleOcrAll? currentOcr;
     private string? currentLanguageTag;
 
-    public static bool IsModelAvailable(OcrLanguage language)
+    public static bool IsModelAvailable(OcrLanguage language) => IsModelAvailable(language, ModelRoot);
+
+    internal static bool IsModelAvailable(OcrLanguage language, string modelRoot)
     {
         var requiredDirectories = new[] { "ch_PP-OCRv4_det", RecognitionDirectory(language.Tag), "ch_ppocr_mobile_v2.0_cls" };
 
-        return requiredDirectories.All(directory => Directory.Exists(Path.Combine(ModelRoot, directory)) &&
-            Directory.EnumerateFiles(Path.Combine(ModelRoot, directory), "inference.pdmodel", SearchOption.AllDirectories).Any());
+        return requiredDirectories.All(directory =>
+        {
+            var directoryPath = Path.Combine(modelRoot, directory);
+            return Directory.Exists(directoryPath)
+                && Directory.EnumerateFiles(directoryPath, "inference.pdmodel", SearchOption.AllDirectories).Any()
+                && Directory.EnumerateFiles(directoryPath, "inference.pdiparams", SearchOption.AllDirectories).Any();
+        });
     }
 
     public async Task PrepareAsync(OcrLanguage language, CancellationToken ct)
