@@ -31,6 +31,7 @@ public partial class OverlayWindow : Window
     private readonly List<string> expiredChatIds = [];
     private readonly DispatcherTimer expirationTimer;
     private DateTimeOffset? screenExpiration;
+    private DateTimeOffset? scheduledExpiration;
     private IReadOnlyList<ScreenRenderItem>? lastScreenRenderItems;
     private ScreenRenderStyle? lastScreenRenderStyle;
     private bool chatSnapshotMode;
@@ -82,7 +83,7 @@ public partial class OverlayWindow : Window
         targetWindowEventProc = TargetWindowEvent;
         expirationTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
         {
-            Interval = TimeSpan.FromMilliseconds(100)
+            Interval = TimeSpan.FromSeconds(1)
         };
         expirationTimer.Tick += ExpirationTimerTick;
     }
@@ -553,11 +554,12 @@ public partial class OverlayWindow : Window
     private void ResetChatTimer(string id)
     {
         chatExpirations[id] = DateTimeOffset.UtcNow + DisplayDuration;
-        EnsureExpirationTimerRunning();
+        ScheduleExpirationTimer();
     }
 
     private void ExpirationTimerTick(object? sender, EventArgs e)
     {
+        scheduledExpiration = null;
         var now = DateTimeOffset.UtcNow;
         var chatChanged = false;
         expiredChatIds.Clear();
@@ -583,7 +585,7 @@ public partial class OverlayWindow : Window
             ClearScreenItems();
         }
 
-        StopExpirationTimerIfIdle();
+        ScheduleExpirationTimer();
     }
 
     internal static void CollectExpiredChatIds(
@@ -674,7 +676,7 @@ public partial class OverlayWindow : Window
     private void ResetScreenTimer()
     {
         screenExpiration = DateTimeOffset.UtcNow + DisplayDuration;
-        EnsureExpirationTimerRunning();
+        ScheduleExpirationTimer();
     }
 
     private void ClearScreenItems()
@@ -686,7 +688,7 @@ public partial class OverlayWindow : Window
         ScreenOverlayCanvas2.Visibility = Visibility.Collapsed;
         lastScreenRenderItems = null;
         lastScreenRenderStyle = null;
-        StopExpirationTimerIfIdle();
+        ScheduleExpirationTimer();
     }
 
     private ScreenRenderStyle CaptureScreenRenderStyle() => new(
@@ -708,20 +710,51 @@ public partial class OverlayWindow : Window
         && previousStyle == currentStyle
         && previousItems.SequenceEqual(currentItems);
 
-    private void EnsureExpirationTimerRunning()
+    internal static DateTimeOffset? GetNextExpiration(
+        IReadOnlyDictionary<string, DateTimeOffset> chatExpirationTimes,
+        DateTimeOffset? screenExpirationTime)
     {
-        if (!expirationTimer.IsEnabled)
+        var next = screenExpirationTime;
+        foreach (var expiration in chatExpirationTimes.Values)
         {
-            expirationTimer.Start();
+            if (next is null || expiration < next)
+            {
+                next = expiration;
+            }
         }
+
+        return next;
     }
 
-    private void StopExpirationTimerIfIdle()
+    internal static TimeSpan GetExpirationTimerDelay(
+        DateTimeOffset expiration,
+        DateTimeOffset now)
     {
-        if (chatExpirations.Count == 0 && screenExpiration is null)
+        var delay = expiration - now;
+        return delay > TimeSpan.FromMilliseconds(10)
+            ? delay
+            : TimeSpan.FromMilliseconds(10);
+    }
+
+    private void ScheduleExpirationTimer()
+    {
+        var next = GetNextExpiration(chatExpirations, screenExpiration);
+        if (next is null)
         {
             expirationTimer.Stop();
+            scheduledExpiration = null;
+            return;
         }
+
+        if (expirationTimer.IsEnabled && scheduledExpiration == next)
+        {
+            return;
+        }
+
+        expirationTimer.Stop();
+        expirationTimer.Interval = GetExpirationTimerDelay(next.Value, DateTimeOffset.UtcNow);
+        scheduledExpiration = next;
+        expirationTimer.Start();
     }
 
     private static double ClampToCanvas(double value, double canvasLength)
@@ -754,7 +787,7 @@ public partial class OverlayWindow : Window
         lines.Clear();
         ChatBackgroundPath.Data = Geometry.Empty;
         chatExpirations.Clear();
-        StopExpirationTimerIfIdle();
+        ScheduleExpirationTimer();
     }
 
     protected override void OnClosed(EventArgs e)
@@ -762,6 +795,7 @@ public partial class OverlayWindow : Window
         StopTrackingTargetTopmost();
         ClearAll();
         expirationTimer.Stop();
+        scheduledExpiration = null;
         expirationTimer.Tick -= ExpirationTimerTick;
         base.OnClosed(e);
     }

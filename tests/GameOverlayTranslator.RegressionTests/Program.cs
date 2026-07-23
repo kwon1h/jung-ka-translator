@@ -2113,6 +2113,26 @@ static Task TestOverlayExpirationSchedule()
         expired.Order().SequenceEqual(["boundary", "expired"]),
         "The shared overlay timer should remove only rows whose display duration has elapsed.");
 
+    IReadOnlyDictionary<string, DateTimeOffset> pending = new Dictionary<string, DateTimeOffset>
+    {
+        ["chat"] = now.AddMilliseconds(200)
+    };
+    var next = OverlayWindow.GetNextExpiration(pending, now.AddMilliseconds(50));
+    Assert(
+        next == now.AddMilliseconds(50),
+        "The overlay timer should wake at the earliest chat or screen expiration.");
+    Assert(
+        OverlayWindow.GetExpirationTimerDelay(next!.Value, now) == TimeSpan.FromMilliseconds(50),
+        "The overlay timer should sleep until the next expiration instead of polling every 100 ms.");
+    Assert(
+        OverlayWindow.GetExpirationTimerDelay(now.AddMilliseconds(-1), now) == TimeSpan.FromMilliseconds(10),
+        "An overdue overlay expiration should be scheduled promptly without using a zero interval.");
+    Assert(
+        OverlayWindow.GetNextExpiration(
+            new Dictionary<string, DateTimeOffset>(),
+            screenExpirationTime: null) is null,
+        "The shared overlay timer should stop when no translation is visible.");
+
     var instanceFields = typeof(OverlayWindow).GetFields(
         System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
     Assert(
