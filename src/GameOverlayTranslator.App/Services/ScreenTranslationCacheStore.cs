@@ -5,7 +5,13 @@ using System.Text.Json;
 
 namespace GameOverlayTranslator.App.Services;
 
-public sealed class ScreenTranslationCacheStore
+public interface ITranslationCacheStore
+{
+    Dictionary<string, string> Load();
+    bool Save(IReadOnlyDictionary<string, string> cache);
+}
+
+public sealed class ScreenTranslationCacheStore : ITranslationCacheStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new();
     private readonly string cachePath;
@@ -44,11 +50,11 @@ public sealed class ScreenTranslationCacheStore
 
     public bool Save(IReadOnlyDictionary<string, string> cache)
     {
+        var temporaryPath = $"{cachePath}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
             var json = JsonSerializer.Serialize(cache, JsonOptions);
-            var temporaryPath = $"{cachePath}.tmp";
             File.WriteAllText(temporaryPath, json);
             File.Move(temporaryPath, cachePath, true);
             return true;
@@ -57,6 +63,19 @@ public sealed class ScreenTranslationCacheStore
         {
             AppLog.Write("Screen cache save failed", ex);
             return false;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
+            catch
+            {
+            }
         }
     }
 }

@@ -44,6 +44,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Translation circuit is isolated by effective provider", TestTranslationCircuitIsolatedByEffectiveProvider),
     ("Translation cache evicts oldest entries", TestTranslationCacheEvictsOldestEntries),
     ("Translation cache flushes deferred entries", TestTranslationCacheFlushesDeferredEntries),
+    ("Translation cache persists off the live path", TestTranslationCachePersistsOffLivePath),
     ("Application logs rotate and expire", TestApplicationLogMaintenance),
     ("High-frequency application logs are throttled", TestApplicationLogThrottling),
     ("Empty screen OCR keeps overlay items", TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems),
@@ -358,6 +359,7 @@ static async Task TestTranslationCacheIsolatedByEffectiveProvider()
             new ScreenTranslationCacheStore(cachePath),
             cacheSaveInterval: TimeSpan.Zero);
         await legacyCache.TranslateAsync(request, CancellationToken.None);
+        legacyCache.FlushCache();
 
         var provider = "DeepL";
         var source = new CountingTranslationService();
@@ -378,6 +380,7 @@ static async Task TestTranslationCacheIsolatedByEffectiveProvider()
         provider = "DeepL";
         await cached.TranslateAsync(request, CancellationToken.None);
         Assert(source.SingleRequests == 2, "Switching back should reuse the original provider's scoped cache.");
+        cached.FlushCache();
     }
     finally
     {
@@ -421,6 +424,7 @@ static async Task TestTranslationCircuitIsolatedByEffectiveProvider()
         Assert(
             result.TranslatedText.StartsWith("translated:", StringComparison.Ordinal),
             "A healthy provider should work immediately after another provider opens its circuit.");
+        cached.FlushCache();
     }
     finally
     {
@@ -680,6 +684,41 @@ static async Task TestTranslationCacheFlushesDeferredEntries()
     }
     finally
     {
+        Directory.Delete(directory, recursive: true);
+    }
+}
+
+static async Task TestTranslationCachePersistsOffLivePath()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"game-overlay-translator-async-cache-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    using var store = new BlockingCacheStore(Path.Combine(directory, "cache.json"));
+    var cached = new CachingTranslationService(
+        new CountingTranslationService(),
+        store,
+        cacheSaveInterval: TimeSpan.Zero);
+    Task<TranslationResult>? translationTask = null;
+
+    try
+    {
+        translationTask = Task.Run(() => cached.TranslateAsync(
+            new TranslationRequest($"async-cache-{Guid.NewGuid():N}", "ko", "en"),
+            CancellationToken.None));
+
+        Assert(store.SaveStarted.Wait(TimeSpan.FromSeconds(1)), "The background cache save should start.");
+        var completed = await Task.WhenAny(translationTask, Task.Delay(TimeSpan.FromSeconds(1)));
+        Assert(
+            ReferenceEquals(completed, translationTask),
+            "A blocked disk write must not delay the live translation result.");
+    }
+    finally
+    {
+        store.AllowSave.Set();
+        if (translationTask is not null)
+        {
+            await translationTask;
+        }
+        cached.FlushCache();
         Directory.Delete(directory, recursive: true);
     }
 }
@@ -2671,5 +2710,28 @@ sealed class SwitchableTranslationService : ITranslationService
 
         return Task.FromResult(new BatchTranslationResult(
             request.Texts.Select(text => $"translated:{text}").ToArray()));
+    }
+}
+
+sealed class BlockingCacheStore(string cachePath) : ITranslationCacheStore, IDisposable
+{
+    private readonly ScreenTranslationCacheStore inner = new(cachePath);
+
+    public ManualResetEventSlim SaveStarted { get; } = new(false);
+    public ManualResetEventSlim AllowSave { get; } = new(false);
+
+    public Dictionary<string, string> Load() => inner.Load();
+
+    public bool Save(IReadOnlyDictionary<string, string> cache)
+    {
+        SaveStarted.Set();
+        AllowSave.Wait(TimeSpan.FromSeconds(5));
+        return inner.Save(cache);
+    }
+
+    public void Dispose()
+    {
+        SaveStarted.Dispose();
+        AllowSave.Dispose();
     }
 }

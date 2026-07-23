@@ -9,7 +9,7 @@ public sealed class CachingTranslationService : ITranslationService
     private const int MaxFailedTexts = 1024;
     private static readonly TimeSpan DefaultCacheSaveInterval = TimeSpan.FromSeconds(2);
     private readonly ITranslationService innerService;
-    private readonly ScreenTranslationCacheStore cacheStore;
+    private readonly ITranslationCacheStore cacheStore;
     private readonly Dictionary<string, string> cache;
     private readonly Queue<string> cacheInsertionOrder;
     private readonly int maxCacheEntries;
@@ -17,7 +17,10 @@ public sealed class CachingTranslationService : ITranslationService
     private readonly Func<string?, string, string>? cacheNamespaceProvider;
     private readonly object cacheLock = new();
     private DateTime nextCacheSaveUtc = DateTime.MinValue;
-    private bool cacheDirty;
+    private Task<bool>? pendingCacheSave;
+    private long pendingCacheSaveVersion;
+    private long cacheVersion;
+    private long persistedCacheVersion;
 
     private readonly Dictionary<string, DateTime> failedTexts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ProviderFailureState> providerFailures = new(StringComparer.Ordinal);
@@ -27,7 +30,7 @@ public sealed class CachingTranslationService : ITranslationService
 
     public CachingTranslationService(
         ITranslationService innerService,
-        ScreenTranslationCacheStore cacheStore,
+        ITranslationCacheStore cacheStore,
         int maxCacheEntries = DefaultMaxCacheEntries,
         TimeSpan? cacheSaveInterval = null,
         Func<string?, string, string>? cacheNamespaceProvider = null)
@@ -224,17 +227,32 @@ public sealed class CachingTranslationService : ITranslationService
 
     internal void FlushCache()
     {
-        lock (cacheLock)
+        while (true)
         {
-            if (!cacheDirty)
+            Task<bool>? pendingSave;
+            long pendingVersion;
+
+            lock (cacheLock)
             {
-                return;
+                if (pendingCacheSave is null)
+                {
+                    if (cacheVersion <= persistedCacheVersion)
+                    {
+                        return;
+                    }
+
+                    StartCacheSave(DateTime.UtcNow);
+                }
+
+                pendingSave = pendingCacheSave;
+                pendingVersion = pendingCacheSaveVersion;
             }
 
-            if (cacheStore.Save(cache))
+            var saved = GetSaveResult(pendingSave!);
+            CompletePendingSave(pendingSave!, pendingVersion, saved);
+            if (!saved)
             {
-                cacheDirty = false;
-                nextCacheSaveUtc = DateTime.UtcNow + cacheSaveInterval;
+                return;
             }
         }
     }
@@ -300,17 +318,73 @@ public sealed class CachingTranslationService : ITranslationService
 
     private void SaveCacheIfDue()
     {
-        cacheDirty = true;
+        cacheVersion++;
         var now = DateTime.UtcNow;
-        if (now < nextCacheSaveUtc)
+        if (pendingCacheSave is not null || now < nextCacheSaveUtc)
         {
             return;
         }
 
-        if (cacheStore.Save(cache))
+        StartCacheSave(now);
+    }
+
+    private void StartCacheSave(DateTime now)
+    {
+        var snapshot = new Dictionary<string, string>(cache, StringComparer.Ordinal);
+        var snapshotVersion = cacheVersion;
+        var saveTask = Task.Run(() => TrySaveSnapshot(snapshot));
+        pendingCacheSave = saveTask;
+        pendingCacheSaveVersion = snapshotVersion;
+        nextCacheSaveUtc = now + cacheSaveInterval;
+        _ = saveTask.ContinueWith(
+            completed => CompletePendingSave(completed, snapshotVersion, GetSaveResult(completed)),
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private bool TrySaveSnapshot(IReadOnlyDictionary<string, string> snapshot)
+    {
+        try
         {
-            cacheDirty = false;
-            nextCacheSaveUtc = now + cacheSaveInterval;
+            return cacheStore.Save(snapshot);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Screen cache save failed", ex);
+            return false;
+        }
+    }
+
+    private static bool GetSaveResult(Task<bool> saveTask)
+    {
+        try
+        {
+            return saveTask.GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("Screen cache background save failed", ex);
+            return false;
+        }
+    }
+
+    private void CompletePendingSave(Task<bool> saveTask, long savedVersion, bool saved)
+    {
+        lock (cacheLock)
+        {
+            if (!ReferenceEquals(pendingCacheSave, saveTask))
+            {
+                return;
+            }
+
+            if (saved)
+            {
+                persistedCacheVersion = Math.Max(persistedCacheVersion, savedVersion);
+            }
+
+            pendingCacheSave = null;
+            pendingCacheSaveVersion = 0;
         }
     }
 
