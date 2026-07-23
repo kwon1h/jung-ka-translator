@@ -49,6 +49,8 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Cache hit usage is zero", TestDirectCacheHitUsageIsZero),
     ("Provider usage is preserved", TestProviderUsageIsPreserved),
     ("Translation failure cooldown bypasses API", TestTranslationFailureCooldown),
+    ("Malformed batch response is not cached", TestMalformedBatchResponseIsNotCached),
+    ("Cancellation does not trip translation circuit", TestCancellationDoesNotTripTranslationCircuit),
     ("Spaced-language screen segment keeps phrases", TestSpacedLanguageScreenSegmentKeepsPhrases),
     ("CJK screen segment separates OCR chunks", TestCjkScreenSegmentSeparatesOcrChunks),
     ("Supported OCR scripts pass screen filter", TestSupportedOcrScriptsPassScreenFilter),
@@ -670,6 +672,65 @@ static async Task TestTranslationFailureCooldown()
     var bypassed = await cached.TranslateAsync(request, CancellationToken.None);
     Assert(bypassed.TranslatedText == "failure", "Failure cooldown should return source text.");
     Assert(failing.CallCount == 1, "Cooldown should avoid second provider call.");
+}
+
+static async Task TestMalformedBatchResponseIsNotCached()
+{
+    var malformed = new MalformedBatchTranslationService();
+    var cached = new CachingTranslationService(malformed, new ScreenTranslationCacheStore());
+    var uniquePrefix = $"malformed-{Guid.NewGuid():N}";
+    var request = new BatchTranslationRequest(
+        [$"{uniquePrefix}-first", $"{uniquePrefix}-second"],
+        "ko",
+        "en");
+
+    try
+    {
+        await cached.TranslateBatchAsync(request, CancellationToken.None);
+        Assert(false, "A partial batch response must fail instead of caching source text.");
+    }
+    catch (InvalidOperationException)
+    {
+    }
+
+    Assert(malformed.BatchRequests == 1, "The malformed provider should be called once.");
+
+    var succeeding = new CountingTranslationService();
+    var reloaded = new CachingTranslationService(succeeding, new ScreenTranslationCacheStore());
+    var result = await reloaded.TranslateBatchAsync(request, CancellationToken.None);
+    Assert(succeeding.BatchRequests == 1, "A malformed response must not be persisted as a cache hit.");
+    Assert(
+        result.TranslatedTexts.All(text => text.StartsWith("translated:", StringComparison.Ordinal)),
+        "The retry should return real translations.");
+}
+
+static async Task TestCancellationDoesNotTripTranslationCircuit()
+{
+    var service = new CancellationAwareTranslationService();
+    var cached = new CachingTranslationService(service, new ScreenTranslationCacheStore());
+
+    for (var index = 0; index < 3; index++)
+    {
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        try
+        {
+            await cached.TranslateAsync(
+                new TranslationRequest($"cancel-{Guid.NewGuid():N}", "ko", "en"),
+                canceled.Token);
+            Assert(false, "Canceled translation should propagate cancellation.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    var source = $"after-cancel-{Guid.NewGuid():N}";
+    var result = await cached.TranslateAsync(
+        new TranslationRequest(source, "ko", "en"),
+        CancellationToken.None);
+    Assert(service.SuccessfulRequests == 1, "Canceled requests must not open the translation circuit.");
+    Assert(result.TranslatedText == $"translated:{source}", "Translation should resume immediately after cancellation.");
 }
 
 static SessionOptions CreateOptions(TranslationMode mode, IReadOnlyList<UserDictEntry>? dictionary = null) =>
@@ -1555,6 +1616,42 @@ sealed class SucceedOnceThenFailBatchTranslationService : ITranslationService
             throw new InvalidOperationException("Batch API Error Mock");
         }
 
+        return Task.FromResult(new BatchTranslationResult(
+            request.Texts.Select(text => $"translated:{text}").ToList()));
+    }
+}
+
+sealed class MalformedBatchTranslationService : ITranslationService
+{
+    public int BatchRequests { get; private set; }
+
+    public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct) =>
+        Task.FromResult(new TranslationResult(request.Text, $"translated:{request.Text}", request.SourceLanguage));
+
+    public Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
+    {
+        BatchRequests++;
+        return Task.FromResult(new BatchTranslationResult(["only-one-result"]));
+    }
+}
+
+sealed class CancellationAwareTranslationService : ITranslationService
+{
+    public int SuccessfulRequests { get; private set; }
+
+    public Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        SuccessfulRequests++;
+        return Task.FromResult(new TranslationResult(
+            request.Text,
+            $"translated:{request.Text}",
+            request.SourceLanguage));
+    }
+
+    public Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
         return Task.FromResult(new BatchTranslationResult(
             request.Texts.Select(text => $"translated:{text}").ToList()));
     }

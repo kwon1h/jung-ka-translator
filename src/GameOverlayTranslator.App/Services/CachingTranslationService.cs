@@ -50,6 +50,7 @@ public sealed class CachingTranslationService : ITranslationService
         try
         {
             var result = await innerService.TranslateAsync(request, ct);
+            ValidateTranslation(request.Text, result.TranslatedText);
             var usage = result.Usage ?? TranslationUsage.Outbound(1, request.Text.Length);
 
             lock (cacheLock)
@@ -61,6 +62,10 @@ public sealed class CachingTranslationService : ITranslationService
             }
 
             return result with { Usage = usage };
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -134,6 +139,7 @@ public sealed class CachingTranslationService : ITranslationService
                 var batchResult = await innerService.TranslateBatchAsync(
                     new BatchTranslationRequest(missTexts, targetLanguage, request.SourceLanguage),
                     ct);
+                ValidateBatchTranslations(missTexts, batchResult.TranslatedTexts);
                 var outboundUsage = batchResult.Usage ?? TranslationUsage.Outbound(1, missTexts.Sum(text => text.Length));
                 usage = usage.Add(outboundUsage);
 
@@ -145,9 +151,7 @@ public sealed class CachingTranslationService : ITranslationService
                     {
                         var text = missTexts[index];
                         var key = missKeys[index];
-                        var translatedText = index < batchResult.TranslatedTexts.Count
-                            ? batchResult.TranslatedTexts[index]
-                            : text;
+                        var translatedText = batchResult.TranslatedTexts[index];
 
                         cache[key] = translatedText;
                         failedTexts.Remove(key);
@@ -159,6 +163,10 @@ public sealed class CachingTranslationService : ITranslationService
                     }
                     cacheStore.Save(cache);
                 }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception)
             {
@@ -180,6 +188,30 @@ public sealed class CachingTranslationService : ITranslationService
         }
 
         return new BatchTranslationResult(results, usage);
+    }
+
+    private static void ValidateTranslation(string sourceText, string translatedText)
+    {
+        if (!string.IsNullOrWhiteSpace(sourceText) && string.IsNullOrWhiteSpace(translatedText))
+        {
+            throw new InvalidOperationException("번역 서비스가 빈 결과를 반환했습니다.");
+        }
+    }
+
+    private static void ValidateBatchTranslations(
+        IReadOnlyList<string> sourceTexts,
+        IReadOnlyList<string> translatedTexts)
+    {
+        if (translatedTexts.Count != sourceTexts.Count)
+        {
+            throw new InvalidOperationException(
+                $"번역 서비스가 {sourceTexts.Count}개 요청 중 {translatedTexts.Count}개 결과만 반환했습니다.");
+        }
+
+        for (var index = 0; index < sourceTexts.Count; index++)
+        {
+            ValidateTranslation(sourceTexts[index], translatedTexts[index]);
+        }
     }
 
     private bool TryGetCachedTranslation(string cacheKey, string legacyKey, out string translatedText)
