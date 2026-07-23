@@ -32,6 +32,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Translation session runs OCR off caller context", TestTranslationSessionRunsOcrOffCallerContext),
     ("Slow OCR polling yields CPU time back to the game", TestSlowOcrPollingYieldsToGame),
     ("Session status ignores routine skips and reports recovery", TestSessionStatusTracksRecovery),
+    ("Session updates coalesce into one UI dispatch", TestSessionUpdateBuffer),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("App settings flush the latest debounced value", TestAppSettingsFlushesLatestValue),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
@@ -1642,6 +1643,43 @@ static Task TestSessionStatusTracksRecovery()
     Assert(error is { IsError: true }, "A real session error must remain visible with error styling.");
     var translated = tracker.Observe(new SessionUpdate("번역", DiagnosticKind: DiagnosticKind.OcrTranslated));
     Assert(translated?.Text == TranslationSession.RunningStatus, "A translated poll should clear the previous error state.");
+    return Task.CompletedTask;
+}
+
+static Task TestSessionUpdateBuffer()
+{
+    var buffer = new SessionUpdateBuffer();
+    var first = new SessionUpdate("first");
+    var second = new SessionUpdate("second");
+
+    Assert(buffer.Enqueue(first), "The first pending update should schedule one UI dispatch.");
+    Assert(!buffer.Enqueue(second), "Additional pending updates should reuse the scheduled UI dispatch.");
+    var drained = buffer.Drain();
+    Assert(drained.SequenceEqual([first, second]), "Buffered updates must preserve publication order.");
+    Assert(buffer.Enqueue(new SessionUpdate("third")), "A new batch should schedule another UI dispatch after draining.");
+    Assert(buffer.Drain().Single().Status == "third", "The next update batch should remain independent.");
+    Assert(buffer.Drain().Count == 0, "Draining an empty buffer should be harmless.");
+
+    var chatLine = new SessionUpdate("line", IsChatLine: true, TranslatedText: "translated");
+    var firstSnapshot = new SessionUpdate("snapshot-1", ChatItems: []);
+    var latestSnapshot = new SessionUpdate("snapshot-2", ChatItems: []);
+    Assert(
+        ReferenceEquals(
+            SessionUpdateBuffer.SelectLatestOverlayUpdate(
+                [chatLine, firstSnapshot, latestSnapshot],
+                TranslationMode.Chat),
+            latestSnapshot),
+        "A chat overlay batch should render only its latest complete snapshot.");
+
+    var firstScreen = new SessionUpdate("screen-1", ScreenItems: []);
+    var latestScreen = new SessionUpdate("screen-2", ScreenItems: []);
+    Assert(
+        ReferenceEquals(
+            SessionUpdateBuffer.SelectLatestOverlayUpdate(
+                [firstScreen, new SessionUpdate("skip"), latestScreen],
+                TranslationMode.Screen),
+            latestScreen),
+        "A screen overlay batch should render only its latest screen state.");
     return Task.CompletedTask;
 }
 

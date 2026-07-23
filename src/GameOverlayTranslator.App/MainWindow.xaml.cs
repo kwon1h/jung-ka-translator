@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Collections.ObjectModel;
@@ -132,6 +133,7 @@ public partial class MainWindow : Window
     private readonly IWindowSource windowSource = new Win32WindowSource();
     private readonly ObservableCollection<OcrLanguage> installedOcrLanguages = [];
     private readonly SessionStatusTracker sessionStatusTracker = new();
+    private readonly SessionUpdateBuffer sessionUpdateBuffer = new();
     private readonly WindowCaptureService dictionaryCaptureService = new();
     private readonly WindowCaptureService sessionCaptureService = new(requireTargetForeground: true);
     private readonly PaddleOcrEngine paddleOcrEngine = new();
@@ -1743,55 +1745,95 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SessionUpdated(object? sender, SessionUpdate update) => Dispatcher.Invoke(() =>
+    private void SessionUpdated(object? sender, SessionUpdate update)
     {
-        var statusDisplay = sessionStatusTracker.Observe(update);
-        if (statusDisplay is not null)
+        if (isClosing || Dispatcher.HasShutdownStarted)
         {
-            SetStatus(statusDisplay.Text, statusDisplay.IsError);
+            return;
         }
-        resultWindow?.Apply(update);
+
+        if (sessionUpdateBuffer.Enqueue(update))
+        {
+            _ = Dispatcher.BeginInvoke(
+                DispatcherPriority.DataBind,
+                (Action)ProcessPendingSessionUpdates);
+        }
+    }
+
+    private void ProcessPendingSessionUpdates()
+    {
+        var updates = sessionUpdateBuffer.Drain();
+        if (isClosing || updates.Count == 0)
+        {
+            return;
+        }
+
+        TranslationMode? mode = null;
         if (overlayWindow is not null && WindowComboBox.SelectedItem is CapturableWindow window)
         {
             var region = activeSessionRegion ?? SelectedRegion ?? FullWindowRegion;
-            var mode = activeSessionMode ?? settings.TranslationMode;
+            mode = activeSessionMode ?? settings.TranslationMode;
             overlayWindow.PositionOver(window, region);
-            overlayWindow.CurrentMode = mode;
+            overlayWindow.CurrentMode = mode.Value;
             overlayWindow.TrackTargetTopmost(window);
         }
-        overlayWindow?.Apply(update);
 
-        // Handle diagnostic log recording
-        var diagnosticEntry = DiagnosticLogFormatter.Create(update);
-        if (diagnosticEntry is not null)
+        var overlayUpdate = mode is { } overlayMode
+            ? SessionUpdateBuffer.SelectLatestOverlayUpdate(updates, overlayMode)
+            : null;
+        var refreshApiUsage = false;
+
+        foreach (var update in updates)
         {
-            var logItem = new DiagnosticLogItem
+            var statusDisplay = sessionStatusTracker.Observe(update);
+            if (statusDisplay is not null)
             {
-                Time = DateTime.Now.ToString("HH:mm:ss"),
-                Status = diagnosticEntry.Status,
-                Source = diagnosticEntry.Source,
-                Rule = diagnosticEntry.Rule,
-                Reason = diagnosticEntry.Reason,
-                ApiUsage = diagnosticEntry.ApiUsage
-            };
-            diagnosticLogs.Insert(0, logItem);
-            while (diagnosticLogs.Count > 100)
+                SetStatus(statusDisplay.Text, statusDisplay.IsError);
+            }
+
+            resultWindow?.Apply(update);
+
+            var diagnosticEntry = DiagnosticLogFormatter.Create(update);
+            if (diagnosticEntry is not null)
             {
-                diagnosticLogs.RemoveAt(diagnosticLogs.Count - 1);
+                var logItem = new DiagnosticLogItem
+                {
+                    Time = DateTime.Now.ToString("HH:mm:ss"),
+                    Status = diagnosticEntry.Status,
+                    Source = diagnosticEntry.Source,
+                    Rule = diagnosticEntry.Rule,
+                    Reason = diagnosticEntry.Reason,
+                    ApiUsage = diagnosticEntry.ApiUsage
+                };
+                diagnosticLogs.Insert(0, logItem);
+                while (diagnosticLogs.Count > 100)
+                {
+                    diagnosticLogs.RemoveAt(diagnosticLogs.Count - 1);
+                }
+            }
+
+            if (update.DiagnosticKind == DiagnosticKind.OcrTranslated)
+            {
+                totalTranslationRequestCount = update.TotalTranslationRequestCount;
+                totalTranslationCharacterCount = update.TotalTranslationCharacterCount;
+                refreshApiUsage = true;
+            }
+            else if (update.DiagnosticKind == DiagnosticKind.OcrSkipped)
+            {
+                refreshApiUsage = true;
             }
         }
 
-        if (update.DiagnosticKind == DiagnosticKind.OcrTranslated)
+        if (overlayUpdate is not null)
         {
-            totalTranslationRequestCount = update.TotalTranslationRequestCount;
-            totalTranslationCharacterCount = update.TotalTranslationCharacterCount;
+            overlayWindow?.Apply(overlayUpdate);
+        }
+
+        if (refreshApiUsage)
+        {
             UpdateApiUsageText();
         }
-        else if (update.DiagnosticKind == DiagnosticKind.OcrSkipped)
-        {
-            UpdateApiUsageText();
-        }
-    });
+    }
 
     private void UpdateApiUsageText()
     {
@@ -1804,6 +1846,7 @@ public partial class MainWindow : Window
     private async void OnClosed(object? sender, EventArgs e)
     {
         isClosing = true;
+        _ = sessionUpdateBuffer.Drain();
         settingsStore.Flush();
         SetPreviewEditorNoActivate(false);
         ResumeGameWindowAfterPreviewEditing();
