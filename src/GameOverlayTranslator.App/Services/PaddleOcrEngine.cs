@@ -23,6 +23,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "paddleocr-models");
     private readonly SemaphoreSlim semaphore = new(1, 1);
+    private readonly OcrFrameCache frameCache = new();
     private PaddleOcrAll? currentOcr;
     private string? currentLanguageTag;
 
@@ -79,6 +80,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         currentOcr = nextOcr;
         currentLanguageTag = language.Tag;
         previousOcr?.Dispose();
+        frameCache.Clear();
         AppLog.Write($"PaddleOCR model for language {language.Tag} loaded successfully.");
     }
 
@@ -119,6 +121,11 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
             await EnsureModelLoadedAsync(language, ct);
 
             using var mat = BitmapSourceToMat(frame.Bitmap);
+            if (frameCache.TryGet(mat, language.Tag, out var cachedResult))
+            {
+                return cachedResult;
+            }
+
             var ocr = currentOcr ?? throw new InvalidOperationException("PaddleOCR 모델이 준비되지 않았습니다.");
             var paddleResult = ocr.Run(mat);
 
@@ -141,10 +148,12 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
 
             var concatenatedText = string.Join(Environment.NewLine, lines.Select(line => line.Text));
 
-            return new OcrResult(concatenatedText, lines)
+            var result = new OcrResult(concatenatedText, lines)
             {
                 Words = words
             };
+            frameCache.Store(mat, language.Tag, result);
+            return result;
         }
         finally
         {
@@ -177,6 +186,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
 
     public void Dispose()
     {
+        frameCache.Dispose();
         currentOcr?.Dispose();
         semaphore.Dispose();
     }

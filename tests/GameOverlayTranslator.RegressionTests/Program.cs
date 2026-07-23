@@ -21,6 +21,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Overlay defaults are readable", TestOverlayDefaults),
     ("PaddleOCR is the only OCR engine", TestPaddleOcrIsOnlyEngine),
     ("PaddleOCR bitmap conversion preserves BGR pixels", TestPaddleOcrBitmapConversion),
+    ("PaddleOCR reuses only identical frames", TestPaddleOcrFrameCache),
     ("App settings map persisted filters", TestAppSettingsMapsPersistedFilters),
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
     ("Dictionary screen line skips API", TestDictionaryOnlyScreenLineSkipsTranslation),
@@ -741,6 +742,26 @@ static Task TestPaddleOcrBitmapConversion()
     var second = mat.At<CvVec3b>(0, 1);
     Assert(first.Item0 == 10 && first.Item1 == 20 && first.Item2 == 30, "First BGR pixel changed during conversion.");
     Assert(second.Item0 == 40 && second.Item1 == 50 && second.Item2 == 60, "Second BGR pixel changed during conversion.");
+    return Task.CompletedTask;
+}
+
+static Task TestPaddleOcrFrameCache()
+{
+    using var cache = new OcrFrameCache();
+    using var original = new OpenCvSharp.Mat(2, 2, CvMatType.CV_8UC3, OpenCvSharp.Scalar.All(0));
+    var expected = new OcrResult("cached", []);
+
+    Assert(!cache.TryGet(original, "en", out _), "An empty frame cache must miss.");
+    cache.Store(original, "en", expected);
+
+    using var identical = original.Clone();
+    Assert(cache.TryGet(identical, "en", out var reused), "An identical frame should reuse its OCR result.");
+    Assert(ReferenceEquals(reused, expected), "The cached OCR result instance should be returned unchanged.");
+
+    using var changed = original.Clone();
+    changed.Set(0, 0, new CvVec3b(1, 0, 0));
+    Assert(!cache.TryGet(changed, "en", out _), "Any pixel change must invalidate the OCR result.");
+    Assert(!cache.TryGet(identical, "ja", out _), "A language change must invalidate the OCR result.");
     return Task.CompletedTask;
 }
 
