@@ -1197,7 +1197,7 @@ static async Task TestTranslationCooldownDoesNotPublishSource()
     var session = ScreenSession(source, cached);
     var updates = Collect(session);
 
-    await RunSession(session, CreateOptions(TranslationMode.Screen), 110);
+    await RunSession(session, CreateOptions(TranslationMode.Screen), 250);
 
     Assert(failing.CallCount == 1, "The cooldown should suppress repeated provider calls.");
     Assert(

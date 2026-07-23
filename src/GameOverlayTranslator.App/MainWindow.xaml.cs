@@ -1100,7 +1100,7 @@ public partial class MainWindow : Window
         var downloadCancellation = new CancellationTokenSource();
         ocrModelDownloadCancellation = downloadCancellation;
         var downloadTask = Task.Run(
-            () => paddleOcrEngine.PrepareModelAsync(model.Key, model.DisplayName, downloadCancellation.Token),
+            () => paddleOcrEngine.DownloadModelPackageAsync(model.Key, model.DisplayName, downloadCancellation.Token),
             downloadCancellation.Token);
         ocrModelDownloadTask = downloadTask;
         UpdateOcrModelDownloadState();

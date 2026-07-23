@@ -51,16 +51,41 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
     }
 
     public async Task PrepareAsync(OcrLanguage language, CancellationToken ct)
-        => await PrepareModelAsync(GetModelKey(language.Tag), language.DisplayName, ct);
-
-    internal async Task PrepareModelAsync(string modelKey, string displayName, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
         await semaphore.WaitAsync(ct);
         try
         {
-            await EnsureModelLoadedAsync(GetModelKey(modelKey), displayName, ct);
+            await EnsureModelLoadedAsync(GetModelKey(language.Tag), language.DisplayName, ct);
+        }
+        finally
+        {
+            semaphore.Release();
+        }
+    }
+
+    internal async Task DownloadModelPackageAsync(string modelKey, string displayName, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        modelKey = GetModelKey(modelKey);
+
+        await semaphore.WaitAsync(ct);
+        try
+        {
+            if (IsModelAvailable(modelKey))
+            {
+                return;
+            }
+
+            AppLog.Write($"Downloading PaddleOCR model: {modelKey}");
+            _ = await FetchModelAsync(modelKey, displayName, ct);
+            if (!IsModelAvailable(modelKey))
+            {
+                throw new InvalidOperationException($"{displayName} OCR 모델 파일을 확인할 수 없습니다.");
+            }
+
+            AppLog.Write($"PaddleOCR model {modelKey} downloaded successfully.");
         }
         finally
         {
@@ -77,17 +102,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
 
         AppLog.Write($"Loading PaddleOCR model: {modelKey}");
 
-        FullOcrModel model;
-        try
-        {
-            model = await DownloadModelAsync(modelKey, ct);
-        }
-        catch (Exception ex)
-        {
-            AppLog.Write($"[Error] Failed to load PaddleOCR models: {ex.Message}");
-            throw new Exception($"{displayName} OCR 모델을 준비하지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도하세요.", ex);
-        }
-
+        var model = await FetchModelAsync(modelKey, displayName, ct);
         var nextOcr = new PaddleOcrAll(model, new DeviceOptions("CPU"))
         {
             AllowRotateDetection = false,
@@ -100,6 +115,26 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         previousOcr?.Dispose();
         frameCache.Clear();
         AppLog.Write($"PaddleOCR model {modelKey} loaded successfully.");
+    }
+
+    private static async Task<FullOcrModel> FetchModelAsync(
+        string modelKey,
+        string displayName,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await DownloadModelAsync(modelKey, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write($"[Error] Failed to prepare PaddleOCR models: {ex.Message}");
+            throw new Exception($"{displayName} OCR 모델을 준비하지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도하세요.", ex);
+        }
     }
 
     internal static string GetModelKey(string languageTag) => languageTag switch
