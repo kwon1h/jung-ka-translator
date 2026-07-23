@@ -171,6 +171,9 @@ public partial class MainWindow : Window
     private bool refreshingWindowList;
     private bool capturingPreview;
     private CancellationTokenSource? previewCancellation;
+    private CancellationTokenSource? ocrModelDownloadCancellation;
+    private Task? ocrModelDownloadTask;
+    private bool isClosing;
     private nint previewWindowHandle;
     private HwndSource? mainWindowSource;
     private readonly List<PreviewRegionItem> previewEditItems = [];
@@ -717,6 +720,17 @@ public partial class MainWindow : Window
 
     private void UpdateOcrModelDownloadState()
     {
+        if (ocrModelDownloadCancellation is not null)
+        {
+            var canceling = ocrModelDownloadCancellation.IsCancellationRequested;
+            DownloadOcrModelButton.Content = canceling ? "취소 중" : "취소";
+            DownloadOcrModelButton.IsEnabled = !canceling;
+            DownloadOcrModelButton.ToolTip = canceling
+                ? "OCR 모델 준비 작업을 정리하고 있습니다."
+                : "현재 OCR 모델 다운로드를 취소합니다.";
+            return;
+        }
+
         if (OcrModelLanguageComboBox.SelectedItem is not OcrLanguage language)
         {
             DownloadOcrModelButton.Content = "다운로드";
@@ -935,6 +949,17 @@ public partial class MainWindow : Window
 
     private async void DownloadOcrModel(object sender, RoutedEventArgs e)
     {
+        if (ocrModelDownloadCancellation is not null)
+        {
+            if (!ocrModelDownloadCancellation.IsCancellationRequested)
+            {
+                ocrModelDownloadCancellation.Cancel();
+                SetStatus("OCR 모델 다운로드를 취소하는 중입니다...");
+                UpdateOcrModelDownloadState();
+            }
+            return;
+        }
+
         if (OcrModelLanguageComboBox.SelectedItem is not OcrLanguage language)
         {
             SetStatus("먼저 내려받을 언어를 선택하세요.", true);
@@ -947,23 +972,52 @@ public partial class MainWindow : Window
             return;
         }
 
-        DownloadOcrModelButton.IsEnabled = false;
+        var downloadCancellation = new CancellationTokenSource();
+        ocrModelDownloadCancellation = downloadCancellation;
+        var downloadTask = Task.Run(
+            () => paddleOcrEngine.PrepareAsync(language, downloadCancellation.Token),
+            downloadCancellation.Token);
+        ocrModelDownloadTask = downloadTask;
+        UpdateOcrModelDownloadState();
         SetStatus($"{language.DisplayName} OCR 모델을 준비하는 중입니다...");
         try
         {
-            await paddleOcrEngine.PrepareAsync(language, CancellationToken.None);
-            RefreshInstalledOcrLanguages();
-            OcrLanguageComboBox.SelectedItem = installedOcrLanguages.FirstOrDefault(item => item.Tag == language.Tag);
-            SetStatus($"{language.DisplayName} OCR 모델 준비가 완료되었습니다.");
+            await downloadTask;
+            if (!isClosing)
+            {
+                RefreshInstalledOcrLanguages();
+                OcrLanguageComboBox.SelectedItem = installedOcrLanguages.FirstOrDefault(item => item.Tag == language.Tag);
+                SetStatus($"{language.DisplayName} OCR 모델 준비가 완료되었습니다.");
+            }
+        }
+        catch (OperationCanceledException) when (downloadCancellation.IsCancellationRequested)
+        {
+            if (!isClosing)
+            {
+                SetStatus($"{language.DisplayName} OCR 모델 다운로드를 취소했습니다.");
+            }
         }
         catch (Exception ex)
         {
             AppLog.Write("OCR model download failed", ex);
-            SetStatus($"OCR 모델 준비에 실패했습니다: {ex.Message}", true);
+            if (!isClosing)
+            {
+                SetStatus($"OCR 모델 준비에 실패했습니다: {ex.Message}", true);
+            }
         }
         finally
         {
-            UpdateOcrModelDownloadState();
+            if (ReferenceEquals(ocrModelDownloadTask, downloadTask))
+            {
+                ocrModelDownloadTask = null;
+                ocrModelDownloadCancellation = null;
+                downloadCancellation.Dispose();
+            }
+
+            if (!isClosing)
+            {
+                UpdateOcrModelDownloadState();
+            }
         }
     }
 
@@ -1594,6 +1648,7 @@ public partial class MainWindow : Window
 
     private async void OnClosed(object? sender, EventArgs e)
     {
+        isClosing = true;
         SetPreviewEditorNoActivate(false);
         ResumeGameWindowAfterPreviewEditing();
         mainWindowSource?.RemoveHook(MainWindowMessageHook);
@@ -1601,6 +1656,22 @@ public partial class MainWindow : Window
         previewCancellation?.Cancel();
         previewCancellation?.Dispose();
         previewCancellation = null;
+        var pendingModelDownload = ocrModelDownloadTask;
+        ocrModelDownloadCancellation?.Cancel();
+        if (pendingModelDownload is not null)
+        {
+            try
+            {
+                await pendingModelDownload;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write("OCR model download failed while closing", ex);
+            }
+        }
         await StopSessionAsync();
         if (resultWindow is not null)
         {
