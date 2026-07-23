@@ -152,6 +152,7 @@ public partial class MainWindow : Window
     private readonly AppSettingsStore settingsStore = new();
     private static readonly HttpClient httpClient = new();
     private readonly TranslationSession session;
+    private readonly CachingTranslationService cachingTranslationService;
     private readonly ITranslationService chatTranslationService;
     private AppSettings settings;
     private ResultWindow? resultWindow;
@@ -205,7 +206,7 @@ public partial class MainWindow : Window
             () => settings
         );
         chatTranslationService = delegator;
-        var cachingTranslationService = new CachingTranslationService(delegator, new ScreenTranslationCacheStore());
+        cachingTranslationService = new CachingTranslationService(delegator, new ScreenTranslationCacheStore());
         session = new TranslationSession(new WindowCaptureService(requireTargetForeground: true), paddleOcrEngine, cachingTranslationService);
         session.Updated += SessionUpdated;
 
@@ -1673,6 +1674,7 @@ public partial class MainWindow : Window
             }
         }
         await StopSessionAsync();
+        cachingTranslationService.FlushCache();
         if (resultWindow is not null)
         {
             resultWindow.Closed -= ResultWindowClosed;

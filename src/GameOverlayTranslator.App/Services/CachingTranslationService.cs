@@ -7,12 +7,16 @@ public sealed class CachingTranslationService : ITranslationService
 {
     private const int DefaultMaxCacheEntries = 5000;
     private const int MaxFailedTexts = 1024;
+    private static readonly TimeSpan DefaultCacheSaveInterval = TimeSpan.FromSeconds(2);
     private readonly ITranslationService innerService;
     private readonly ScreenTranslationCacheStore cacheStore;
     private readonly Dictionary<string, string> cache;
     private readonly Queue<string> cacheInsertionOrder;
     private readonly int maxCacheEntries;
+    private readonly TimeSpan cacheSaveInterval;
     private readonly object cacheLock = new();
+    private DateTime nextCacheSaveUtc = DateTime.MinValue;
+    private bool cacheDirty;
 
     private readonly Dictionary<string, DateTime> failedTexts = new(StringComparer.Ordinal);
     private int continuousFailures;
@@ -24,7 +28,8 @@ public sealed class CachingTranslationService : ITranslationService
     public CachingTranslationService(
         ITranslationService innerService,
         ScreenTranslationCacheStore cacheStore,
-        int maxCacheEntries = DefaultMaxCacheEntries)
+        int maxCacheEntries = DefaultMaxCacheEntries,
+        TimeSpan? cacheSaveInterval = null)
     {
         this.innerService = innerService ?? throw new ArgumentNullException(nameof(innerService));
         this.cacheStore = cacheStore ?? throw new ArgumentNullException(nameof(cacheStore));
@@ -34,6 +39,12 @@ public sealed class CachingTranslationService : ITranslationService
         }
 
         this.maxCacheEntries = maxCacheEntries;
+        this.cacheSaveInterval = cacheSaveInterval ?? DefaultCacheSaveInterval;
+        if (this.cacheSaveInterval < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cacheSaveInterval));
+        }
+
         cache = cacheStore.Load() ?? new Dictionary<string, string>(StringComparer.Ordinal);
         cacheInsertionOrder = new Queue<string>(cache.Keys);
         TrimCache();
@@ -74,7 +85,7 @@ public sealed class CachingTranslationService : ITranslationService
                 continuousFailures = 0;
                 failedTexts.Remove(cacheKey);
                 SetCachedTranslation(cacheKey, result.TranslatedText);
-                cacheStore.Save(cache);
+                SaveCacheIfDue();
             }
 
             return result with { Usage = usage };
@@ -179,7 +190,7 @@ public sealed class CachingTranslationService : ITranslationService
                             results[resultIndex] = translatedText;
                         }
                     }
-                    cacheStore.Save(cache);
+                    SaveCacheIfDue();
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -207,6 +218,23 @@ public sealed class CachingTranslationService : ITranslationService
         }
 
         return new BatchTranslationResult(results, usage);
+    }
+
+    internal void FlushCache()
+    {
+        lock (cacheLock)
+        {
+            if (!cacheDirty)
+            {
+                return;
+            }
+
+            if (cacheStore.Save(cache))
+            {
+                cacheDirty = false;
+                nextCacheSaveUtc = DateTime.UtcNow + cacheSaveInterval;
+            }
+        }
     }
 
     private static void ValidateTranslation(string sourceText, string translatedText)
@@ -265,6 +293,22 @@ public sealed class CachingTranslationService : ITranslationService
         while (cache.Count > maxCacheEntries && cacheInsertionOrder.TryDequeue(out var oldestKey))
         {
             cache.Remove(oldestKey);
+        }
+    }
+
+    private void SaveCacheIfDue()
+    {
+        cacheDirty = true;
+        var now = DateTime.UtcNow;
+        if (now < nextCacheSaveUtc)
+        {
+            return;
+        }
+
+        if (cacheStore.Save(cache))
+        {
+            cacheDirty = false;
+            nextCacheSaveUtc = now + cacheSaveInterval;
         }
     }
 

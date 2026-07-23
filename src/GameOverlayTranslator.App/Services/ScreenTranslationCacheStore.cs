@@ -8,10 +8,21 @@ namespace GameOverlayTranslator.App.Services;
 public sealed class ScreenTranslationCacheStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new();
-    private readonly string cachePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "GameOverlayTranslator",
-        "screen_translation_cache.json");
+    private readonly string cachePath;
+
+    public ScreenTranslationCacheStore()
+        : this(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GameOverlayTranslator",
+            "screen_translation_cache.json"))
+    {
+    }
+
+    internal ScreenTranslationCacheStore(string cachePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(cachePath);
+        this.cachePath = cachePath;
+    }
 
     public Dictionary<string, string> Load()
     {
@@ -31,7 +42,7 @@ public sealed class ScreenTranslationCacheStore
         return new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
-    public void Save(IReadOnlyDictionary<string, string> cache)
+    public bool Save(IReadOnlyDictionary<string, string> cache)
     {
         try
         {
@@ -40,10 +51,12 @@ public sealed class ScreenTranslationCacheStore
             var temporaryPath = $"{cachePath}.tmp";
             File.WriteAllText(temporaryPath, json);
             File.Move(temporaryPath, cachePath, true);
+            return true;
         }
         catch (Exception ex)
         {
             AppLog.Write("Screen cache save failed", ex);
+            return false;
         }
     }
 }

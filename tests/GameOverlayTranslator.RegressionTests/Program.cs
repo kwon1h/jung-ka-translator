@@ -30,6 +30,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Repeated screen OCR uses cache", TestRepeatedScreenLineUsesCachedTranslation),
     ("Repeated chat translation uses cache", TestRepeatedChatLineUsesCachedTranslation),
     ("Translation cache evicts oldest entries", TestTranslationCacheEvictsOldestEntries),
+    ("Translation cache flushes deferred entries", TestTranslationCacheFlushesDeferredEntries),
     ("Application logs rotate and expire", TestApplicationLogMaintenance),
     ("Empty screen OCR keeps overlay items", TestEmptyScreenOcrDoesNotPublishEmptyOverlayItems),
     ("Screen translation publishes translated diagnostic", TestScreenTranslatedDiagnostic),
@@ -320,6 +321,41 @@ static async Task TestTranslationCacheEvictsOldestEntries()
     await cached.TranslateAsync(new TranslationRequest("cache-first", "ko", "en"), CancellationToken.None);
 
     Assert(translation.SingleRequests == 4, "The oldest entry should be evicted after the cache reaches its limit.");
+}
+
+static async Task TestTranslationCacheFlushesDeferredEntries()
+{
+    var directory = Path.Combine(Path.GetTempPath(), $"game-overlay-translator-cache-{Guid.NewGuid():N}");
+    var cachePath = Path.Combine(directory, "cache.json");
+    Directory.CreateDirectory(directory);
+
+    try
+    {
+        var source = new CountingTranslationService();
+        var cached = new CachingTranslationService(
+            source,
+            new ScreenTranslationCacheStore(cachePath),
+            cacheSaveInterval: TimeSpan.FromHours(1));
+
+        await cached.TranslateAsync(new TranslationRequest("persist-first", "ko", "en"), CancellationToken.None);
+        await cached.TranslateAsync(new TranslationRequest("persist-second", "ko", "en"), CancellationToken.None);
+
+        var beforeFlush = new ScreenTranslationCacheStore(cachePath).Load();
+        Assert(
+            !beforeFlush.Values.Contains("translated:persist-second", StringComparer.Ordinal),
+            "The deferred entry should not be persisted before flush.");
+
+        cached.FlushCache();
+
+        var afterFlush = new ScreenTranslationCacheStore(cachePath).Load();
+        Assert(
+            afterFlush.Values.Contains("translated:persist-second", StringComparer.Ordinal),
+            "Flush should persist the latest deferred cache entry.");
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
 }
 
 static Task TestApplicationLogMaintenance()
