@@ -54,6 +54,9 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Chinese ratio bypasses chat filter", TestChineseRatioBypassesChatFilter),
     ("English-only screen lines are hidden", TestEnglishOnlyScreenLinesAreHidden),
     ("English game text is translated", TestEnglishGameTextIsTranslated),
+    ("Screen translation forwards game language", TestScreenTranslationForwardsGameLanguage),
+    ("Chat translation forwards game language", TestChatTranslationForwardsGameLanguage),
+    ("Same translation language is rejected", TestSameTranslationLanguageIsRejected),
     ("Screen overlay keeps individual OCR positions", TestScreenOverlayKeepsIndividualOcrPositions),
     ("Multiple include regions filter OCR lines", TestMultipleIncludeRegionsFilterOcrLines),
     ("Foreground capture accepts only target window", TestForegroundCaptureAcceptsOnlyTargetWindow),
@@ -848,6 +851,53 @@ static async Task TestEnglishGameTextIsTranslated()
     Assert(updates.Any(update => update.DiagnosticKind == DiagnosticKind.OcrTranslated), "Expected an English screen translation update.");
 }
 
+static async Task TestScreenTranslationForwardsGameLanguage()
+{
+    var translation = new CountingTranslationService();
+    var session = ScreenSession("START GAME", translation);
+    var options = CreateOptions(TranslationMode.Screen) with
+    {
+        OcrLanguage = new OcrLanguage("en", "English")
+    };
+
+    await RunSession(session, options);
+
+    Assert(translation.LastBatchSourceLanguage == "en", "Screen translation must send the selected game language to the provider.");
+}
+
+static async Task TestChatTranslationForwardsGameLanguage()
+{
+    var translation = new CountingTranslationService();
+    var source = "こんにちは世界";
+    var session = new TranslationSession(
+        new FakeCaptureService(),
+        new FakeOcrEngine(new OcrResult($"racer: {source}", [])),
+        translation);
+    var options = CreateOptions(TranslationMode.Chat) with
+    {
+        OcrLanguage = new OcrLanguage("ja", "Japanese")
+    };
+
+    await RunSession(session, options);
+
+    Assert(translation.LastBatchSourceLanguage == "ja", "Chat translation must send the selected game language to the provider.");
+}
+
+static Task TestSameTranslationLanguageIsRejected()
+{
+    Assert(
+        TranslationTextNormalizer.AreSameLanguage(
+            new OcrLanguage("ko", "Korean"),
+            new TranslationLanguage("ko-KR", "Korean")),
+        "Language variants with the same primary language should be treated as identical.");
+    Assert(
+        !TranslationTextNormalizer.AreSameLanguage(
+            new OcrLanguage("ja", "Japanese"),
+            new TranslationLanguage("ko", "Korean")),
+        "Different source and target languages should remain valid.");
+    return Task.CompletedTask;
+}
+
 static Task TestScreenOverlayKeepsIndividualOcrPositions()
 {
     var firstBounds = new Rect(12, 40, 160, 24);
@@ -1400,6 +1450,7 @@ sealed class CountingTranslationService : ITranslationService
     public int BatchRequests { get; private set; }
     public IReadOnlyList<string> LastSingleTexts => singleTexts;
     public IReadOnlyList<string> LastBatchTexts { get; private set; } = Array.Empty<string>();
+    public string? LastBatchSourceLanguage { get; private set; }
 
     private readonly List<string> singleTexts = [];
 
@@ -1414,6 +1465,7 @@ sealed class CountingTranslationService : ITranslationService
     {
         BatchRequests++;
         LastBatchTexts = request.Texts.ToList();
+        LastBatchSourceLanguage = request.SourceLanguage;
         return Task.FromResult(new BatchTranslationResult(request.Texts.Select(text => $"translated:{text}").ToList()));
     }
 }

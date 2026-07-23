@@ -1337,6 +1337,13 @@ public partial class MainWindow : Window
         var ocrLanguage = OcrLanguageComboBox?.SelectedItem as OcrLanguage;
         var targetLanguage = TargetLanguageComboBox?.SelectedItem as TranslationLanguage;
         var translatorReady = IsTranslatorReady(out var translatorMissingText);
+        if (ocrLanguage is not null
+            && targetLanguage is not null
+            && TranslationTextNormalizer.AreSameLanguage(ocrLanguage, targetLanguage))
+        {
+            translatorReady = false;
+            translatorMissingText = "게임 언어와 번역 언어를 다르게 선택하세요.";
+        }
         var ocrReady = IsOcrReady(ocrLanguage, out var ocrReadyText, out var ocrMissingText);
         var dictionaryReady = UserDictionaryStore.DefaultDictionary.Count > 0;
 

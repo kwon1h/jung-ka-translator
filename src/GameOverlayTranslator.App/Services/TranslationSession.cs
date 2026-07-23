@@ -257,7 +257,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             {
                 var batchCharacters = textsToTranslate.Sum(text => text.Length);
                 var batchResult = await translationService.TranslateBatchAsync(
-                    new BatchTranslationRequest(textsToTranslate, options.TargetLanguage.Code),
+                    new BatchTranslationRequest(
+                        textsToTranslate,
+                        options.TargetLanguage.Code,
+                        options.OcrLanguage.Tag),
                     ct);
 
                 for (var index = 0; index < textsToTranslate.Count; index++)
@@ -683,7 +686,10 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
             try
             {
                 batchResult = await translationService.TranslateBatchAsync(
-                    new BatchTranslationRequest(textsToTranslate, options.TargetLanguage.Code),
+                    new BatchTranslationRequest(
+                        textsToTranslate,
+                        options.TargetLanguage.Code,
+                        options.OcrLanguage.Tag),
                     ct);
             }
             catch

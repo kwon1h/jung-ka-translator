@@ -61,6 +61,13 @@ internal static partial class TranslationTextNormalizer
         return message.Any(character => IsExpectedSourceCharacter(character, language));
     }
 
+    public static bool AreSameLanguage(OcrLanguage source, TranslationLanguage target)
+    {
+        var sourcePrimary = source.Tag.Split('-', 2)[0];
+        var targetPrimary = target.Code.Split('-', 2)[0];
+        return string.Equals(sourcePrimary, targetPrimary, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static double CalculateCanonicalSimilarity(string leftCanonical, string rightCanonical)
     {
         var leftTokens = TokenizeCanonical(leftCanonical);
