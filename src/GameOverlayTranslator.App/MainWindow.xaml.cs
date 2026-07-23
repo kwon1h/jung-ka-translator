@@ -576,9 +576,22 @@ public partial class MainWindow : Window
             SetStatus("번역 언어를 먼저 선택하세요.", true);
             return;
         }
+        if (OcrLanguageComboBox.SelectedItem is not OcrLanguage sourceLanguage)
+        {
+            SetStatus("게임 언어 모델을 준비한 뒤 게임 언어를 선택하세요.", true);
+            return;
+        }
 
+        var effectiveTranslator = TranslationServiceDelegator.ResolveEffectiveTranslator(
+            settings.TranslatorType,
+            sourceLanguage.Tag,
+            targetLanguage.Code);
+        var effectiveTranslatorName = TranslationServiceDelegator.GetEffectiveDisplayName(
+            settings.TranslatorType,
+            sourceLanguage.Tag,
+            targetLanguage.Code);
         ITranslationService service;
-        switch (settings.TranslatorType)
+        switch (effectiveTranslator)
         {
             case TranslationServiceType.DeepL:
                 if (string.IsNullOrWhiteSpace(ApiKeyPasswordBox.Password))
@@ -608,13 +621,13 @@ public partial class MainWindow : Window
         TestTranslationServiceButton.IsEnabled = false;
         StartStopButton.IsEnabled = false;
         TestTranslationServiceButton.Content = "테스트 중…";
-        SetStatus("번역 서비스 연결을 확인하는 중입니다...");
+        SetStatus($"{effectiveTranslatorName} 연결을 확인하는 중입니다...");
         try
         {
             var result = await TranslationConnectionTester.TestAsync(service, targetLanguage, cancellation.Token);
             if (!isClosing)
             {
-                SetStatus($"연결 성공: {result.SourceText} → {result.TranslatedText}");
+                SetStatus($"{effectiveTranslatorName} 연결 성공: {result.SourceText} → {result.TranslatedText}");
             }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
@@ -1502,7 +1515,7 @@ public partial class MainWindow : Window
         var hasRegion = SelectedRegion is not null;
         var ocrLanguage = OcrLanguageComboBox?.SelectedItem as OcrLanguage;
         var targetLanguage = TargetLanguageComboBox?.SelectedItem as TranslationLanguage;
-        var translatorReady = IsTranslatorReady(out var translatorMissingText);
+        var translatorReady = IsTranslatorReady(ocrLanguage, targetLanguage, out var translatorMissingText);
         if (ocrLanguage is not null
             && targetLanguage is not null
             && TranslationTextNormalizer.AreSameLanguage(ocrLanguage, targetLanguage))
@@ -1536,7 +1549,7 @@ public partial class MainWindow : Window
             new ReadinessItem(
                 ReadyTranslatorText,
                 translatorReady && targetLanguage is not null,
-                $"번역 서비스 준비됨: {GetSelectedTranslatorName()} → {targetLanguage?.DisplayName ?? "한국어"}",
+                $"번역 서비스 준비됨: {GetEffectiveTranslatorName(ocrLanguage, targetLanguage)} → {targetLanguage?.DisplayName ?? "한국어"}",
                 targetLanguage is null ? "번역 언어를 선택하세요." : translatorMissingText),
             new ReadinessItem(
                 ReadyDictionaryText,
@@ -1562,22 +1575,34 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private bool IsTranslatorReady(out string missingText)
+    private bool IsTranslatorReady(
+        OcrLanguage? sourceLanguage,
+        TranslationLanguage? targetLanguage,
+        out string missingText)
     {
-        missingText = settings.TranslatorType switch
+        var effectiveTranslator = TranslationServiceDelegator.ResolveEffectiveTranslator(
+            settings.TranslatorType,
+            sourceLanguage?.Tag,
+            targetLanguage?.Code);
+        missingText = effectiveTranslator switch
         {
-            TranslationServiceType.DeepL when string.IsNullOrWhiteSpace(ApiKeyPasswordBox?.Password) => "DeepL API 키를 입력하고 저장하세요.",
-            TranslationServiceType.GoogleWebApp when !IsValidHttpUrl(GoogleWebAppUrlTextBox?.Text) => "Google Apps Script Web App URL을 입력하고 저장하세요.",
+            _ when TranslationServiceDelegator.RequiresDeepLApiKey(effectiveTranslator)
+                && string.IsNullOrWhiteSpace(ApiKeyPasswordBox?.Password) => "DeepL API 키를 입력하고 저장하세요.",
+            _ when TranslationServiceDelegator.RequiresGoogleWebAppUrl(effectiveTranslator)
+                && !IsValidHttpUrl(GoogleWebAppUrlTextBox?.Text) => "Google Apps Script Web App URL을 입력하고 저장하세요.",
             _ => string.Empty
         };
 
         return string.IsNullOrWhiteSpace(missingText);
     }
 
-    private string GetSelectedTranslatorName() =>
-        TranslatorTypeComboBox?.SelectedItem is ComboBoxItem item
-            ? item.Content?.ToString() ?? settings.TranslatorType.ToString()
-            : settings.TranslatorType.ToString();
+    private string GetEffectiveTranslatorName(
+        OcrLanguage? sourceLanguage,
+        TranslationLanguage? targetLanguage) =>
+        TranslationServiceDelegator.GetEffectiveDisplayName(
+            settings.TranslatorType,
+            sourceLanguage?.Tag,
+            targetLanguage?.Code);
 
     private static bool IsValidHttpUrl(string? url) =>
         Uri.TryCreate(url?.Trim(), UriKind.Absolute, out var uri)

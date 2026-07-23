@@ -70,4 +70,34 @@ public sealed class TranslationServiceDelegator : ITranslationService
             || !DeepLTranslationService.SupportsTargetLanguage(targetLanguage))
             ? TranslationServiceType.GoogleUnofficial
             : selectedTranslator;
+
+    internal static string GetDisplayName(TranslationServiceType translatorType) =>
+        translatorType switch
+        {
+            TranslationServiceType.DeepL => "DeepL API",
+            TranslationServiceType.GoogleUnofficial => "Google 번역",
+            TranslationServiceType.GoogleWebApp => "Google Apps Script",
+            _ => translatorType.ToString()
+        };
+
+    internal static string GetEffectiveDisplayName(
+        TranslationServiceType selectedTranslator,
+        string? sourceLanguage,
+        string? targetLanguage)
+    {
+        var effectiveTranslator = ResolveEffectiveTranslator(
+            selectedTranslator,
+            sourceLanguage,
+            targetLanguage);
+        var displayName = GetDisplayName(effectiveTranslator);
+        return effectiveTranslator != selectedTranslator
+            ? $"{displayName} (DeepL 미지원 언어 자동 전환)"
+            : displayName;
+    }
+
+    internal static bool RequiresDeepLApiKey(TranslationServiceType effectiveTranslator) =>
+        effectiveTranslator == TranslationServiceType.DeepL;
+
+    internal static bool RequiresGoogleWebAppUrl(TranslationServiceType effectiveTranslator) =>
+        effectiveTranslator == TranslationServiceType.GoogleWebApp;
 }

@@ -1375,6 +1375,22 @@ static async Task TestDeepLUnsupportedSourceFallback()
         TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.GoogleWebApp, "hi", "ko")
         == TranslationServiceType.GoogleWebApp,
         "Explicitly selected non-DeepL providers must not be changed.");
+    Assert(
+        TranslationServiceDelegator.GetEffectiveDisplayName(TranslationServiceType.DeepL, "hi", "ko")
+        == "Google 번역 (DeepL 미지원 언어 자동 전환)",
+        "The UI should identify the provider actually used for a DeepL-unsupported language.");
+    Assert(
+        !TranslationServiceDelegator.RequiresDeepLApiKey(
+            TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "hi", "ko")),
+        "The DeepL API key must not block a language pair that automatically uses Google.");
+    Assert(
+        TranslationServiceDelegator.RequiresDeepLApiKey(
+            TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.DeepL, "en", "ko")),
+        "A DeepL-supported language pair must still require the DeepL API key.");
+    Assert(
+        TranslationServiceDelegator.RequiresGoogleWebAppUrl(
+            TranslationServiceDelegator.ResolveEffectiveTranslator(TranslationServiceType.GoogleWebApp, "hi", "ko")),
+        "The explicitly selected Google Web App provider must still require its URL.");
 
     var handler = new ProviderRoutingHandler();
     using var client = new HttpClient(handler);
