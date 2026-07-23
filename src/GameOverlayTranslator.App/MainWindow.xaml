@@ -1062,7 +1062,7 @@
 
                                 <StackPanel x:Name="DeepLSettingsPanel" Visibility="Visible">
                                     <Grid Margin="0,0,0,7">
-                                        <TextBlock Text="DeepL API Free 인증 키" Style="{StaticResource FieldLabelStyle}" />
+                                        <TextBlock Text="DeepL API 인증 키 (Free / Pro)" Style="{StaticResource FieldLabelStyle}" />
                                         <Button Content="API 키 발급받기 ↗" Click="OpenDeepLApiKeysPage" Style="{StaticResource LinkButtonStyle}" HorizontalAlignment="Right" />
                                     </Grid>
                                     <Grid>
@@ -1071,7 +1071,7 @@
                                         <Button Grid.Column="1" Content="저장" Click="SaveApiKey" Margin="8,0,0,0" Width="68" />
                                         <Button Grid.Column="2" Content="삭제" Click="DeleteApiKey" Margin="8,0,0,0" Width="68" Style="{StaticResource DangerButtonStyle}" />
                                     </Grid>
-                                    <TextBlock Text="인증 키는 로컬 PC에 안전하게 암호화되어 저장됩니다." Foreground="#6B7280" FontSize="11" Margin="0,8,0,0" />
+                                    <TextBlock Text="키 종류를 자동 판별하며, 인증 키는 로컬 PC에 안전하게 암호화되어 저장됩니다." Foreground="#6B7280" FontSize="11" Margin="0,8,0,0" />
                                 </StackPanel>
 
                                 <StackPanel x:Name="GoogleUnofficialSettingsPanel" Visibility="Collapsed">

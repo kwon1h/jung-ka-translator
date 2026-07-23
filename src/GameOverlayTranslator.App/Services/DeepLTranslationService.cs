@@ -9,16 +9,19 @@ namespace GameOverlayTranslator.App.Services;
 
 public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?> authKeyProvider) : ITranslationService
 {
+    private const string FreeTranslateEndpoint = "https://api-free.deepl.com/v2/translate";
+    private const string ProTranslateEndpoint = "https://api.deepl.com/v2/translate";
+
     public async Task<TranslationResult> TranslateAsync(TranslationRequest request, CancellationToken ct)
     {
-        var authKey = authKeyProvider();
+        var authKey = authKeyProvider()?.Trim();
         if (string.IsNullOrWhiteSpace(authKey))
         {
             throw new InvalidOperationException("DeepL API 인증 키를 입력하세요.");
         }
 
-        using var message = new HttpRequestMessage(HttpMethod.Post, "https://api-free.deepl.com/v2/translate");
-        message.Headers.Authorization = new AuthenticationHeaderValue("DeepL-Auth-Key", authKey.Trim());
+        using var message = new HttpRequestMessage(HttpMethod.Post, GetTranslateEndpoint(authKey));
+        message.Headers.Authorization = new AuthenticationHeaderValue("DeepL-Auth-Key", authKey);
         message.Content = new FormUrlEncodedContent(BuildParameters(request));
 
         using var response = await httpClient.SendAsync(message, ct);
@@ -39,7 +42,7 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
 
     public async Task<BatchTranslationResult> TranslateBatchAsync(BatchTranslationRequest request, CancellationToken ct)
     {
-        var authKey = authKeyProvider();
+        var authKey = authKeyProvider()?.Trim();
         if (string.IsNullOrWhiteSpace(authKey))
         {
             throw new InvalidOperationException("DeepL API 인증 키를 입력하세요.");
@@ -50,8 +53,8 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
             return new BatchTranslationResult(Array.Empty<string>(), TranslationUsage.None);
         }
 
-        using var message = new HttpRequestMessage(HttpMethod.Post, "https://api-free.deepl.com/v2/translate");
-        message.Headers.Authorization = new AuthenticationHeaderValue("DeepL-Auth-Key", authKey.Trim());
+        using var message = new HttpRequestMessage(HttpMethod.Post, GetTranslateEndpoint(authKey));
+        message.Headers.Authorization = new AuthenticationHeaderValue("DeepL-Auth-Key", authKey);
         
         var parameters = new List<KeyValuePair<string, string>>();
         foreach (var text in request.Texts)
@@ -84,6 +87,11 @@ public sealed class DeepLTranslationService(HttpClient httpClient, Func<string?>
         
         return new BatchTranslationResult(translatedTexts, TranslationUsage.Outbound(1, request.Texts.Sum(text => text.Length)));
     }
+
+    internal static string GetTranslateEndpoint(string authKey) =>
+        authKey.Trim().EndsWith(":fx", StringComparison.OrdinalIgnoreCase)
+            ? FreeTranslateEndpoint
+            : ProTranslateEndpoint;
 
     private static IEnumerable<KeyValuePair<string, string>> BuildParameters(TranslationRequest request)
     {

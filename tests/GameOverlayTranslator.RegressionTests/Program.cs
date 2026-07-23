@@ -65,6 +65,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Cancellation does not trip translation circuit", TestCancellationDoesNotTripTranslationCircuit),
     ("Stopping screen translation does not publish canceled text", TestScreenStopDoesNotPublishCanceledText),
     ("Translation HTTP timeout is suitable for real-time use", TestTranslationHttpTimeout),
+    ("DeepL selects Free and Pro endpoints from the key", TestDeepLEndpointSelection),
     ("Google batch translation posts long text once", TestGoogleBatchTranslationUsesPost),
     ("Google Web App fallback is bounded and ordered", TestGoogleWebAppFallbackConcurrency),
     ("Spaced-language screen segment keeps phrases", TestSpacedLanguageScreenSegmentKeepsPhrases),
@@ -1037,6 +1038,29 @@ static Task TestTranslationHttpTimeout()
     Assert(client!.Timeout <= TimeSpan.FromSeconds(15), "Translation requests should not freeze a live game overlay for the default 100-second timeout.");
     Assert(client.Timeout >= TimeSpan.FromSeconds(5), "Translation timeout should still allow normal network latency.");
     return Task.CompletedTask;
+}
+
+static async Task TestDeepLEndpointSelection()
+{
+    var handler = new DeepLEndpointHandler();
+    using var client = new HttpClient(handler);
+    var authKey = " free-key:fx ";
+    var service = new DeepLTranslationService(client, () => authKey);
+
+    await service.TranslateAsync(
+        new TranslationRequest("hello", "ko", "en"),
+        CancellationToken.None);
+    authKey = "pro-key";
+    await service.TranslateBatchAsync(
+        new BatchTranslationRequest(["world"], "ko", "en"),
+        CancellationToken.None);
+
+    Assert(handler.RequestUris.Count == 2, "Both DeepL requests should reach the HTTP handler.");
+    Assert(handler.RequestUris[0].Host == "api-free.deepl.com", "A :fx key should use the DeepL Free endpoint.");
+    Assert(handler.RequestUris[1].Host == "api.deepl.com", "A non-:fx key should use the DeepL Pro endpoint.");
+    Assert(
+        handler.AuthorizationParameters.SequenceEqual(["free-key:fx", "pro-key"]),
+        "DeepL authentication keys should be trimmed and sent in the authorization header.");
 }
 
 static async Task TestGoogleBatchTranslationUsesPost()
@@ -2093,6 +2117,23 @@ sealed class EchoGoogleTranslationHandler : HttpMessageHandler
         {
             Content = new StringContent(json)
         };
+    }
+}
+
+sealed class DeepLEndpointHandler : HttpMessageHandler
+{
+    public List<Uri> RequestUris { get; } = [];
+    public List<string> AuthorizationParameters { get; } = [];
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        RequestUris.Add(request.RequestUri ?? throw new InvalidOperationException("DeepL request URI is missing."));
+        AuthorizationParameters.Add(request.Headers.Authorization?.Parameter ?? string.Empty);
+        const string json = """{"translations":[{"detected_source_language":"EN","text":"translated"}]}""";
+        return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        });
     }
 }
 
