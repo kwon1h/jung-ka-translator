@@ -102,7 +102,15 @@ public sealed record FilterSettings(
     int SimilarityCacheSeconds = 12
 );
 
-public sealed record UserDictEntry(string Source, string Target, string Category = "사용자");
+public sealed record UserDictEntry(
+    string Source,
+    string Target,
+    string Category = "사용자",
+    string SourceLanguage = "zh-Hans",
+    string TargetLanguage = "ko")
+{
+    public string LanguagePair => $"{SourceLanguage} → {TargetLanguage}";
+}
 
 public sealed record ScreenTranslationItem(string SourceText, string TranslatedText, Rect BoundingRect);
 

@@ -18,6 +18,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Chat parser splits concatenated speaker lines", TestChatParserSplitsConcatenatedSpeakerLines),
     ("Concatenated chat does not translate embedded speaker", TestConcatenatedChatDoesNotTranslateEmbeddedSpeaker),
     ("User dictionary CSV round trip", TestUserDictionaryCsvRoundTrip),
+    ("Legacy user dictionary CSV gets default language pair", TestLegacyUserDictionaryCsvMigration),
     ("Overlay defaults are readable", TestOverlayDefaults),
     ("PaddleOCR is the only OCR engine", TestPaddleOcrIsOnlyEngine),
     ("Translation target catalog includes major languages", TestTranslationTargetCatalog),
@@ -29,6 +30,7 @@ var tests = new List<(string Name, Func<Task> Run)>
     ("Dictionary exact chat skips API", TestExactDictionarySkipsTranslation),
     ("Dictionary screen line skips API", TestDictionaryOnlyScreenLineSkipsTranslation),
     ("Chinese-Korean dictionary is not used for other targets", TestDictionaryIsScopedToChineseKorean),
+    ("User dictionary supports additional language pairs", TestDictionarySupportsAdditionalLanguagePairs),
     ("Rejected chat does not poison duplicate cache", TestRejectedChatDoesNotPoisonExactDuplicateCache),
     ("Repeated screen OCR uses cache", TestRepeatedScreenLineUsesCachedTranslation),
     ("Repeated chat translation uses cache", TestRepeatedChatLineUsesCachedTranslation),
@@ -187,14 +189,20 @@ static Task TestUserDictionaryCsvRoundTrip()
         var store = new UserDictionaryStore(directory);
         var expected = new[]
         {
-            new UserDictEntry("hello", "annyeong", UserDictionaryStore.UserCategory),
+            new UserDictEntry("hello", "こんにちは", UserDictionaryStore.UserCategory, "en", "ja"),
             new UserDictEntry("go", "start", UserDictionaryStore.QuickReplyCategory)
         };
 
         store.Save(expected);
         var loaded = store.Load();
         Assert(File.Exists(store.DictionaryPath), "Expected user_dictionary.csv to be written.");
-        Assert(loaded.Any(entry => entry.Source == "hello" && entry.Target == "annyeong"), "CSV entry was not loaded.");
+        Assert(
+            loaded.Any(entry =>
+                entry.Source == "hello"
+                && entry.Target == "こんにちは"
+                && entry.SourceLanguage == "en"
+                && entry.TargetLanguage == "ja"),
+            "CSV language-pair entry was not loaded.");
     }
     finally
     {
@@ -333,6 +341,25 @@ static async Task TestDictionaryIsScopedToChineseKorean()
     Assert(translation.LastTargetLanguage == "en-US", "The selected non-Korean target language should reach the provider.");
 }
 
+static async Task TestDictionarySupportsAdditionalLanguagePairs()
+{
+    var translation = new CountingTranslationService();
+    var source = "hello world";
+    var ocr = new OcrResult(source, [new OcrLineResult(source, new Rect(0, 0, 120, 24))]);
+    var session = new TranslationSession(new FakeCaptureService(), new FakeOcrEngine(ocr), translation);
+    var options = CreateOptions(
+        TranslationMode.Screen,
+        [new UserDictEntry(source, "こんにちは世界", UserDictionaryStore.UserCategory, "en", "ja")]) with
+    {
+        OcrLanguage = new OcrLanguage("en", "English"),
+        TargetLanguage = new TranslationLanguage("ja", "Japanese")
+    };
+
+    await RunSession(session, options);
+
+    Assert(translation.BatchRequests == 0, "A matching English-Japanese dictionary entry should bypass the provider.");
+}
+
 static Task TestResultWindowUsesSelectedGameLanguage()
 {
     Assert(
@@ -341,6 +368,32 @@ static Task TestResultWindowUsesSelectedGameLanguage()
     Assert(
         ResultWindow.CreateChatSendProgress("영어").Contains("영어", StringComparison.Ordinal),
         "The quick-chat progress should name the selected game language.");
+    return Task.CompletedTask;
+}
+
+static Task TestLegacyUserDictionaryCsvMigration()
+{
+    var directory = Path.Combine(Path.GetTempPath(), "GameOverlayTranslatorTests", Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(
+            Path.Combine(directory, "user_dictionary.csv"),
+            "Source,Target,Category\nlegacy,레거시,사용자\n");
+
+        var loaded = new UserDictionaryStore(directory).Load();
+        var legacy = loaded.Single(entry => entry.Source == "legacy");
+        Assert(legacy.SourceLanguage == "zh-Hans", "Legacy CSV source language should migrate to Simplified Chinese.");
+        Assert(legacy.TargetLanguage == "ko", "Legacy CSV target language should migrate to Korean.");
+    }
+    finally
+    {
+        if (Directory.Exists(directory))
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     return Task.CompletedTask;
 }
 

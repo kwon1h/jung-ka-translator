@@ -205,6 +205,7 @@ public partial class MainWindow : Window
         TargetLanguageComboBox.ItemsSource = LanguageCatalog.TargetLanguages;
         var selectedTarget = LanguageCatalog.TargetLanguages.FirstOrDefault(l => string.Equals(l.Code, settings.TargetLanguageCode, StringComparison.OrdinalIgnoreCase)) ?? LanguageCatalog.TargetLanguages[0];
         TargetLanguageComboBox.SelectedItem = selectedTarget;
+        UpdateDictionaryLanguageContext();
         DisplayModeComboBox.ItemsSource = DisplayModes;
         OverlayPresetComboBox.ItemsSource = OverlayPresets;
         OverlayPresetComboBox.SelectedItem = OverlayPresets.FirstOrDefault(preset => preset.Name == settings.OverlayPreset) ?? OverlayPresets[0];
@@ -686,6 +687,7 @@ public partial class MainWindow : Window
             settings = settings with { OcrLanguageTag = ocrLanguage.Tag };
             settingsStore.Save(settings);
             UpdateOcrModelDownloadState();
+            UpdateDictionaryLanguageContext();
             UpdateStartReadiness();
         }
     }
@@ -741,6 +743,7 @@ public partial class MainWindow : Window
         {
             settings = settings with { TargetLanguageCode = targetLanguage.Code };
             settingsStore.Save(settings);
+            UpdateDictionaryLanguageContext();
             UpdateStartReadiness();
         }
     }
@@ -1387,10 +1390,10 @@ public partial class MainWindow : Window
             translatorMissingText = "게임 언어와 번역 언어를 다르게 선택하세요.";
         }
         var ocrReady = IsOcrReady(ocrLanguage, out var ocrReadyText, out var ocrMissingText);
-        var dictionaryReady = UserDictionaryStore.DefaultDictionary.Count > 0;
-        var usesDictionary = ocrLanguage is not null
-                             && targetLanguage is not null
-                             && LanguageCatalog.UsesChineseKoreanDictionary(ocrLanguage, targetLanguage);
+        var applicableDictionaryCount = ocrLanguage is null || targetLanguage is null
+            ? 0
+            : userDictionaryEntries.Count(entry =>
+                LanguageCatalog.DictionaryEntryMatches(entry, ocrLanguage, targetLanguage));
 
         return
         [
@@ -1416,11 +1419,11 @@ public partial class MainWindow : Window
                 targetLanguage is null ? "번역 언어를 선택하세요." : translatorMissingText),
             new ReadinessItem(
                 ReadyDictionaryText,
-                !usesDictionary || dictionaryReady,
-                usesDictionary
-                    ? $"기본 사전 준비됨: {UserDictionaryStore.DefaultDictionary.Count}개 항목"
-                    : "기본 사전 미적용: 중국어(간체) → 한국어 전용",
-                "기본 사전을 불러오지 못했습니다.")
+                true,
+                applicableDictionaryCount > 0
+                    ? $"현재 언어 사전 준비됨: {applicableDictionaryCount}개 항목"
+                    : "현재 언어 사전 없음: 선택 사항",
+                "현재 언어 사전 없음: 선택 사항")
         ];
     }
 
@@ -2385,6 +2388,8 @@ public partial class MainWindow : Window
     {
         var source = DictSourceTextBox.Text?.Trim();
         var target = DictTargetTextBox.Text?.Trim();
+        var sourceLanguage = OcrLanguageComboBox.SelectedItem as OcrLanguage;
+        var targetLanguage = TargetLanguageComboBox.SelectedItem as TranslationLanguage;
 
         if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target))
         {
@@ -2392,14 +2397,27 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (userDictionaryEntries.Any(entry => string.Equals(entry.Source, source, StringComparison.OrdinalIgnoreCase)))
+        if (sourceLanguage is null || targetLanguage is null)
         {
-            SetStatus("이미 사전에 존재하는 원문 단어입니다.", true);
+            SetStatus("게임 언어와 번역 언어를 먼저 선택해 주세요.", true);
+            return;
+        }
+
+        if (userDictionaryEntries.Any(entry =>
+                string.Equals(entry.Source, source, StringComparison.OrdinalIgnoreCase)
+                && LanguageCatalog.DictionaryEntryMatches(entry, sourceLanguage, targetLanguage)))
+        {
+            SetStatus("현재 언어 조합에 이미 존재하는 원문 단어입니다.", true);
             return;
         }
 
         var category = DictCategoryComboBox.SelectedItem as string ?? UserDictionaryStore.UserCategory;
-        var entry = new UserDictEntry(source, target, category);
+        var entry = new UserDictEntry(
+            source,
+            target,
+            category,
+            sourceLanguage.Tag,
+            targetLanguage.Code);
         userDictionaryEntries.Add(entry);
         userDictStore.Save(userDictionaryEntries);
 
@@ -2409,7 +2427,7 @@ public partial class MainWindow : Window
 
         DictSourceTextBox.Clear();
         DictTargetTextBox.Clear();
-        SetStatus($"사전에 단어 '{source}'를 추가했습니다.");
+        SetStatus($"사전에 '{sourceLanguage.DisplayName} → {targetLanguage.DisplayName}' 단어 '{source}'를 추가했습니다.");
     }
 
     private async void FillDictionarySourceFromOcr(object sender, RoutedEventArgs e)
@@ -2537,7 +2555,10 @@ public partial class MainWindow : Window
         int addedCount = 0;
         foreach (var defaultEntry in UserDictionaryStore.DefaultDictionary)
         {
-            if (!userDictionaryEntries.Any(entry => string.Equals(entry.Source, defaultEntry.Source, StringComparison.OrdinalIgnoreCase)))
+            if (!userDictionaryEntries.Any(entry =>
+                    string.Equals(entry.Source, defaultEntry.Source, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(entry.SourceLanguage, defaultEntry.SourceLanguage, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(entry.TargetLanguage, defaultEntry.TargetLanguage, StringComparison.OrdinalIgnoreCase)))
             {
                 userDictionaryEntries.Add(defaultEntry);
                 addedCount++;
@@ -2555,6 +2576,20 @@ public partial class MainWindow : Window
         {
             SetStatus("모든 기본 사전 항목이 이미 사전에 존재합니다.");
         }
+    }
+
+    private void UpdateDictionaryLanguageContext()
+    {
+        if (DictionaryPairText is null)
+        {
+            return;
+        }
+
+        var source = OcrLanguageComboBox?.SelectedItem as OcrLanguage;
+        var target = TargetLanguageComboBox?.SelectedItem as TranslationLanguage;
+        DictionaryPairText.Text = source is not null && target is not null
+            ? $"현재 추가 대상: {source.DisplayName} → {target.DisplayName}"
+            : "번역 탭에서 게임 언어와 번역 언어를 선택하세요.";
     }
 
     private void ClearDiagnosticLogs(object sender, RoutedEventArgs e)

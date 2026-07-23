@@ -65,11 +65,12 @@ public sealed class TranslationSession(ICaptureService captureService, IOcrEngin
         var totalTranslationRequests = 0;
         var totalTranslationCharacters = 0;
 
-        var applicableDictionary = LanguageCatalog.UsesChineseKoreanDictionary(
-            options.OcrLanguage,
-            options.TargetLanguage)
-            ? options.UserDictionary
-            : Array.Empty<UserDictEntry>();
+        var applicableDictionary = options.UserDictionary
+            .Where(entry => LanguageCatalog.DictionaryEntryMatches(
+                entry,
+                options.OcrLanguage,
+                options.TargetLanguage))
+            .ToList();
 
         var dictExactEntries = applicableDictionary
             .Select(entry => (Entry: entry, NormalizedSource: NormalizeForMatching(entry.Source)))

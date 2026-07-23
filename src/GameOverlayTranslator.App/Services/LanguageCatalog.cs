@@ -37,9 +37,10 @@ internal static class LanguageCatalog
         new("tr", "튀르키예어")
     ];
 
-    public static bool UsesChineseKoreanDictionary(
+    public static bool DictionaryEntryMatches(
+        UserDictEntry entry,
         OcrLanguage sourceLanguage,
         TranslationLanguage targetLanguage) =>
-        sourceLanguage.Tag.StartsWith("zh-Hans", StringComparison.OrdinalIgnoreCase)
-        && targetLanguage.Code.StartsWith("ko", StringComparison.OrdinalIgnoreCase);
+        string.Equals(entry.SourceLanguage, sourceLanguage.Tag, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(entry.TargetLanguage, targetLanguage.Code, StringComparison.OrdinalIgnoreCase);
 }

@@ -9,7 +9,9 @@ namespace GameOverlayTranslator.App.Services;
 public sealed class UserDictionaryStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-    private const string CsvHeader = "Source,Target,Category";
+    private const string CsvHeader = "Source,Target,Category,SourceLanguage,TargetLanguage";
+    private const string DefaultSourceLanguage = "zh-Hans";
+    private const string DefaultTargetLanguage = "ko";
     private const string EmbeddedDefaultDictionaryResourceName = "GameOverlayTranslator.App.Assets.user_dictionary.csv";
     public const string QuickReplyCategory = "채팅 빠른 답장";
     public const string UiCategory = "게임 UI 고정어";
@@ -41,7 +43,7 @@ public sealed class UserDictionaryStore
         {
             var entries = LoadEntries();
 
-            var changed = NormalizeCategories(entries);
+            var changed = NormalizeEntries(entries);
             changed |= MergeDefaults(entries);
             if (!File.Exists(dictionaryPath) || changed)
             {
@@ -96,7 +98,11 @@ public sealed class UserDictionaryStore
                 .Append(',')
                 .Append(EscapeCsv(entry.Target))
                 .Append(',')
-                .AppendLine(EscapeCsv(string.IsNullOrWhiteSpace(entry.Category) ? UserCategory : entry.Category));
+                .Append(EscapeCsv(string.IsNullOrWhiteSpace(entry.Category) ? UserCategory : entry.Category))
+                .Append(',')
+                .Append(EscapeCsv(NormalizeLanguage(entry.SourceLanguage, DefaultSourceLanguage)))
+                .Append(',')
+                .AppendLine(EscapeCsv(NormalizeLanguage(entry.TargetLanguage, DefaultTargetLanguage)));
         }
 
         return builder.ToString();
@@ -137,7 +143,18 @@ public sealed class UserDictionaryStore
             }
 
             var category = row.Count >= 3 && !string.IsNullOrWhiteSpace(row[2]) ? row[2].Trim() : UserCategory;
-            entries.Add(new UserDictEntry(row[0].Trim(), row[1].Trim(), category));
+            var sourceLanguage = row.Count >= 4
+                ? NormalizeLanguage(row[3], DefaultSourceLanguage)
+                : DefaultSourceLanguage;
+            var targetLanguage = row.Count >= 5
+                ? NormalizeLanguage(row[4], DefaultTargetLanguage)
+                : DefaultTargetLanguage;
+            entries.Add(new UserDictEntry(
+                row[0].Trim(),
+                row[1].Trim(),
+                category,
+                sourceLanguage,
+                targetLanguage));
         }
 
         return entries;
@@ -223,7 +240,9 @@ public sealed class UserDictionaryStore
         var changed = false;
         foreach (var defaultEntry in DefaultDictionary)
         {
-            if (entries.Any(entry => string.Equals(entry.Source, defaultEntry.Source, StringComparison.OrdinalIgnoreCase)))
+            if (entries.Any(entry =>
+                    string.Equals(entry.Source, defaultEntry.Source, StringComparison.OrdinalIgnoreCase)
+                    && SameLanguagePair(entry, defaultEntry)))
             {
                 continue;
             }
@@ -278,20 +297,33 @@ public sealed class UserDictionaryStore
         yield return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "docs", "user_dictionary.csv"));
     }
 
-    private static bool NormalizeCategories(List<UserDictEntry> entries)
+    private static bool NormalizeEntries(List<UserDictEntry> entries)
     {
         var changed = false;
         for (var index = 0; index < entries.Count; index++)
         {
-            if (!string.IsNullOrWhiteSpace(entries[index].Category))
+            var entry = entries[index];
+            var normalized = entry with
             {
-                continue;
-            }
+                Category = string.IsNullOrWhiteSpace(entry.Category) ? UserCategory : entry.Category,
+                SourceLanguage = NormalizeLanguage(entry.SourceLanguage, DefaultSourceLanguage),
+                TargetLanguage = NormalizeLanguage(entry.TargetLanguage, DefaultTargetLanguage)
+            };
 
-            entries[index] = entries[index] with { Category = UserCategory };
-            changed = true;
+            if (normalized != entry)
+            {
+                entries[index] = normalized;
+                changed = true;
+            }
         }
 
         return changed;
     }
+
+    private static string NormalizeLanguage(string? language, string fallback) =>
+        string.IsNullOrWhiteSpace(language) ? fallback : language.Trim();
+
+    private static bool SameLanguagePair(UserDictEntry left, UserDictEntry right) =>
+        string.Equals(left.SourceLanguage, right.SourceLanguage, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(left.TargetLanguage, right.TargetLanguage, StringComparison.OrdinalIgnoreCase);
 }
