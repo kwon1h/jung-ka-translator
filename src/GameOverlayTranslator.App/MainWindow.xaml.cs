@@ -8,6 +8,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.Collections.ObjectModel;
 using GameOverlayTranslator.App.Contracts;
 using GameOverlayTranslator.App.Domain;
 using GameOverlayTranslator.App.Platform;
@@ -74,7 +75,18 @@ public partial class MainWindow : Window
 
     private sealed record ReadinessItem(TextBlock? Target, bool IsReady, string ReadyText, string MissingText);
 
-    private static readonly IReadOnlyList<OcrLanguage> OcrLanguages = [new("zh-Hans", "중국어(간체)"), new("ja", "일본어")];
+    private static readonly IReadOnlyList<OcrLanguage> SupportedOcrLanguages =
+    [
+        new("zh-Hans", "중국어(간체)"),
+        new("en", "영어"),
+        new("ja", "일본어"),
+        new("ko", "한국어"),
+        new("ar", "아랍어"),
+        new("hi", "힌디어"),
+        new("ta", "타밀어"),
+        new("te", "텔루구어"),
+        new("kn", "칸나다어")
+    ];
     private static readonly IReadOnlyList<TranslationLanguage> TargetLanguages = [new("ko", "한국어")];
     private static readonly IReadOnlyList<DisplayModeChoice> DisplayModes =
     [
@@ -131,6 +143,7 @@ public partial class MainWindow : Window
         new("사용자 지정", AppSettingsDefaults.DefaultFontSize, "#FFFFFF", "#000000", AppSettingsDefaults.DefaultStrokeThickness, 0.92, "#99000000")
     ];
     private readonly IWindowSource windowSource = new Win32WindowSource();
+    private readonly ObservableCollection<OcrLanguage> installedOcrLanguages = [];
     private readonly ICaptureService dictionaryCaptureService = new WindowCaptureService();
     private readonly PaddleOcrEngine paddleOcrEngine = new();
     private readonly IOcrEngine dictionaryOcrEngine;
@@ -193,9 +206,10 @@ public partial class MainWindow : Window
         session = new TranslationSession(new WindowCaptureService(requireTargetForeground: true), paddleOcrEngine, cachingTranslationService);
         session.Updated += SessionUpdated;
 
-        OcrLanguageComboBox.ItemsSource = OcrLanguages;
-        var selectedOcr = OcrLanguages.FirstOrDefault(l => string.Equals(l.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase)) ?? OcrLanguages[0];
-        OcrLanguageComboBox.SelectedItem = selectedOcr;
+        OcrLanguageComboBox.ItemsSource = installedOcrLanguages;
+        OcrModelLanguageComboBox.ItemsSource = SupportedOcrLanguages;
+        OcrModelLanguageComboBox.SelectedItem = SupportedOcrLanguages.FirstOrDefault(l => string.Equals(l.Tag, settings.OcrLanguageTag, StringComparison.OrdinalIgnoreCase)) ?? SupportedOcrLanguages[0];
+        RefreshInstalledOcrLanguages();
 
         TargetLanguageComboBox.ItemsSource = TargetLanguages;
         var selectedTarget = TargetLanguages.FirstOrDefault(l => string.Equals(l.Code, settings.TargetLanguageCode, StringComparison.OrdinalIgnoreCase)) ?? TargetLanguages[0];
@@ -680,8 +694,39 @@ public partial class MainWindow : Window
         {
             settings = settings with { OcrLanguageTag = ocrLanguage.Tag };
             settingsStore.Save(settings);
+            UpdateOcrModelDownloadState();
             UpdateStartReadiness();
         }
+    }
+
+    private void OcrModelLanguageSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => UpdateOcrModelDownloadState();
+
+    private void RefreshInstalledOcrLanguages()
+    {
+        var selectedTag = (OcrLanguageComboBox.SelectedItem as OcrLanguage)?.Tag ?? settings.OcrLanguageTag;
+        installedOcrLanguages.Clear();
+        foreach (var language in SupportedOcrLanguages.Where(PaddleOcrEngine.IsModelAvailable))
+        {
+            installedOcrLanguages.Add(language);
+        }
+
+        OcrLanguageComboBox.SelectedItem = installedOcrLanguages.FirstOrDefault(language => language.Tag == selectedTag)
+            ?? installedOcrLanguages.FirstOrDefault();
+        UpdateOcrModelDownloadState();
+    }
+
+    private void UpdateOcrModelDownloadState()
+    {
+        if (OcrModelLanguageComboBox.SelectedItem is not OcrLanguage language)
+        {
+            DownloadOcrModelButton.Content = "다운로드";
+            DownloadOcrModelButton.IsEnabled = false;
+            return;
+        }
+
+        var isReady = PaddleOcrEngine.IsModelAvailable(language);
+        DownloadOcrModelButton.Content = isReady ? "준비됨" : "다운로드";
+        DownloadOcrModelButton.IsEnabled = !isReady;
     }
 
     private void TargetLanguageSelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -882,6 +927,34 @@ public partial class MainWindow : Window
         {
             Mouse.OverrideCursor = null;
             FillDictSourceFromOcrButton.IsEnabled = true;
+        }
+    }
+
+    private async void DownloadOcrModel(object sender, RoutedEventArgs e)
+    {
+        if (OcrModelLanguageComboBox.SelectedItem is not OcrLanguage language)
+        {
+            SetStatus("먼저 내려받을 언어를 선택하세요.", true);
+            return;
+        }
+
+        DownloadOcrModelButton.IsEnabled = false;
+        SetStatus($"{language.DisplayName} OCR 모델을 준비하는 중입니다...");
+        try
+        {
+            await paddleOcrEngine.PrepareAsync(language, CancellationToken.None);
+            RefreshInstalledOcrLanguages();
+            OcrLanguageComboBox.SelectedItem = installedOcrLanguages.FirstOrDefault(item => item.Tag == language.Tag);
+            SetStatus($"{language.DisplayName} OCR 모델 준비가 완료되었습니다.");
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write("OCR model download failed", ex);
+            SetStatus($"OCR 모델 준비에 실패했습니다: {ex.Message}", true);
+        }
+        finally
+        {
+            UpdateOcrModelDownloadState();
         }
     }
 
@@ -1293,11 +1366,11 @@ public partial class MainWindow : Window
         if (ocrLanguage is null)
         {
             readyText = string.Empty;
-            missingText = "OCR 언어를 선택하세요.";
+            missingText = "언어 모델을 다운로드한 뒤 게임 언어를 선택하세요.";
             return false;
         }
 
-        readyText = $"OCR 준비됨: PaddleOCR / {ocrLanguage.DisplayName}";
+        readyText = $"게임 언어 준비됨: {ocrLanguage.DisplayName}";
         missingText = string.Empty;
         return true;
     }
@@ -2378,7 +2451,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        var language = OcrLanguageComboBox.SelectedItem as OcrLanguage ?? OcrLanguages[0];
+        var language = OcrLanguageComboBox.SelectedItem as OcrLanguage;
+        if (language is null)
+        {
+            SetStatus("언어 모델을 내려받은 뒤 게임 언어를 선택하세요.", true);
+            return;
+        }
         var filter = settings.ToFilterSettings();
 
         var lines = ChatLineParser.Parse(raw);

@@ -706,35 +706,33 @@
                             <Expander.Header>
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE774;" FontFamily="Segoe Fluent Icons" Foreground="#5E6B7C" FontSize="16" Margin="0,0,13,0" />
-                                    <TextBlock Text="번역 엔진 및 언어" FontWeight="SemiBold" Foreground="#273142" />
-                                    <TextBlock Text="  OCR 엔진, OCR 언어, 번역 언어 등" Foreground="#8A94A5" FontSize="11" Margin="12,1,0,0" />
+                                    <TextBlock Text="게임 언어 및 번역 언어" FontWeight="SemiBold" Foreground="#273142" />
+                                    <TextBlock Text="  게임 원문과 번역 결과 언어" Foreground="#8A94A5" FontSize="11" Margin="12,1,0,0" />
                                 </StackPanel>
                             </Expander.Header>
                             <Border Background="Transparent" BorderThickness="0" Padding="0">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="14" />
+                                        <ColumnDefinition Width="42" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="14" />
-                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel>
-                                        <TextBlock Text="OCR 엔진" Style="{StaticResource FieldLabelStyle}" />
-                                        <Border Height="40" Padding="12,0" BorderBrush="#DDE3EC" BorderThickness="1" CornerRadius="7" Background="White">
-                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                <TextBlock Text="PaddleOCR (OpenVINO)" FontWeight="SemiBold" Foreground="#273142" />
-                                                <TextBlock Text=" · Windows 중국어 언어 팩 불필요" Margin="5,0,0,0" Foreground="#6B7280" FontSize="11" />
-                                            </StackPanel>
-                                        </Border>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="OCR 언어" Style="{StaticResource FieldLabelStyle}" />
+                                        <TextBlock Text="게임 언어" Style="{StaticResource FieldLabelStyle}" />
                                         <ComboBox x:Name="OcrLanguageComboBox" SelectionChanged="OcrLanguageSelectionChanged" />
                                     </StackPanel>
-                                    <StackPanel Grid.Column="4">
+                                    <TextBlock Grid.Column="1" Text="→" FontSize="20" FontWeight="SemiBold" Foreground="#8A94A5" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,8" />
+                                    <StackPanel Grid.Column="2">
                                         <TextBlock Text="번역 언어" Style="{StaticResource FieldLabelStyle}" />
                                         <ComboBox x:Name="TargetLanguageComboBox" SelectionChanged="TargetLanguageSelectionChanged" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="3" Margin="14,0,0,0">
+                                        <TextBlock Text="언어 모델" Style="{StaticResource FieldLabelStyle}" />
+                                        <StackPanel Orientation="Horizontal">
+                                            <ComboBox x:Name="OcrModelLanguageComboBox" Width="150" SelectionChanged="OcrModelLanguageSelectionChanged" />
+                                            <Button x:Name="DownloadOcrModelButton" Content="다운로드" Click="DownloadOcrModel" Margin="8,0,0,0" Padding="12,8" />
+                                        </StackPanel>
                                     </StackPanel>
                                 </Grid>
                             </Border>
